@@ -18,8 +18,23 @@ public class LoginAttemptService {
 
     private static final int MAX_FAILURES = 5;
     private static final Duration LOCKOUT = Duration.ofMinutes(15);
+    // A hard ceiling on tracked entries. A public login endpoint sprayed with unique usernames
+    // would otherwise grow this map without bound — the rate limiter must not itself be the
+    // memory-exhaustion vector. When the ceiling is passed, entries that are not currently
+    // locked (the sub-threshold noise) are dropped; locked entries are kept until they expire.
+    private static final int MAX_ENTRIES = 10_000;
 
+    private final int maxEntries;
     private final ConcurrentHashMap<String, Attempt> attempts = new ConcurrentHashMap<>();
+
+    public LoginAttemptService() {
+        this(MAX_ENTRIES);
+    }
+
+    // Package-private, for tests that need a small ceiling to exercise eviction.
+    LoginAttemptService(int maxEntries) {
+        this.maxEntries = maxEntries;
+    }
 
     private static final class Attempt {
         int failures;
@@ -67,6 +82,22 @@ public class LoginAttemptService {
             }
             return attempt;
         });
+        if (attempts.size() > maxEntries) {
+            evictReleasable();
+        }
+    }
+
+    // Drops entries that are safe to forget: those below the lockout threshold and those whose
+    // lockout has already elapsed. Locked entries — the ones that carry live protection — are
+    // never dropped here; they clear themselves when their lockout expires.
+    private void evictReleasable() {
+        Instant now = Instant.now();
+        attempts.values().removeIf(a -> a.lockedUntil == null || now.isAfter(a.lockedUntil));
+    }
+
+    // For tests: how many entries are currently tracked.
+    int trackedCount() {
+        return attempts.size();
     }
 
     private String userKey(String username) {
