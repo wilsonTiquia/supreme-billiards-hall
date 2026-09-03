@@ -1,6 +1,6 @@
 import { request } from '../client';
 import { isApiError } from '../errors';
-import type { CurrentUser, LoginRequest, SelectBranchRequest } from '../types';
+import type { ChangePasswordRequest, CurrentUser, LoginRequest, SelectBranchRequest } from '../types';
 
 export function login(body: LoginRequest): Promise<CurrentUser> {
   // skipAuthRedirect: a 401 here is a bad password, a form error — not a dead session.
@@ -32,4 +32,13 @@ export function logout(): Promise<null> {
 
 export function selectBranch(body: SelectBranchRequest): Promise<CurrentUser> {
   return request<CurrentUser>('/auth/branch', { method: 'PUT', body });
+}
+
+/**
+ * Change your own password. The server requires the current one and, on success, clears the
+ * forced-change gate and ends your other sessions. Returns nothing; the caller re-reads
+ * /auth/me to pick up the cleared flag.
+ */
+export function changePassword(body: ChangePasswordRequest): Promise<null> {
+  return request<null>('/auth/password', { method: 'PUT', body });
 }

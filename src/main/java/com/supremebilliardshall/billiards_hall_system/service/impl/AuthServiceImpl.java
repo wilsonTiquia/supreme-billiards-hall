@@ -3,6 +3,7 @@ package com.supremebilliardshall.billiards_hall_system.service.impl;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ChangePasswordRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.CurrentUserResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ResetPasswordRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.user.UserResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.entity.AppUser;
 import com.supremebilliardshall.billiards_hall_system.entity.Branch;
 import com.supremebilliardshall.billiards_hall_system.entity.UserRole;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.OffsetDateTime;
+import java.util.List;
 import java.util.UUID;
 
 @Service
@@ -133,6 +135,22 @@ public class AuthServiceImpl implements AuthService {
         // is attributable to a password only they know.
         user.setMustChangePassword(true);
         appUserRepository.save(user);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UserResponseDTO> listBranchUsers() {
+        return appUserRepository.findByBranchIdAndArchivedAtIsNullOrderByUsername(
+                        branchContext.getCurrentBranchId())
+                .stream()
+                .map(user -> new UserResponseDTO(
+                        user.getId(),
+                        user.getUsername(),
+                        user.getFullName(),
+                        user.getRole(),
+                        Boolean.TRUE.equals(user.getIsActive()),
+                        Boolean.TRUE.equals(user.getMustChangePassword())))
+                .toList();
     }
 
     // Hand-mapped rather than through MapStruct: the effective branch comes from the session,

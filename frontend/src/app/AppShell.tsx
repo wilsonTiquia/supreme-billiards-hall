@@ -47,6 +47,7 @@ const ADMIN: NavGroup[] = [
       { to: '/admin/categories', label: 'Categories', short: 'Ca' },
       { to: '/admin/tables', label: 'Tables', short: 'Tb' },
       { to: '/admin/customer-types', label: 'Customer types', short: 'CT' },
+      { to: '/admin/staff', label: 'Staff', short: 'Sf' },
       { to: '/admin/settings', label: 'Settings', short: 'Se' },
     ],
   },

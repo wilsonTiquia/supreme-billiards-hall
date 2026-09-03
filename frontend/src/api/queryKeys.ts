@@ -43,4 +43,5 @@ export const queryKeys = {
   auditFeed: (query: AuditFeedQuery) => ['audit', 'feed', query] as const,
   auditFilters: ['audit', 'filters'] as const,
   settings: ['settings'] as const,
+  users: ['users'] as const,
 } as const;

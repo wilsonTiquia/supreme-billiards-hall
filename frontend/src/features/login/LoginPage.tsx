@@ -24,6 +24,9 @@ export function LoginPage() {
   if (status === 'offline') return <OfflineScreen error={sessionError} onRetry={retry} />;
 
   if (status === 'authenticated' && user) {
+    // A user who must change their password goes straight to the wall — not to where they were
+    // headed, which they cannot use yet anyway.
+    if (user.mustChangePassword) return <Navigate to="/change-password" replace />;
     const from = (location.state as { from?: string } | null)?.from;
     const home = user.role === 'ADMIN' ? '/dashboard' : '/floor';
     return <Navigate to={from && from !== '/login' ? from : home} replace />;

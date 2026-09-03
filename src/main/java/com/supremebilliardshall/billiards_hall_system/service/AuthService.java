@@ -3,7 +3,9 @@ package com.supremebilliardshall.billiards_hall_system.service;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ChangePasswordRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.CurrentUserResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ResetPasswordRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.user.UserResponseDTO;
 
+import java.util.List;
 import java.util.UUID;
 
 public interface AuthService {
@@ -20,4 +22,7 @@ public interface AuthService {
 
     // An ADMIN sets another user's password outright — no current password needed.
     void resetPassword(UUID userId, ResetPasswordRequestDTO request);
+
+    // The staff of the caller's current branch, for the Admin > Staff screen.
+    List<UserResponseDTO> listBranchUsers();
 }

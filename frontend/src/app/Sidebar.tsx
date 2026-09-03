@@ -146,13 +146,19 @@ export function Sidebar({
 
       <div className="flex flex-col gap-1 border-t border-border pt-3">
         {!collapsed && user ? (
-          <div className="px-2 pb-1">
+          // Also the way to the change-password screen — clicking who you are is where people
+          // look for their own account.
+          <Link
+            to="/account/password"
+            title="Change your password"
+            className="block rounded-lg px-2 pb-1 pt-1 transition hover:bg-raised"
+          >
             <div className="truncate text-body text-text">{user.fullName}</div>
             {/* Role and branch on their own lines: "ADMIN · Supreme Billiard Hall" on one line
                 truncated to "SUPREME BIL…" in a 256px rail. */}
             <div className="text-label uppercase text-text-dim">{user.role}</div>
             <div className="truncate text-label text-text-dim">{user.branchName ?? 'No branch'}</div>
-          </div>
+          </Link>
         ) : null}
 
         <div className={`flex gap-1 ${collapsed ? 'flex-col' : ''}`}>

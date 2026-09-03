@@ -48,10 +48,38 @@ export interface CurrentUser {
    * next sign-in or refresh — no restart, no deploy.
    */
   checkoutAnimation: boolean;
+  /**
+   * When true the user must change their password before anything else works: the server gates
+   * every other call with 403 PASSWORD_CHANGE_REQUIRED. Set by the go-live default-password
+   * path and by an admin reset — a handed-over password is always temporary. The SPA routes to
+   * the forced-change screen when this is set.
+   */
+  mustChangePassword: boolean;
 }
 
 export interface SelectBranchRequest {
   branchId: UUID;
+}
+
+export interface ChangePasswordRequest {
+  currentPassword: string;
+  newPassword: string;
+}
+
+/** ADMIN sets another user's password. No current password — the admin is the authority. */
+export interface ResetPasswordRequest {
+  newPassword: string;
+}
+
+/** A row in Admin → Staff. No password material ever crosses the wire. */
+export interface StaffUser {
+  id: UUID;
+  username: string;
+  fullName: string;
+  role: Role;
+  active: boolean;
+  /** Still owes a password change — a handed-over temporary, or a go-live default. */
+  mustChangePassword: boolean;
 }
 
 /* ── §3 Time ─────────────────────────────────────────────────────────────────────── */

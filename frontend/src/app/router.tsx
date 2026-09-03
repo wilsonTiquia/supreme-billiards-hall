@@ -1,7 +1,10 @@
 import { Route, Routes } from 'react-router-dom';
 import { AppShell } from './AppShell';
-import { HomeRedirect, RequireAdmin, RequireAuth } from './guards';
+import { HomeRedirect, RequireAdmin, RequireAuth, RequirePasswordCurrent } from './guards';
 import { LoginPage } from '@/features/login/LoginPage';
+import { ForcedPasswordChangePage } from '@/features/account/ForcedPasswordChangePage';
+import { ChangePasswordPage } from '@/features/account/ChangePasswordPage';
+import { StaffPage } from '@/features/admin/staff/StaffPage';
 import { FloorPage } from '@/features/floor/FloorPage';
 import { SessionPage } from '@/features/session/SessionPage';
 import { CheckoutPage } from '@/features/checkout/CheckoutPage';
@@ -25,28 +28,35 @@ export function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
 
       <Route element={<RequireAuth />}>
-        <Route element={<AppShell />}>
-          <Route index element={<HomeRedirect />} />
-          <Route path="floor" element={<FloorPage />} />
-          <Route path="sessions/:sessionId" element={<SessionPage />} />
-          <Route path="checkout/:billId" element={<CheckoutPage />} />
-          <Route path="quick-sale" element={<QuickSalePage />} />
-          <Route path="receipt/:billId" element={<ReceiptPage />} />
-          <Route path="end-of-day" element={<EndOfDayPage />} />
+        {/* Outside the shell and the password gate: the one screen a flagged user can reach. */}
+        <Route path="change-password" element={<ForcedPasswordChangePage />} />
 
-          <Route element={<RequireAdmin />}>
-            <Route path="dashboard" element={<DashboardPage />} />
-            <Route path="admin/products" element={<ProductsPage />} />
-            <Route path="admin/categories" element={<CategoriesPage />} />
-            <Route path="admin/tables" element={<TablesPage />} />
-            <Route path="admin/customer-types" element={<CustomerTypesPage />} />
-            <Route path="admin/settings" element={<SettingsPage />} />
-            <Route path="admin/stock" element={<StockPage />} />
-            <Route path="admin/sales" element={<SalesPage />} />
-            <Route path="admin/audit" element={<AuditPage />} />
+        <Route element={<RequirePasswordCurrent />}>
+          <Route element={<AppShell />}>
+            <Route index element={<HomeRedirect />} />
+            <Route path="floor" element={<FloorPage />} />
+            <Route path="sessions/:sessionId" element={<SessionPage />} />
+            <Route path="checkout/:billId" element={<CheckoutPage />} />
+            <Route path="quick-sale" element={<QuickSalePage />} />
+            <Route path="receipt/:billId" element={<ReceiptPage />} />
+            <Route path="end-of-day" element={<EndOfDayPage />} />
+            <Route path="account/password" element={<ChangePasswordPage />} />
+
+            <Route element={<RequireAdmin />}>
+              <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="admin/products" element={<ProductsPage />} />
+              <Route path="admin/categories" element={<CategoriesPage />} />
+              <Route path="admin/tables" element={<TablesPage />} />
+              <Route path="admin/customer-types" element={<CustomerTypesPage />} />
+              <Route path="admin/settings" element={<SettingsPage />} />
+              <Route path="admin/staff" element={<StaffPage />} />
+              <Route path="admin/stock" element={<StockPage />} />
+              <Route path="admin/sales" element={<SalesPage />} />
+              <Route path="admin/audit" element={<AuditPage />} />
+            </Route>
+
+            <Route path="*" element={<NotFoundPage />} />
           </Route>
-
-          <Route path="*" element={<NotFoundPage />} />
         </Route>
       </Route>
     </Routes>

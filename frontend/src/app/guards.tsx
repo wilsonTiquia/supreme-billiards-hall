@@ -26,6 +26,17 @@ export function RequireAuth() {
 }
 
 /**
+ * A user who must change their password can go nowhere but the forced-change screen. Mirrors
+ * the server gate, which refuses every other call with 403 PASSWORD_CHANGE_REQUIRED — this is
+ * the UX side of the same rule, not a second boundary.
+ */
+export function RequirePasswordCurrent() {
+  const { user } = useAuth();
+  if (user?.mustChangePassword) return <Navigate to="/change-password" replace />;
+  return <Outlet />;
+}
+
+/**
  * Admin-only routes. This is a convenience for layout and navigation, never the security
  * boundary — the server enforces the role and omits cost fields regardless of what the
  * client believes.

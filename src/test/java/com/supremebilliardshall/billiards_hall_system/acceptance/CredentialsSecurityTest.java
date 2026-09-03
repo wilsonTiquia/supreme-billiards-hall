@@ -20,6 +20,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -158,6 +159,28 @@ class CredentialsSecurityTest {
                         .content("""
                                 {"newPassword":"reset-the-owner"}"""))
                 .andExpect(status().isConflict());
+    }
+
+    @Test
+    void anAdminListsOnlyItsOwnBranchStaffAndAnEmployeeCannotList() throws Exception {
+        UUID branchA = givenBranch();
+        UUID branchB = givenBranch();
+        AppUser inA = givenUser(branchA, "ina-" + UUID.randomUUID(), SENTINEL, UserRole.EMPLOYEE);
+        givenUser(branchB, "inb-" + UUID.randomUUID(), SENTINEL, UserRole.EMPLOYEE);
+
+        String body = mockMvc.perform(get("/api/v1/users")
+                        .with(user(principal(branchA, UserRole.ADMIN))))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body).contains(inA.getUsername());
+        assertThat(body).doesNotContain("inb-");
+        // Never a hash, whatever else it carries.
+        assertThat(body).doesNotContain("passwordHash").doesNotContain("DISABLED-NO-LOGIN");
+
+        // An employee cannot read the staff list.
+        mockMvc.perform(get("/api/v1/users")
+                        .with(user(principal(branchA, UserRole.EMPLOYEE))))
+                .andExpect(status().isForbidden());
     }
 
     @Test

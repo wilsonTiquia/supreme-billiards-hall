@@ -2,6 +2,7 @@ package com.supremebilliardshall.billiards_hall_system.controller;
 
 import com.supremebilliardshall.billiards_hall_system.dto.APIResponse;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ResetPasswordRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.user.UserResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.security.LoginAttemptService;
 import com.supremebilliardshall.billiards_hall_system.security.SessionInvalidator;
 import com.supremebilliardshall.billiards_hall_system.service.AuthService;
@@ -10,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.UUID;
 
 // User administration is the owner's job. The one action here is resetting a password —
@@ -29,6 +31,16 @@ public class UserController {
         this.authService = authService;
         this.loginAttemptService = loginAttemptService;
         this.sessionInvalidator = sessionInvalidator;
+    }
+
+    // The staff of the admin's current branch, for the Admin > Staff screen.
+    @GetMapping
+    public ResponseEntity<APIResponse<List<UserResponseDTO>>> getUsers() {
+        List<UserResponseDTO> users = authService.listBranchUsers();
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        users,
+                        "Users fetched successfully"));
     }
 
     @PutMapping("/{id}/password")
