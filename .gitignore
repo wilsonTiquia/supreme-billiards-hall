@@ -1,7 +1,38 @@
+### Operational — never publish ###
+# Deployment scripts hold the database password and the temporary logins;
+# they live on the POS machine only.
+scripts/
+# Runtime state written by the running app.
+logs/
+run/
+
+# Vulnerability roadmap. Stays local, even in a private repo.
+docs/security-audit-2026-09-03.md
+
+### Build output ###
 target/
-.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
+.mvn/wrapper/maven-wrapper.jar
+build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### Frontend ###
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+### OS ###
+.DS_Store
+
+### Editors / IDEs ###
+.claude/
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
 
 ### STS ###
 .apt_generated
@@ -12,21 +43,9 @@ target/
 .springBeans
 .sts4-cache
 
-### IntelliJ IDEA ###
-.idea
-*.iws
-*.iml
-*.ipr
-
 ### NetBeans ###
 /nbproject/private/
 /nbbuild/
 /dist/
 /nbdist/
 /.nb-gradle/
-build/
-!**/src/main/**/build/
-!**/src/test/**/build/
-
-### VS Code ###
-.vscode/
