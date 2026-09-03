@@ -1,0 +1,94 @@
+package com.supremebilliardshall.billiards_hall_system.service.impl;
+
+import com.supremebilliardshall.billiards_hall_system.dto.auth.CurrentUserResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.entity.AppUser;
+import com.supremebilliardshall.billiards_hall_system.entity.Branch;
+import com.supremebilliardshall.billiards_hall_system.exception.ResourceInUseException;
+import com.supremebilliardshall.billiards_hall_system.exception.ResourceNotFoundException;
+import com.supremebilliardshall.billiards_hall_system.repository.AppUserRepository;
+import com.supremebilliardshall.billiards_hall_system.repository.BranchRepository;
+import com.supremebilliardshall.billiards_hall_system.repository.BranchSettingRepository;
+import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
+import com.supremebilliardshall.billiards_hall_system.service.AuthService;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.time.OffsetDateTime;
+import java.util.UUID;
+
+@Service
+public class AuthServiceImpl implements AuthService {
+
+    private final AppUserRepository appUserRepository;
+    private final BranchRepository branchRepository;
+    private final BranchSettingRepository branchSettingRepository;
+    private final BranchContext branchContext;
+
+    public AuthServiceImpl(AppUserRepository appUserRepository,
+                           BranchRepository branchRepository,
+                           BranchSettingRepository branchSettingRepository,
+                           BranchContext branchContext) {
+        this.appUserRepository = appUserRepository;
+        this.branchRepository = branchRepository;
+        this.branchSettingRepository = branchSettingRepository;
+        this.branchContext = branchContext;
+    }
+
+    @Override
+    @Transactional
+    public CurrentUserResponseDTO recordLogin(UUID userId) {
+        AppUser user = appUserRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+        user.setLastLoginAt(OffsetDateTime.now());
+        appUserRepository.save(user);
+        return toResponseDto(user);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public CurrentUserResponseDTO getCurrentUser() {
+        AppUser user = appUserRepository.findById(branchContext.getCurrentUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", branchContext.getCurrentUserId()));
+        return toResponseDto(user);
+    }
+
+    @Override
+    @Transactional
+    public CurrentUserResponseDTO selectBranch(UUID branchId) {
+        if (branchContext.isBranchBound()) {
+            throw new ResourceInUseException("Your account is bound to one branch and cannot switch.");
+        }
+
+        Branch branch = branchRepository.findById(branchId)
+                .orElseThrow(() -> new ResourceNotFoundException("Branch", branchId));
+        if (!Boolean.TRUE.equals(branch.getIsActive())) {
+            throw new ResourceInUseException("Branch '" + branch.getName() + "' is not active.");
+        }
+
+        branchContext.setActiveBranchId(branch.getId());
+        return getCurrentUser();
+    }
+
+    // Hand-mapped rather than through MapStruct: the effective branch comes from the session,
+    // not from the user row, because a global admin has none. Reported as null rather than
+    // throwing so an admin with no branch selected can still be told who they are.
+    private CurrentUserResponseDTO toResponseDto(AppUser user) {
+        UUID branchId = branchContext.findCurrentBranchId().orElse(null);
+        boolean checkoutAnimation = branchId != null
+                && branchSettingRepository.findValueByKey(SettingsServiceImpl.CHECKOUT_ANIMATION_KEY)
+                        .map(Boolean::parseBoolean)
+                        .orElse(false);
+        String branchName = branchId == null ? null : branchRepository.findById(branchId)
+                .map(Branch::getName)
+                .orElse(null);
+
+        return new CurrentUserResponseDTO(
+                user.getId(),
+                user.getUsername(),
+                user.getFullName(),
+                user.getRole(),
+                branchId,
+                branchName,
+                checkoutAnimation);
+    }
+}

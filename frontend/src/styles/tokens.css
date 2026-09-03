@@ -1,0 +1,107 @@
+/* Design tokens — FRONTEND-SPEC §2. The palette is defined here once as plain custom
+   properties and mapped into Tailwind below. Never hardcode a hex in a component. */
+
+/* ── Dark: the POS. The default, because that is what runs all night. ───────────────── */
+:root {
+  --bg:        #0F1311;
+  --surface:   #171C19;
+  --raised:    #1F2622;
+  --border:    #2C352F;
+  --text:      #EDF2EE;  /* 16.53:1 AAA */
+  --text-dim:  #A3AFA7;  /*  8.25:1 AAA */
+  --green:     #2FB457;  /*  6.94:1 AA  */
+  --danger:    #E5484D;  /*  4.78:1 AA  */
+  --info:      #4C8DF6;  /*  5.75:1 AA  */
+  --ink:       #0D0D0D;  /* label on gold (11.60:1) and green (7.21:1) fills */
+
+  /* Fill-only. Deliberately absent from the Tailwind colour namespace — see the guardrail
+     note below. Reach them through .bg-brand / .border-gold, which cannot produce text. */
+  --brand:     #1B8A3A;
+  --gold:      #F2C230;
+
+  /* The text-safe companion to --gold. Amounts and the live timer are gold on the dark
+     ground (11.18:1 AAA), but gold on white is 1.68:1 and effectively invisible, so in the
+     light theme this resolves to the ordinary text colour instead. Both values are measured
+     ones from the spec; no new colour is invented. */
+  --amount:    #F2C230;
+
+  /* Chart marks. Same trick as --amount, extended to SVG: gold reads at 11.18:1 on the dark
+     ground, so it is the bar colour here — but on the admin screen's white it is 1.68:1 and
+     effectively invisible, so the light theme swaps it for the darkened green. A chart drawn
+     with fill-chart-bar is legible in both themes by construction, and .fill-gold stays for
+     the wordmark, where gold sits on a brand-green disc rather than on paper. */
+  --chart-bar: #F2C230;
+}
+
+/* ── Light: the admin dashboard, read in daylight and sometimes printed. ────────────── */
+:root[data-theme='light'] {
+  --bg:        #FFFFFF;
+  --surface:   #F6F8F6;
+  --raised:    #FFFFFF;
+  --border:    #DDE4DF;
+  --text:      #14201A;  /* 16.78:1 AAA */
+  --text-dim:  #55635B;  /*  6.32:1 AA  */
+  --green:     #14702E;  /*  6.20:1 AA  */
+  --danger:    #C0343A;  /*  5.54:1 AA  */
+  --info:      #1B58C4;
+  --ink:       #0D0D0D;
+
+  --brand:     #1B8A3A;
+  --gold:      #F2C230;
+
+  /* Gold would be 1.68:1 here. Amounts fall back to full-strength text. */
+  --amount:    #14201A;
+  --chart-bar: #14702E;  /* 6.20:1 on white */
+}
+
+/* ── Mapping into Tailwind ──────────────────────────────────────────────────────────
+   `inline` matters: the generated utilities reference var(--bg) directly rather than
+   baking in a literal, so flipping data-theme re-colours the whole app through the
+   cascade with no reload and no second set of classes.
+
+   GUARDRAIL — the two non-negotiable contrast rules from the spec are enforced here by
+   construction rather than by review. --brand and --gold are not registered as colours,
+   so `text-brand` and `text-gold` do not exist and cannot be typed by accident. They are
+   reachable only through the fill utilities hand-authored in index.css. Amounts use
+   `text-amount`, which is legible in both themes by definition. */
+@theme inline {
+  --color-bg:       var(--bg);
+  --color-surface:  var(--surface);
+  --color-raised:   var(--raised);
+  --color-border:   var(--border);
+  --color-text:     var(--text);
+  --color-text-dim: var(--text-dim);
+  --color-green:    var(--green);
+  --color-danger:   var(--danger);
+  --color-info:     var(--info);
+  --color-ink:      var(--ink);
+  --color-amount:   var(--amount);
+  --color-chart-bar: var(--chart-bar);
+
+  /* System stack, no webfonts: the venue machine may have no internet, and system faces
+     are the most legible at small sizes anyway. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+               'Helvetica Neue', Arial, sans-serif;
+
+  /* Type scale — FRONTEND-SPEC §2. Spacing is left at Tailwind's default 4px step, whose
+     1/2/3/4/6/8/12/16 stops are exactly the 4→64 scale the spec asks for. */
+  --text-display: 2.5rem;      /* 40 */
+  --text-display--line-height: 1.1;
+  --text-display--font-weight: 700;
+
+  --text-amount: 1.75rem;      /* 28 */
+  --text-amount--line-height: 1.15;
+  --text-amount--font-weight: 650;
+
+  --text-heading: 1.25rem;     /* 20 */
+  --text-heading--line-height: 1.3;
+  --text-heading--font-weight: 650;
+
+  --text-body: 1rem;           /* 16 — deliberately not 14; this is read in low light */
+  --text-body--line-height: 1.5;
+
+  --text-label: 0.8125rem;     /* 13 */
+  --text-label--line-height: 1.4;
+  --text-label--font-weight: 600;
+  --text-label--letter-spacing: 0.06em;
+}

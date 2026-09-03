@@ -1,0 +1,313 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  html[data-theme='light'] {
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Every peso amount and every timer needs fixed-width digits, or the glyphs jitter as
+     the clock ticks and the display reads as broken. Applied at the source rather than
+     remembered at each call site. */
+  .tabular,
+  input[type='number'] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The floor is used under time pressure in a dim room: a visible focus ring is a
+     speed feature, not an accessibility afterthought. */
+  :focus-visible {
+    outline: 2px solid var(--info);
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Fill-only access to the two colours that must never become text. There is
+     deliberately no text- counterpart here; see the guardrail note in tokens.css. */
+  .bg-brand     { background-color: var(--brand); }
+  .bg-gold      { background-color: var(--gold); }
+  .border-brand { border-color: var(--brand); }
+  .border-gold  { border-color: var(--gold); }
+  .fill-brand   { fill: var(--brand); }
+  .fill-chart-bar { fill: var(--chart-bar); }
+  .fill-text-dim  { fill: var(--text-dim); }
+  .fill-gold    { fill: var(--gold); }
+  .stroke-gold  { stroke: var(--gold); }
+  .stroke-green { stroke: var(--green); }
+
+  /* ── The pixel table ───────────────────────────────────────────────────────────
+     Mixed from the palette so nothing new enters the system, and kept deliberately dark:
+     this sits under the light cone and behind the running total, and it must lose. */
+  /* Ordered by value, darkest to lightest, so the scene reads as depth rather than as
+     scattered blocks: pocket < rail < felt < ball < highlight. The pockets are the holes and
+     must recede; the balls are the subject of the illustration and must come forward. */
+  .fill-pocket      { fill: color-mix(in oklab, var(--bg) 80%, var(--brand)); }
+  .fill-rail        { fill: color-mix(in oklab, var(--brand) 55%, var(--bg)); }
+  .fill-felt        { fill: color-mix(in oklab, var(--green) 34%, var(--bg)); }
+  .fill-sight       { fill: color-mix(in oklab, var(--gold) 45%, var(--felt-ref, var(--bg))); }
+  .fill-ball        { fill: color-mix(in oklab, var(--text) 45%, var(--bg)); }
+  .fill-ball-lit    { fill: color-mix(in oklab, var(--text) 85%, var(--bg)); }
+  .fill-ball-stripe { fill: color-mix(in oklab, var(--gold) 85%, var(--bg)); }
+  .fill-cue         { fill: color-mix(in oklab, var(--gold) 55%, var(--bg)); }
+  .stroke-brand { stroke: var(--brand); }
+
+  /* Minimum interactive height — FRONTEND-SPEC §2. Costs nothing on desktop, and means a
+     tablet works later without a redesign. */
+  .hit { min-height: 44px; }
+
+  /* ── The light over the table ──────────────────────────────────────────────────
+     In the hall a table in play is a table under a lamp and the rest of the room is dark.
+     That is how the floor reads from a standing position, so it is how these cards read:
+     the head of an occupied card is lit, a free one is not.
+
+     This is the cue that does the work. Peripheral vision resolves brightness and gross
+     shape long before hue, and text not at all — so status is carried by how lit the card
+     is and by the rail down its edge. The word only confirms it.
+
+     It is a POOL, not a wash: a lamp throws a bright centre with a falloff and an edge onto
+     the felt, so the gradient has three stops and sits inside the head rather than bleeding
+     in from off-card. The name and the status label sit in the head's top corners, well
+     outside the pool — but the peak is held at a value where text directly ON it would still
+     measure 6.01:1, so the pairing passes AA wherever it happens to land.
+
+     The light is confined to the HEAD of the card. The foot paints its own solid --raised, so the money, the timer
+     and the meta line never sit on a moving ground. That separation is what lets the light
+     be strong enough to read across a room instead of being capped by the dimmest label on
+     the card — at these values the lit head is ~9x the luminance of a free card.
+
+     Mixed from the palette's own green and gold, so no new colour enters the system. */
+  /*
+   * The break clip, sitting behind a just-opened table's head.
+   *
+   * Kept low and warmed toward the felt so it reads as the lamp catching the table rather than
+   * as a video playing on the till. It fades in and back out under its own steam, so if the
+   * layer is torn off early — a keypress, a click — nothing snaps: the element simply goes
+   * while already on its way down.
+   *
+   * Every rule here is inside a motion-safe guard. With prefers-reduced-motion the component
+   * does not render at all, and this is belt and braces for that.
+   */
+  .motion-break {
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .motion-break {
+      animation: motion-break 1700ms ease-out forwards;
+      mix-blend-mode: screen;
+    }
+  }
+
+  @keyframes motion-break {
+    0%   { opacity: 0; }
+    12%  { opacity: 0.34; }
+    72%  { opacity: 0.34; }
+    100% { opacity: 0; }
+  }
+
+  /*
+   * The authored break, used when the clip cannot play.
+   *
+   * Balls travel outward along a per-ball vector and fade; the triangle that held them goes
+   * first, the cues a beat before that. 760ms end to end, which is shorter than the clip
+   * because a drawn scatter has no run-up to earn.
+   */
+  .motion-break-fallback {
+    opacity: 0.42;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .motion-break-cue {
+      animation: motion-break-fade 220ms ease-out forwards;
+    }
+    .motion-break-frame {
+      opacity: 0.9;
+      animation: motion-break-fade 320ms ease-out 60ms forwards;
+    }
+    .motion-break-ball {
+      opacity: 0.8;
+      animation: motion-break-scatter 760ms cubic-bezier(0.16, 0.9, 0.3, 1) both;
+    }
+    .motion-break-fallback {
+      animation: motion-break-fallback 900ms ease-out forwards;
+    }
+  }
+
+  @keyframes motion-break-fade {
+    to { opacity: 0; }
+  }
+
+  @keyframes motion-break-scatter {
+    0%   { transform: translate(0, 0); opacity: 0.85; }
+    18%  { opacity: 0.85; }
+    100% { transform: translate(var(--dx, 0), var(--dy, 0)); opacity: 0; }
+  }
+
+  @keyframes motion-break-fallback {
+    0%   { opacity: 0; }
+    10%  { opacity: 0.5; }
+    70%  { opacity: 0.5; }
+    100% { opacity: 0; }
+  }
+
+  /*
+   * The perforation along a receipt's top edge.
+   *
+   * Punched holes rather than a dashed rule: a row of dots in the PAGE colour reads as paper
+   * torn from a roll, where a dashed border in --border on --surface was invisible — which is
+   * what the first attempt shipped. It is the one flourish in the transition, so it has to
+   * actually be seen.
+   *
+   * Purely decorative, never printed, and drawn inside the card's own rounded corners.
+   */
+  .receipt-perforation {
+    background-image: radial-gradient(circle at 5px 50%, var(--bg) 0 2.5px, transparent 2.6px);
+    background-size: 10px 100%;
+    background-repeat: repeat-x;
+  }
+
+  /*
+   * Checkout: the money has landed.
+   *
+   * Authored rather than filmed. This fires forty times on a Saturday with someone waiting, so
+   * it has to be shorter than any clip could usefully be, and it has to mean "settled" — which
+   * a pool table does not. A band of the brand green sweeps once across the panel behind the
+   * total and is gone in 620ms.
+   *
+   * The sweep is BEHIND the figures and blended, never over them: the amount is the one thing
+   * on this screen that must stay readable, and a wash across it would be the animation being
+   * wrong.
+   */
+  .motion-settled {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .motion-settled::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    border-radius: inherit;
+    background: linear-gradient(
+      100deg,
+      transparent 0%,
+      color-mix(in oklab, var(--green) 0%, transparent) 34%,
+      color-mix(in oklab, var(--green) 42%, transparent) 50%,
+      color-mix(in oklab, var(--green) 0%, transparent) 66%,
+      transparent 100%
+    );
+    background-size: 260% 100%;
+    background-repeat: no-repeat;
+    background-position: 130% 0;
+    opacity: 0;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .motion-settled::after {
+      animation: motion-settled 620ms cubic-bezier(0.22, 0.61, 0.36, 1) forwards;
+    }
+  }
+
+  @keyframes motion-settled {
+    0%   { background-position: 130% 0; opacity: 0; }
+    18%  { opacity: 1; }
+    78%  { opacity: 1; }
+    100% { background-position: -30% 0; opacity: 0; }
+  }
+
+  /* The receipt arriving. A short rise, no bounce — this is a document appearing, not a toy. */
+  .motion-arrive {
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .motion-arrive {
+      animation: motion-arrive 420ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+    }
+  }
+
+  @keyframes motion-arrive {
+    from { opacity: 0; transform: translateY(0.5rem); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .lit-running {
+    background-image: radial-gradient(
+      58% 76% at 50% 40%,
+      color-mix(in oklab, var(--green) 46%, transparent) 0%,
+      color-mix(in oklab, var(--green) 30%, transparent) 46%,
+      transparent 80%
+    );
+  }
+
+  /* Paused is still lit — the lamp is on, the game has stopped — but turned down. The value
+     is chosen on LUMINANCE, not on how gold it looks: at 12% the head sits at 0.54x a running
+     card and 3.6x a free one, so the three states fall in order on the one channel peripheral
+     vision actually reads. Gold at its full 26% measured BRIGHTER than running green, which
+     would have made the two indistinguishable from across the room by everything except hue. */
+  .lit-paused {
+    background-image: radial-gradient(
+      58% 76% at 50% 40%,
+      color-mix(in oklab, var(--gold) 18%, transparent) 0%,
+      color-mix(in oklab, var(--gold) 12%, transparent) 46%,
+      transparent 80%
+    );
+  }
+
+  /* The rail. A pool table's cushion runs the length of it; this is the same edge, and it is
+     the one status cue that survives being seen sideways-on. Declared as the whole border so
+     it cannot be half-overridden by a utility, and as a real border rather than an inset
+     shadow so the card's own foot cannot paint over it. */
+  .rail-running { border: 1px solid var(--border); border-left: 6px solid var(--green); }
+  .rail-paused  { border: 1px solid var(--border); border-left: 6px solid var(--gold); }
+  .rail-free    { border: 1px solid var(--border); border-left: 6px solid var(--border); }
+
+  /* ── Figures on the floor ──────────────────────────────────────────────────────
+     The floor is a single-purpose screen on a machine that does nothing else, shown on
+     whatever monitor the hall has. These scale with the viewport so the same card reads
+     from standing on the counter's big screen and still fits a laptop while it is being
+     set up. The lower clamp is the spec's own Amount/Heading sizes, so nothing shrinks
+     below what §2 measured. */
+  .figure-amount {
+    font-size: clamp(1.75rem, 2.6vw, 3.5rem);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  .figure-timer {
+    font-size: clamp(1rem, 1.15vw, 1.75rem);
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The table number. It is the loudest thing on the card because it is the thing staff say
+     out loud, and it was body text before. */
+  .figure-table-number {
+    font-size: clamp(2.5rem, 3.4vw, 4.5rem);
+    font-weight: 700;
+    line-height: 0.95;
+    letter-spacing: -0.03em;
+  }
+
+  .figure-name {
+    font-size: clamp(1.25rem, 1.35vw, 1.875rem);
+    font-weight: 650;
+    line-height: 1.15;
+  }
+}

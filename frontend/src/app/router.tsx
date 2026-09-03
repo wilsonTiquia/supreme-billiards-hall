@@ -1,0 +1,54 @@
+import { Route, Routes } from 'react-router-dom';
+import { AppShell } from './AppShell';
+import { HomeRedirect, RequireAdmin, RequireAuth } from './guards';
+import { LoginPage } from '@/features/login/LoginPage';
+import { FloorPage } from '@/features/floor/FloorPage';
+import { SessionPage } from '@/features/session/SessionPage';
+import { CheckoutPage } from '@/features/checkout/CheckoutPage';
+import { QuickSalePage } from '@/features/quicksale/QuickSalePage';
+import { ReceiptPage } from '@/features/checkout/ReceiptPage';
+import { EndOfDayPage } from '@/features/endofday/EndOfDayPage';
+import { DashboardPage } from '@/features/admin/dashboard/DashboardPage';
+import { ProductsPage } from '@/features/admin/catalog/ProductsPage';
+import { CategoriesPage } from '@/features/admin/catalog/CategoriesPage';
+import { TablesPage } from '@/features/admin/catalog/TablesPage';
+import { CustomerTypesPage } from '@/features/admin/catalog/CustomerTypesPage';
+import { StockPage } from '@/features/admin/stock/StockPage';
+import { SalesPage } from '@/features/admin/sales/SalesPage';
+import { AuditPage } from '@/features/admin/audit/AuditPage';
+import { SettingsPage } from '@/features/admin/settings/SettingsPage';
+import { NotFoundPage } from '@/features/NotFoundPage';
+
+export function AppRoutes() {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+
+      <Route element={<RequireAuth />}>
+        <Route element={<AppShell />}>
+          <Route index element={<HomeRedirect />} />
+          <Route path="floor" element={<FloorPage />} />
+          <Route path="sessions/:sessionId" element={<SessionPage />} />
+          <Route path="checkout/:billId" element={<CheckoutPage />} />
+          <Route path="quick-sale" element={<QuickSalePage />} />
+          <Route path="receipt/:billId" element={<ReceiptPage />} />
+          <Route path="end-of-day" element={<EndOfDayPage />} />
+
+          <Route element={<RequireAdmin />}>
+            <Route path="dashboard" element={<DashboardPage />} />
+            <Route path="admin/products" element={<ProductsPage />} />
+            <Route path="admin/categories" element={<CategoriesPage />} />
+            <Route path="admin/tables" element={<TablesPage />} />
+            <Route path="admin/customer-types" element={<CustomerTypesPage />} />
+            <Route path="admin/settings" element={<SettingsPage />} />
+            <Route path="admin/stock" element={<StockPage />} />
+            <Route path="admin/sales" element={<SalesPage />} />
+            <Route path="admin/audit" element={<AuditPage />} />
+          </Route>
+
+          <Route path="*" element={<NotFoundPage />} />
+        </Route>
+      </Route>
+    </Routes>
+  );
+}
