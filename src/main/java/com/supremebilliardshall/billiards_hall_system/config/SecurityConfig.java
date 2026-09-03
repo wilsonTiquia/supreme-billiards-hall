@@ -14,11 +14,14 @@ import org.springframework.security.authentication.dao.DaoAuthenticationProvider
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.core.session.SessionRegistry;
+import org.springframework.security.core.session.SessionRegistryImpl;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.context.HttpSessionSecurityContextRepository;
 import org.springframework.security.web.context.SecurityContextRepository;
+import org.springframework.security.web.session.HttpSessionEventPublisher;
 
 import java.io.IOException;
 
@@ -35,11 +38,22 @@ public class SecurityConfig {
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   SessionRegistry sessionRegistry) throws Exception {
         http
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
+                // Tracks sessions in the registry (populated on login) so a password change can
+                // expire a user's other sessions. maximumSessions(-1) leaves logins unlimited;
+                // it is here only to install the filter that enforces expireNow() on the next
+                // request. An expired session gets the same 401 envelope as any dead session.
+                .sessionManagement(session -> session
+                        .maximumSessions(-1)
+                        .sessionRegistry(sessionRegistry)
+                        .expiredSessionStrategy(event ->
+                                write(event.getResponse(), HttpStatus.UNAUTHORIZED,
+                                        APIResponse.failure("Your session was ended. Please sign in again."))))
                 .authorizeHttpRequests(requests -> requests
                         .requestMatchers("/api/v1/auth/login").permitAll()
                         // Every controller in this application lives under /api/v1, so this is
@@ -85,6 +99,20 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    // Sessions are keyed by principal here so a user's active sessions can be found and expired
+    // when their password changes. Login registers each new session with this registry.
+    @Bean
+    public SessionRegistry sessionRegistry() {
+        return new SessionRegistryImpl();
+    }
+
+    // Publishes servlet session lifecycle events so the registry drops sessions as they end,
+    // rather than holding them after logout or timeout.
+    @Bean
+    public HttpSessionEventPublisher httpSessionEventPublisher() {
+        return new HttpSessionEventPublisher();
     }
 
     private void write(HttpServletResponse response, HttpStatus status, APIResponse<Object> body)

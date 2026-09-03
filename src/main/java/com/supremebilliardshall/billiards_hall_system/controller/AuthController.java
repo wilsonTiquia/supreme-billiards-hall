@@ -9,7 +9,9 @@ import com.supremebilliardshall.billiards_hall_system.exception.BusinessRuleExce
 import com.supremebilliardshall.billiards_hall_system.exception.TooManyLoginAttemptsException;
 import com.supremebilliardshall.billiards_hall_system.security.AppUserDetails;
 import com.supremebilliardshall.billiards_hall_system.security.LoginAttemptService;
+import com.supremebilliardshall.billiards_hall_system.security.SessionInvalidator;
 import com.supremebilliardshall.billiards_hall_system.service.AuthService;
+import org.springframework.security.core.session.SessionRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
@@ -37,15 +39,21 @@ public class AuthController {
     private final SecurityContextRepository securityContextRepository;
     private final AuthService authService;
     private final LoginAttemptService loginAttemptService;
+    private final SessionRegistry sessionRegistry;
+    private final SessionInvalidator sessionInvalidator;
 
     public AuthController(AuthenticationManager authenticationManager,
                           SecurityContextRepository securityContextRepository,
                           AuthService authService,
-                          LoginAttemptService loginAttemptService) {
+                          LoginAttemptService loginAttemptService,
+                          SessionRegistry sessionRegistry,
+                          SessionInvalidator sessionInvalidator) {
         this.authenticationManager = authenticationManager;
         this.securityContextRepository = securityContextRepository;
         this.authService = authService;
         this.loginAttemptService = loginAttemptService;
+        this.sessionRegistry = sessionRegistry;
+        this.sessionInvalidator = sessionInvalidator;
     }
 
     @PostMapping("/login")
@@ -86,6 +94,8 @@ public class AuthController {
         loginAttemptService.recordSuccess(username, sourceAddress);
 
         AppUserDetails principal = (AppUserDetails) authentication.getPrincipal();
+        // Track this session so a later password change can find and end it.
+        sessionRegistry.registerNewSession(request.getSession().getId(), principal);
         CurrentUserResponseDTO currentUser = authService.recordLogin(principal.getUserId());
 
         return ResponseEntity.
@@ -125,6 +135,12 @@ public class AuthController {
             throw ex;
         }
         loginAttemptService.recordSuccessKey(key);
+
+        // End the user's other sessions, keeping the one changing the password. A change made
+        // because the account may be compromised must not leave the intruder logged in.
+        String currentSessionId = request.getSession(false) == null ? null : request.getSession().getId();
+        sessionInvalidator.invalidateOtherSessions(currentUserId(), currentSessionId);
+
         return ResponseEntity.
                 ok(APIResponse.success(
                         null,
@@ -134,6 +150,12 @@ public class AuthController {
     private String currentUsername() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         return authentication == null ? "" : authentication.getName();
+    }
+
+    private java.util.UUID currentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication != null && authentication.getPrincipal() instanceof AppUserDetails details
+                ? details.getUserId() : null;
     }
 
     @GetMapping("/me")
