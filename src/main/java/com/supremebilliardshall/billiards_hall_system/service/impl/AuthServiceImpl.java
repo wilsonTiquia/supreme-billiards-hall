@@ -5,6 +5,7 @@ import com.supremebilliardshall.billiards_hall_system.dto.auth.CurrentUserRespon
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ResetPasswordRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.entity.AppUser;
 import com.supremebilliardshall.billiards_hall_system.entity.Branch;
+import com.supremebilliardshall.billiards_hall_system.entity.UserRole;
 import com.supremebilliardshall.billiards_hall_system.exception.BusinessRuleException;
 import com.supremebilliardshall.billiards_hall_system.exception.ResourceInUseException;
 import com.supremebilliardshall.billiards_hall_system.exception.ResourceNotFoundException;
@@ -97,6 +98,25 @@ public class AuthServiceImpl implements AuthService {
     public void resetPassword(UUID userId, ResetPasswordRequestDTO request) {
         AppUser user = appUserRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+
+        // Scoped like every other {id} load: an admin acts within the branch it is acting for,
+        // and a user in another branch is reported as not found rather than revealed. A global
+        // admin's current branch resolves the same way it does for every other operation.
+        if (!branchContext.getCurrentBranchId().equals(user.getBranchId())) {
+            throw new ResourceNotFoundException("User", userId);
+        }
+        // An archived user has no live login to reset.
+        if (user.getArchivedAt() != null) {
+            throw new BusinessRuleException(
+                    "That user is archived; restore the account before resetting its password.");
+        }
+        // Deliberate ruling: no admin resets another admin. An admin owns their own password
+        // and changes it themselves; one admin resetting another is a takeover path. The owner
+        // recovers a forgotten password through the bootstrap variable, not through here.
+        if (user.getRole() == UserRole.ADMIN) {
+            throw new BusinessRuleException(
+                    "An administrator's password cannot be reset here; they change it themselves.");
+        }
 
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
         appUserRepository.save(user);

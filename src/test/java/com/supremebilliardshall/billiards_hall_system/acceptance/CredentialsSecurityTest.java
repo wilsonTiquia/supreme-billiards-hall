@@ -125,23 +125,72 @@ class CredentialsSecurityTest {
 
         // An employee is refused outright.
         mockMvc.perform(put("/api/v1/users/{id}/password", target.getId())
-                        .with(user(principalFor(givenUser(branchId, "emp-" + UUID.randomUUID(),
-                                SENTINEL, UserRole.EMPLOYEE))))
+                        .with(user(principal(branchId, UserRole.EMPLOYEE)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"newPassword":"reset-by-employee"}"""))
                 .andExpect(status().isForbidden());
 
-        // An admin sets it, and the target can now authenticate against the new value.
+        // An admin acting for that branch sets it, and the value takes effect.
         mockMvc.perform(put("/api/v1/users/{id}/password", target.getId())
-                        .with(user(principalFor(givenUser(branchId, "admin-" + UUID.randomUUID(),
-                                SENTINEL, UserRole.ADMIN))))
+                        .with(user(principal(branchId, UserRole.ADMIN)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"newPassword":"reset-by-admin"}"""))
                 .andExpect(status().isOk());
         assertThat(passwordEncoder.matches("reset-by-admin",
                 appUserRepository.findById(target.getId()).orElseThrow().getPasswordHash())).isTrue();
+    }
+
+    @Test
+    void anAdminCannotResetAUserInAnotherBranch() throws Exception {
+        UUID branchA = givenBranch();
+        UUID branchB = givenBranch();
+        AppUser targetInB = givenUser(branchB, "other-branch-" + UUID.randomUUID(), SENTINEL, UserRole.EMPLOYEE);
+
+        // Scoped to the caller's branch: a branch-A admin sees a branch-B user as not found.
+        mockMvc.perform(put("/api/v1/users/{id}/password", targetInB.getId())
+                        .with(user(principal(branchA, UserRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"newPassword":"cross-branch-reset"}"""))
+                .andExpect(status().isNotFound());
+        assertThat(passwordEncoder.matches("cross-branch-reset",
+                appUserRepository.findById(targetInB.getId()).orElseThrow().getPasswordHash())).isFalse();
+    }
+
+    @Test
+    void anAdminCannotResetAnotherAdminOrAnArchivedUser() throws Exception {
+        UUID branchId = givenBranch();
+        // A branch-bound admin (role ADMIN with a branch), so the branch check passes and the
+        // no-admin-resets-an-admin rule is what refuses it.
+        AppUser anotherAdmin = new AppUser();
+        anotherAdmin.setBranchId(branchId);
+        anotherAdmin.setUsername("co-admin-" + UUID.randomUUID());
+        anotherAdmin.setPasswordHash(SENTINEL);
+        anotherAdmin.setFullName("Co Admin");
+        anotherAdmin.setRole(UserRole.ADMIN);
+        anotherAdmin.setIsActive(true);
+        anotherAdmin = appUserRepository.saveAndFlush(anotherAdmin);
+        AppUser archived = givenUser(branchId, "gone-" + UUID.randomUUID(), SENTINEL, UserRole.EMPLOYEE);
+        archived.setArchivedAt(java.time.OffsetDateTime.now());
+        appUserRepository.saveAndFlush(archived);
+
+        // Another admin is refused: no admin resets an admin.
+        mockMvc.perform(put("/api/v1/users/{id}/password", anotherAdmin.getId())
+                        .with(user(principal(branchId, UserRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"newPassword":"reset-an-admin"}"""))
+                .andExpect(status().isConflict());
+
+        // An archived user is refused.
+        mockMvc.perform(put("/api/v1/users/{id}/password", archived.getId())
+                        .with(user(principal(branchId, UserRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"newPassword":"reset-archived"}"""))
+                .andExpect(status().isConflict());
     }
 
     private UUID givenBranch() {
@@ -167,5 +216,12 @@ class CredentialsSecurityTest {
     private AppUserDetails principalFor(AppUser user) {
         return new AppUserDetails(user.getId(), user.getBranchId(), user.getUsername(),
                 user.getPasswordHash(), user.getFullName(), user.getRole(), true);
+    }
+
+    // A principal bound to a specific branch, so a global admin's branch resolution never
+    // enters into the reset-scoping tests.
+    private AppUserDetails principal(UUID branchId, UserRole role) {
+        return new AppUserDetails(UUID.randomUUID(), branchId, "tester",
+                "unused", "Tester", role, true);
     }
 }
