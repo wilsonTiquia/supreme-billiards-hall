@@ -47,6 +47,12 @@ public class AppUser {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 
+    // When true the user is gated to changing their own password (see V10). Cleared in the
+    // same transaction as a successful password change. Defaulted to match the column default,
+    // so a row created without setting it is not a NOT NULL violation.
+    @Column(name = "must_change_password", nullable = false)
+    private Boolean mustChangePassword = false;
+
     @Column(name = "last_login_at")
     private OffsetDateTime lastLoginAt;
 
