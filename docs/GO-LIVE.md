@@ -75,6 +75,20 @@ database, so any testing after the reset re-pollutes it.
 7. - [ ] Reboot the Mac one final time and confirm the till comes back by itself
 8. - [ ] Write the new passwords somewhere the owner can reach them and you are not the single point
         of failure
+9. - [ ] **Set a real `DB_PASSWORD` in the environment.** Production must not run on the
+        `${DB_PASSWORD:supreme}` fallback in `application.properties`. Set `DB_URL`, `DB_USERNAME`
+        and `DB_PASSWORD` where the app reads them, and start it with `SPRING_PROFILES_ACTIVE=prod`.
+        **This is not one change.** `scripts/backup.sh`, `scripts/restore.sh` and
+        `scripts/verify-backup.sh` each hardcode `supreme`. A rotation that changes the database
+        role and the environment but misses those three leaves the till running normally while the
+        nightly backup fails silently — worse than the weak password it replaced. Change the role,
+        the environment and all three scripts together, then **re-run item 6** and confirm the
+        backup still lands in both places.
+10. - [ ] **Confirm `listen_addresses = 'localhost'` in `postgresql.conf`.** Postgres was installed
+        listening on every interface, which put 5432 on the venue network behind a password that is
+        also written in `docs/SETUP.md`. Verify with
+        `netstat -an | grep '\.5432' | grep LISTEN` — it must show `127.0.0.1.5432` and must not
+        show `*.5432`.
 
 > **Decide Thursday, not Saturday:** entering the catalogue before the reset means entering it twice.
 > Entering it after means doing it on opening day. Given the reset also sets the passwords, the
