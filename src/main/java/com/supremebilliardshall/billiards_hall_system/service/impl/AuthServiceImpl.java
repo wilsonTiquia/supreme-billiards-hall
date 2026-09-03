@@ -1,8 +1,11 @@
 package com.supremebilliardshall.billiards_hall_system.service.impl;
 
+import com.supremebilliardshall.billiards_hall_system.dto.auth.ChangePasswordRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.CurrentUserResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.auth.ResetPasswordRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.entity.AppUser;
 import com.supremebilliardshall.billiards_hall_system.entity.Branch;
+import com.supremebilliardshall.billiards_hall_system.exception.BusinessRuleException;
 import com.supremebilliardshall.billiards_hall_system.exception.ResourceInUseException;
 import com.supremebilliardshall.billiards_hall_system.exception.ResourceNotFoundException;
 import com.supremebilliardshall.billiards_hall_system.repository.AppUserRepository;
@@ -10,6 +13,7 @@ import com.supremebilliardshall.billiards_hall_system.repository.BranchRepositor
 import com.supremebilliardshall.billiards_hall_system.repository.BranchSettingRepository;
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
 import com.supremebilliardshall.billiards_hall_system.service.AuthService;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,15 +27,18 @@ public class AuthServiceImpl implements AuthService {
     private final BranchRepository branchRepository;
     private final BranchSettingRepository branchSettingRepository;
     private final BranchContext branchContext;
+    private final PasswordEncoder passwordEncoder;
 
     public AuthServiceImpl(AppUserRepository appUserRepository,
                            BranchRepository branchRepository,
                            BranchSettingRepository branchSettingRepository,
-                           BranchContext branchContext) {
+                           BranchContext branchContext,
+                           PasswordEncoder passwordEncoder) {
         this.appUserRepository = appUserRepository;
         this.branchRepository = branchRepository;
         this.branchSettingRepository = branchSettingRepository;
         this.branchContext = branchContext;
+        this.passwordEncoder = passwordEncoder;
     }
 
     @Override
@@ -67,6 +74,32 @@ public class AuthServiceImpl implements AuthService {
 
         branchContext.setActiveBranchId(branch.getId());
         return getCurrentUser();
+    }
+
+    @Override
+    @Transactional
+    public void changeOwnPassword(ChangePasswordRequestDTO request) {
+        AppUser user = appUserRepository.findById(branchContext.getCurrentUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User", branchContext.getCurrentUserId()));
+
+        // The current password must match the stored hash. A wrong one is a plain refusal,
+        // not a hint about which half was wrong.
+        if (!passwordEncoder.matches(request.getCurrentPassword(), user.getPasswordHash())) {
+            throw new BusinessRuleException("The current password is incorrect.");
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        appUserRepository.save(user);
+    }
+
+    @Override
+    @Transactional
+    public void resetPassword(UUID userId, ResetPasswordRequestDTO request) {
+        AppUser user = appUserRepository.findById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("User", userId));
+
+        user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        appUserRepository.save(user);
     }
 
     // Hand-mapped rather than through MapStruct: the effective branch comes from the session,

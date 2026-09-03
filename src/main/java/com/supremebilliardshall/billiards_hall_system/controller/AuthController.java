@@ -1,6 +1,7 @@
 package com.supremebilliardshall.billiards_hall_system.controller;
 
 import com.supremebilliardshall.billiards_hall_system.dto.APIResponse;
+import com.supremebilliardshall.billiards_hall_system.dto.auth.ChangePasswordRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.CurrentUserResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.LoginRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.SelectBranchRequestDTO;
@@ -69,6 +70,17 @@ public class AuthController {
                 ok(APIResponse.success(
                         currentUser,
                         "Active branch selected successfully"));
+    }
+
+    // The caller changes their own password. Any authenticated user; the current password is
+    // the check, not the role.
+    @PutMapping("/password")
+    public ResponseEntity<APIResponse<Void>> changePassword(@Valid @RequestBody ChangePasswordRequestDTO changePasswordRequestDTO) {
+        authService.changeOwnPassword(changePasswordRequestDTO);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        null,
+                        "Password changed successfully"));
     }
 
     @GetMapping("/me")
