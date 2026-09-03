@@ -138,8 +138,10 @@ class CredentialsSecurityTest {
                         .content("""
                                 {"newPassword":"reset-by-admin"}"""))
                 .andExpect(status().isOk());
-        assertThat(passwordEncoder.matches("reset-by-admin",
-                appUserRepository.findById(target.getId()).orElseThrow().getPasswordHash())).isTrue();
+        AppUser afterReset = appUserRepository.findById(target.getId()).orElseThrow();
+        assertThat(passwordEncoder.matches("reset-by-admin", afterReset.getPasswordHash())).isTrue();
+        // An admin-set password is temporary: the target must change it on next login.
+        assertThat(afterReset.getMustChangePassword()).isTrue();
     }
 
     @Test

@@ -126,6 +126,12 @@ public class AuthServiceImpl implements AuthService {
         }
 
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        // An admin-set password is always temporary: the owner hands it over and the user
+        // replaces it on next login, so the owner never holds a working credential for someone
+        // else's account. Set in the same transaction as the hash, so there is no window where
+        // the admin-set password is usable without the gate. Every override that user then makes
+        // is attributable to a password only they know.
+        user.setMustChangePassword(true);
         appUserRepository.save(user);
     }
 
