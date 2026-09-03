@@ -38,11 +38,32 @@ If you manually switch to a different parent and actually want the inheritance, 
 
 ---
 
-# Launch-day: setting the first login credentials
+# Going live: choosing the first passwords
+
+`scripts/reset-for-golive.sh` wipes the database to a clean hall and sets the owner and counter
+passwords. It has two paths:
+
+- **Interactive (recommended, the default):** run it with no flag and it asks you to type the
+  two real passwords — no default password ever exists, so there is nothing to leak or forget
+  to change.
+- **`--default-password`:** it seeds one documented default (`supreme-golive`) for both
+  accounts and forces each to change it on first sign-in — convenient for a hands-off install,
+  at the cost of a default briefly existing (usable only to change itself, nothing else).
+
+Either way the script keeps its safety catch (it refuses to run against a database with
+payments unless you type the exact `DESTROY N PAYMENTS` phrase) and writes the `.golive` marker.
+
+If you are **not** wiping the database — a fresh checkout, or recovery — use the bootstrap
+variable below instead.
+
+---
+
+# Launch-day: setting the first login credentials (without wiping)
 
 The seeded `owner` and `counter` logins are **disabled** (migration
 `V9__disable_seed_credentials.sql` writes a non-bcrypt sentinel, so no password can
-authenticate them). Establish real credentials once, at install, like this:
+authenticate them). When you are not running the go-live reset above, establish credentials
+once, at install, like this:
 
 1. **Set the bootstrap variable** in the environment (never in a file, never committed):
 
