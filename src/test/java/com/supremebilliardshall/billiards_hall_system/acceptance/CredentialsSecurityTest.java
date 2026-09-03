@@ -143,6 +143,22 @@ class CredentialsSecurityTest {
     }
 
     @Test
+    void resettingTheGlobalOwnerGivesTheAdminMessageNotANotFound() throws Exception {
+        UUID branchId = givenBranch();
+        // givenUser makes an ADMIN a global admin (branch_id NULL). The admin check must run
+        // before the branch check, so the owner gets the clear "cannot reset an admin" message
+        // rather than a 404 from the branch scoping.
+        AppUser globalOwner = givenUser(branchId, "owner-" + UUID.randomUUID(), SENTINEL, UserRole.ADMIN);
+
+        mockMvc.perform(put("/api/v1/users/{id}/password", globalOwner.getId())
+                        .with(user(principal(branchId, UserRole.ADMIN)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"newPassword":"reset-the-owner"}"""))
+                .andExpect(status().isConflict());
+    }
+
+    @Test
     void anAdminCannotResetAUserInAnotherBranch() throws Exception {
         UUID branchA = givenBranch();
         UUID branchB = givenBranch();

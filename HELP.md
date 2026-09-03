@@ -66,3 +66,40 @@ authenticate them). Establish real credentials once, at install, like this:
    is intended, not a gap.
 
 Passwords must be at least 8 characters. There are no other composition rules.
+
+---
+
+# Recovering a forgotten owner password (break-glass)
+
+There is **no in-app reset for the owner**, on purpose: no admin can reset another admin, so
+one admin cannot take over another. If the owner password is lost, recover it at the database.
+This needs direct database access **by design** — it is the one path that cannot be reached
+from the network, which is exactly why it is safe to keep the owner un-resettable online.
+
+Run this on the database host. Substitute a real password for the placeholder.
+
+1. **Disable the owner login** by writing the sentinel back over its password hash:
+
+   ```
+   psql "$DB_URL" -c "UPDATE app_user SET password_hash = 'DISABLED-NO-LOGIN' WHERE username = 'owner';"
+   ```
+
+   (If you connect some other way, run just the SQL: `UPDATE app_user SET password_hash =
+   'DISABLED-NO-LOGIN' WHERE username = 'owner';`)
+
+2. **Set the bootstrap variable** to the new owner password, in the app's environment:
+
+   ```
+   export SUPREME_BOOTSTRAP_ADMIN_PASSWORD='a-new-strong-owner-password'
+   ```
+
+3. **Restart the app.** On boot it sees the sentinel, encodes the variable with BCrypt, stores
+   it as the owner password, and logs at INFO that it did so (never the value).
+
+4. **Log in as `owner`** with that password.
+
+5. **Change it immediately** via `PUT /api/v1/auth/password`, then **unset
+   `SUPREME_BOOTSTRAP_ADMIN_PASSWORD`** before the next restart so it cannot fire again.
+
+Step 1 matters: the bootstrap only acts while the account carries the sentinel, so a real
+(forgotten) hash must be reset to the sentinel first, or nothing happens on restart.

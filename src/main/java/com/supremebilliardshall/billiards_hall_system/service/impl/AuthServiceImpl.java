@@ -99,6 +99,17 @@ public class AuthServiceImpl implements AuthService {
         AppUser user = appUserRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User", userId));
 
+        // Deliberate ruling: no admin resets another admin. An admin owns their own password
+        // and changes it themselves; one admin resetting another is a takeover path. A
+        // forgotten owner password is recovered by the break-glass procedure in HELP.md
+        // ("Recovering a forgotten owner password"), which needs database access on purpose —
+        // the bootstrap variable alone is not enough, as it only acts while the account still
+        // carries the disabled sentinel. This check runs before the branch check so the owner
+        // (a global admin with no branch) gets this clear message rather than a not-found.
+        if (user.getRole() == UserRole.ADMIN) {
+            throw new BusinessRuleException(
+                    "An administrator's password cannot be reset here; they change it themselves.");
+        }
         // Scoped like every other {id} load: an admin acts within the branch it is acting for,
         // and a user in another branch is reported as not found rather than revealed. A global
         // admin's current branch resolves the same way it does for every other operation.
@@ -109,13 +120,6 @@ public class AuthServiceImpl implements AuthService {
         if (user.getArchivedAt() != null) {
             throw new BusinessRuleException(
                     "That user is archived; restore the account before resetting its password.");
-        }
-        // Deliberate ruling: no admin resets another admin. An admin owns their own password
-        // and changes it themselves; one admin resetting another is a takeover path. The owner
-        // recovers a forgotten password through the bootstrap variable, not through here.
-        if (user.getRole() == UserRole.ADMIN) {
-            throw new BusinessRuleException(
-                    "An administrator's password cannot be reset here; they change it themselves.");
         }
 
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
