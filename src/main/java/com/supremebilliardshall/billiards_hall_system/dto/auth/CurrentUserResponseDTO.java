@@ -27,4 +27,9 @@ public class CurrentUserResponseDTO {
      * setting reaches every till on its next sign-in or refresh with no restart and no deploy.
      */
     private boolean checkoutAnimation;
+
+    // When true the SPA must route to the forced password-change screen and let the user do
+    // nothing else. Reported here so the SPA knows on load, not only after a gated request is
+    // refused.
+    private boolean mustChangePassword;
 }

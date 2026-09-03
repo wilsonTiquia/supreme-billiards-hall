@@ -90,6 +90,9 @@ public class AuthServiceImpl implements AuthService {
         }
 
         user.setPasswordHash(passwordEncoder.encode(request.getNewPassword()));
+        // Clears the forced-change gate in the same transaction as the hash write, so the
+        // default password is never live without the gate and never gated after it is replaced.
+        user.setMustChangePassword(false);
         appUserRepository.save(user);
     }
 
@@ -146,6 +149,7 @@ public class AuthServiceImpl implements AuthService {
                 user.getRole(),
                 branchId,
                 branchName,
-                checkoutAnimation);
+                checkoutAnimation,
+                Boolean.TRUE.equals(user.getMustChangePassword()));
     }
 }

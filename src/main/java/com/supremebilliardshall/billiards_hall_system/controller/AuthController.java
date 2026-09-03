@@ -121,7 +121,8 @@ public class AuthController {
     // brute-force the current password to learn it for reuse elsewhere.
     @PutMapping("/password")
     public ResponseEntity<APIResponse<Void>> changePassword(@Valid @RequestBody ChangePasswordRequestDTO changePasswordRequestDTO,
-                                                            HttpServletRequest request) {
+                                                            HttpServletRequest request,
+                                                            HttpServletResponse response) {
         String key = "pw:" + currentUsername() + "|" + request.getRemoteAddr();
         if (loginAttemptService.isBlockedKey(key)) {
             throw new TooManyLoginAttemptsException(
@@ -136,6 +137,11 @@ public class AuthController {
         }
         loginAttemptService.recordSuccessKey(key);
 
+        // The forced-change gate was just cleared in the database; refresh this session's
+        // principal so the gate stops blocking it and the till is usable immediately, without a
+        // re-login. Only meaningful when the flag was set, but harmless otherwise.
+        refreshPrincipalAfterPasswordChange(request, response);
+
         // End the user's other sessions, keeping the one changing the password. A change made
         // because the account may be compromised must not leave the intruder logged in.
         String currentSessionId = request.getSession(false) == null ? null : request.getSession().getId();
@@ -145,6 +151,21 @@ public class AuthController {
                 ok(APIResponse.success(
                         null,
                         "Password changed successfully"));
+    }
+
+    private void refreshPrincipalAfterPasswordChange(HttpServletRequest request, HttpServletResponse response) {
+        Authentication current = SecurityContextHolder.getContext().getAuthentication();
+        if (current == null || !(current.getPrincipal() instanceof AppUserDetails principal)
+                || !principal.isMustChangePassword()) {
+            return;
+        }
+        AppUserDetails refreshed = principal.withMustChangePassword(false);
+        UsernamePasswordAuthenticationToken authentication =
+                new UsernamePasswordAuthenticationToken(refreshed, current.getCredentials(), refreshed.getAuthorities());
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(authentication);
+        SecurityContextHolder.setContext(context);
+        securityContextRepository.saveContext(context, request, response);
     }
 
     private String currentUsername() {

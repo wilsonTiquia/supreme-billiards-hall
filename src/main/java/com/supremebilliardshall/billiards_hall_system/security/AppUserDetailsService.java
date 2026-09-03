@@ -31,7 +31,8 @@ public class AppUserDetailsService implements UserDetailsService {
                 user.getPasswordHash(),
                 user.getFullName(),
                 user.getRole(),
-                Boolean.TRUE.equals(user.getIsActive()));
+                Boolean.TRUE.equals(user.getIsActive()),
+                Boolean.TRUE.equals(user.getMustChangePassword()));
     }
 
 }

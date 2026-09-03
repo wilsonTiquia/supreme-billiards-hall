@@ -22,9 +22,18 @@ public class AppUserDetails implements UserDetails {
     private final String fullName;
     private final UserRole role;
     private final boolean enabled;
+    // When true the session is gated to changing its own password (see the gate filter). Carried
+    // on the principal so the gate needs no per-request database read.
+    private final boolean mustChangePassword;
 
+    // Kept for the many call sites that never need the flag; mustChangePassword defaults false.
     public AppUserDetails(UUID userId, UUID branchId, String username, String password,
                           String fullName, UserRole role, boolean enabled) {
+        this(userId, branchId, username, password, fullName, role, enabled, false);
+    }
+
+    public AppUserDetails(UUID userId, UUID branchId, String username, String password,
+                          String fullName, UserRole role, boolean enabled, boolean mustChangePassword) {
         this.userId = userId;
         this.branchId = branchId;
         this.username = username;
@@ -32,12 +41,19 @@ public class AppUserDetails implements UserDetails {
         this.fullName = fullName;
         this.role = role;
         this.enabled = enabled;
+        this.mustChangePassword = mustChangePassword;
     }
 
     // The principal for scheduled work: bound to a branch, with no human behind it. Both
     // table_session.closed_by and audit_log.actor_id are nullable for this reason.
     public static AppUserDetails system(UUID branchId) {
         return new AppUserDetails(null, branchId, "system", "", "System", UserRole.ADMIN, true);
+    }
+
+    // A copy with the flag cleared, for refreshing the session principal after the password is
+    // changed so the gate stops blocking the same session.
+    public AppUserDetails withMustChangePassword(boolean value) {
+        return new AppUserDetails(userId, branchId, username, password, fullName, role, enabled, value);
     }
 
     public boolean isAdmin() {

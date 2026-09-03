@@ -3,6 +3,7 @@ package com.supremebilliardshall.billiards_hall_system.config;
 import tools.jackson.databind.ObjectMapper;
 import com.supremebilliardshall.billiards_hall_system.dto.APIResponse;
 import com.supremebilliardshall.billiards_hall_system.security.AppUserDetailsService;
+import com.supremebilliardshall.billiards_hall_system.security.PasswordChangeGateFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -39,8 +40,13 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http,
-                                                   SessionRegistry sessionRegistry) throws Exception {
+                                                   SessionRegistry sessionRegistry,
+                                                   PasswordChangeGateFilter passwordChangeGateFilter) throws Exception {
         http
+                // Runs after authorization, so the authenticated principal is in place: a user
+                // who must change their password is gated to that one action, in one place.
+                .addFilterAfter(passwordChangeGateFilter,
+                        org.springframework.security.web.access.intercept.AuthorizationFilter.class)
                 .csrf(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .formLogin(AbstractHttpConfigurer::disable)
