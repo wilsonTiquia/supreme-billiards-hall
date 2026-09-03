@@ -172,4 +172,13 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN)
                 .body(new APIResponse<>(null, "You are not allowed to perform this action", false));
     }
+
+    // Login throttled after too many failures. 429 so the client can back off rather than
+    // hammer, and the message names the wait rather than looking like a wrong password.
+    @ExceptionHandler(TooManyLoginAttemptsException.class)
+    public ResponseEntity<APIResponse<Object>> handleTooManyLoginAttempts(TooManyLoginAttemptsException ex) {
+
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .body(new APIResponse<>(null, ex.getMessage(), false));
+    }
 }
