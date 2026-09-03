@@ -17,10 +17,21 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.UUID;
 
 @Service
 public class PaymentPhotoServiceImpl implements PaymentPhotoService {
+
+    // The same allowlist the product-image route uses: the stored extension and the content
+    // type served back are chosen from here, never from the browser-supplied filename. A photo
+    // the ADMIN opens is served from this application's own origin, so an .html "photo" that
+    // came back as text/html would execute as the ADMIN — this is what closes that.
+    private static final Map<String, String> ALLOWED_TYPES = new LinkedHashMap<>(Map.of(
+            "image/jpeg", "jpg",
+            "image/png", "png",
+            "image/webp", "webp"));
 
     private final PaymentRepository paymentRepository;
     private final Path storageRoot;
@@ -43,19 +54,38 @@ public class PaymentPhotoServiceImpl implements PaymentPhotoService {
             throw new BusinessRuleException("This payment already has a photo.");
         }
 
-        // The filename is built from the payment id, never from the upload: an attacker-chosen
-        // name is how a write escapes the storage directory.
-        Path target = storageRoot.resolve(paymentId + extensionOf(file.getOriginalFilename()));
+        String type = normalisedContentType(file.getContentType());
+        String extension = ALLOWED_TYPES.get(type);
+        if (extension == null) {
+            throw new BusinessRuleException(
+                    "That file is not an image the POS can accept. Use a JPEG, PNG or WebP.");
+        }
+
         byte[] bytes;
         try {
             bytes = file.getBytes();
+        } catch (IOException e) {
+            throw new BusinessRuleException("Could not read the photo: " + e.getMessage());
+        }
+        // The declared type is not enough: an HTML or script payload can claim image/png. The
+        // bytes themselves must carry the magic number of the type they claim, or the file is
+        // refused before anything is written.
+        if (!magicMatches(type, bytes)) {
+            throw new BusinessRuleException(
+                    "That file is not a real JPEG, PNG or WebP image, whatever its name says.");
+        }
+
+        // The filename is built from the payment id and the allowlisted extension, never from
+        // the upload: an attacker-chosen name is how a write escapes the storage directory.
+        Path target = storageRoot.resolve(paymentId + "." + extension);
+        try {
             Files.createDirectories(storageRoot);
             Files.write(target, bytes);
         } catch (IOException e) {
             throw new BusinessRuleException("Could not store the photo: " + e.getMessage());
         }
 
-        // Path plus checksum, so a backup that lost the volume is detectable rather than
+        // Path plus checksum, so a backup that loses the volume is detectable rather than
         // silently empty.
         payment.setPhotoPath(target.toString());
         payment.setPhotoSha256(sha256(bytes));
@@ -83,12 +113,18 @@ public class PaymentPhotoServiceImpl implements PaymentPhotoService {
     @Transactional(readOnly = true)
     public String contentTypeOf(UUID paymentId) {
         Payment payment = requirePayment(paymentId);
-        try {
-            String probed = Files.probeContentType(Path.of(payment.getPhotoPath()));
-            return probed != null ? probed : "application/octet-stream";
-        } catch (IOException e) {
-            return "application/octet-stream";
+        if (payment.getPhotoPath() == null) {
+            throw new ResourceNotFoundException("Photo for payment", paymentId);
         }
+        // Derived from the allowlisted extension the store wrote, never probed from disk: only
+        // the three allowed image types are ever written, so the served type cannot be turned
+        // into text/html by a crafted upload.
+        String extension = extensionOf(payment.getPhotoPath());
+        return ALLOWED_TYPES.entrySet().stream()
+                .filter(entry -> entry.getValue().equals(extension))
+                .map(Map.Entry::getKey)
+                .findFirst()
+                .orElse("application/octet-stream");
     }
 
     private Payment requirePayment(UUID paymentId) {
@@ -96,16 +132,46 @@ public class PaymentPhotoServiceImpl implements PaymentPhotoService {
                 .orElseThrow(() -> new ResourceNotFoundException("Payment", paymentId));
     }
 
-    private String extensionOf(String originalFilename) {
-        if (originalFilename == null) {
+    private String normalisedContentType(String contentType) {
+        if (contentType == null) {
             return "";
         }
-        int dot = originalFilename.lastIndexOf('.');
-        if (dot < 0 || dot == originalFilename.length() - 1) {
-            return "";
+        // Strips a "; charset=..." a client may have appended.
+        int semicolon = contentType.indexOf(';');
+        String bare = semicolon < 0 ? contentType : contentType.substring(0, semicolon);
+        return bare.trim().toLowerCase();
+    }
+
+    // The file signature for each allowed type. Checked against the type the upload claims, so
+    // a mismatch — the classic "HTML renamed to .png" — is refused.
+    private boolean magicMatches(String type, byte[] bytes) {
+        return switch (type) {
+            case "image/jpeg" -> startsWith(bytes, 0xFF, 0xD8, 0xFF);
+            case "image/png" -> startsWith(bytes, 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A);
+            // RIFF....WEBP: bytes 0-3 are "RIFF" and bytes 8-11 are "WEBP".
+            case "image/webp" -> startsWith(bytes, 0x52, 0x49, 0x46, 0x46)
+                    && bytes.length >= 12
+                    && (bytes[8] & 0xFF) == 0x57 && (bytes[9] & 0xFF) == 0x45
+                    && (bytes[10] & 0xFF) == 0x42 && (bytes[11] & 0xFF) == 0x50;
+            default -> false;
+        };
+    }
+
+    private boolean startsWith(byte[] bytes, int... signature) {
+        if (bytes.length < signature.length) {
+            return false;
         }
-        String extension = originalFilename.substring(dot + 1).toLowerCase();
-        return extension.matches("[a-z0-9]{1,5}") ? "." + extension : "";
+        for (int i = 0; i < signature.length; i++) {
+            if ((bytes[i] & 0xFF) != signature[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private String extensionOf(String path) {
+        int dot = path.lastIndexOf('.');
+        return dot < 0 ? "" : path.substring(dot + 1).toLowerCase();
     }
 
     private String sha256(byte[] bytes) {

@@ -22,7 +22,12 @@ public class PaymentPhotoController {
         this.paymentPhotoService = paymentPhotoService;
     }
 
+    // The counter attaches the payment photo at checkout, so this is authenticated rather than
+    // ADMIN — the read is ADMIN (it is a control on the counter), the write is a counter action.
+    // The escalation risk that made the asymmetry dangerous was an unchecked upload type; the
+    // service now rejects anything that is not a real image, so a photo can no longer be a script.
     @PostMapping(value = "/{id}/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("isAuthenticated()")
     public ResponseEntity<APIResponse<PaymentPhotoResponseDTO>> uploadPhoto(@PathVariable UUID id,
                                                                             @RequestParam("file") MultipartFile file) {
         PaymentPhotoResponseDTO photo = paymentPhotoService.storePhoto(id, file);
