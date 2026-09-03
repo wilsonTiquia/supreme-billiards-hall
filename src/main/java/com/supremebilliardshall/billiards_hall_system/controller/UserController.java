@@ -2,6 +2,7 @@ package com.supremebilliardshall.billiards_hall_system.controller;
 
 import com.supremebilliardshall.billiards_hall_system.dto.APIResponse;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ResetPasswordRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.security.LoginAttemptService;
 import com.supremebilliardshall.billiards_hall_system.service.AuthService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -18,9 +19,12 @@ import java.util.UUID;
 public class UserController {
 
     private final AuthService authService;
+    private final LoginAttemptService loginAttemptService;
 
-    public UserController(AuthService authService) {
+    public UserController(AuthService authService,
+                          LoginAttemptService loginAttemptService) {
         this.authService = authService;
+        this.loginAttemptService = loginAttemptService;
     }
 
     @PutMapping("/{id}/password")
@@ -31,5 +35,16 @@ public class UserController {
                 ok(APIResponse.success(
                         null,
                         "Password reset successfully"));
+    }
+
+    // Clears every login lockout. The unlock path for staff who lock themselves out at the
+    // till — an admin can free them without waiting out the timer or restarting the app.
+    @DeleteMapping("/lockouts")
+    public ResponseEntity<APIResponse<Void>> clearLockouts() {
+        loginAttemptService.clearAll();
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        null,
+                        "Login lockouts cleared"));
     }
 }

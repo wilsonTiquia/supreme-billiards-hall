@@ -5,6 +5,7 @@ import com.supremebilliardshall.billiards_hall_system.dto.auth.ChangePasswordReq
 import com.supremebilliardshall.billiards_hall_system.dto.auth.CurrentUserResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.LoginRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.SelectBranchRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.exception.BusinessRuleException;
 import com.supremebilliardshall.billiards_hall_system.exception.TooManyLoginAttemptsException;
 import com.supremebilliardshall.billiards_hall_system.security.AppUserDetails;
 import com.supremebilliardshall.billiards_hall_system.security.LoginAttemptService;
@@ -106,14 +107,33 @@ public class AuthController {
     }
 
     // The caller changes their own password. Any authenticated user; the current password is
-    // the check, not the role.
+    // the check, not the role. Throttled the same way login is, so a hijacked session cannot
+    // brute-force the current password to learn it for reuse elsewhere.
     @PutMapping("/password")
-    public ResponseEntity<APIResponse<Void>> changePassword(@Valid @RequestBody ChangePasswordRequestDTO changePasswordRequestDTO) {
-        authService.changeOwnPassword(changePasswordRequestDTO);
+    public ResponseEntity<APIResponse<Void>> changePassword(@Valid @RequestBody ChangePasswordRequestDTO changePasswordRequestDTO,
+                                                            HttpServletRequest request) {
+        String key = "pw:" + currentUsername() + "|" + request.getRemoteAddr();
+        if (loginAttemptService.isBlockedKey(key)) {
+            throw new TooManyLoginAttemptsException(
+                    "Too many failed attempts. Wait a few minutes and try again.");
+        }
+        try {
+            authService.changeOwnPassword(changePasswordRequestDTO);
+        } catch (BusinessRuleException ex) {
+            // The only business rule this path raises is a wrong current password.
+            loginAttemptService.recordFailureKey(key);
+            throw ex;
+        }
+        loginAttemptService.recordSuccessKey(key);
         return ResponseEntity.
                 ok(APIResponse.success(
                         null,
                         "Password changed successfully"));
+    }
+
+    private String currentUsername() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        return authentication == null ? "" : authentication.getName();
     }
 
     @GetMapping("/me")

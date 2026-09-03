@@ -11,8 +11,11 @@ import java.util.concurrent.ConcurrentHashMap;
 // deliberately simple: a map in memory, no new infrastructure. A restart clears it, which is
 // acceptable — an attacker gains nothing from a restart they cannot cause.
 //
-// Both the username and the source address are throttled, so neither hammering one account nor
-// spraying many usernames from one address gets unlimited tries.
+// The account lockout is keyed by username AND source address, never by username alone: the
+// usernames are public in git history, so a bare per-username lock would let anyone lock the
+// till out of its own account from anywhere. The source address is throttled separately, so a
+// spray from one address is still capped. An ADMIN can clear all lockouts when staff lock
+// themselves out.
 @Component
 public class LoginAttemptService {
 
@@ -42,17 +45,38 @@ public class LoginAttemptService {
     }
 
     public boolean isBlocked(String username, String sourceAddress) {
-        return isKeyBlocked(userKey(username)) || isKeyBlocked(addressKey(sourceAddress));
+        return isKeyBlocked(userAddressKey(username, sourceAddress))
+                || isKeyBlocked(addressKey(sourceAddress));
     }
 
     public void recordFailure(String username, String sourceAddress) {
-        recordFailure(userKey(username));
+        recordFailure(userAddressKey(username, sourceAddress));
         recordFailure(addressKey(sourceAddress));
     }
 
     public void recordSuccess(String username, String sourceAddress) {
-        attempts.remove(userKey(username));
+        attempts.remove(userAddressKey(username, sourceAddress));
         attempts.remove(addressKey(sourceAddress));
+    }
+
+    // Generic single-scope throttling, reused by the change-own-password path so a hijacked
+    // session cannot brute-force the current password. The caller builds a namespaced key.
+    public boolean isBlockedKey(String key) {
+        return isKeyBlocked(key);
+    }
+
+    public void recordFailureKey(String key) {
+        recordFailure(key);
+    }
+
+    public void recordSuccessKey(String key) {
+        attempts.remove(key);
+    }
+
+    // The ADMIN unlock path: staff who lock themselves out at the till should not have to wait
+    // fifteen minutes or restart the app.
+    public void clearAll() {
+        attempts.clear();
     }
 
     private boolean isKeyBlocked(String key) {
@@ -100,8 +124,9 @@ public class LoginAttemptService {
         return attempts.size();
     }
 
-    private String userKey(String username) {
-        return "u:" + (username == null ? "" : username.trim().toLowerCase());
+    private String userAddressKey(String username, String sourceAddress) {
+        return "ua:" + (username == null ? "" : username.trim().toLowerCase())
+                + "|" + (sourceAddress == null ? "" : sourceAddress);
     }
 
     private String addressKey(String sourceAddress) {
