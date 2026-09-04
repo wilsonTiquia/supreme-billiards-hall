@@ -186,6 +186,45 @@ gross ₱630.00, cost ₱157.50, profit ₱472.50 — the same figures the live 
 
 ---
 
+## Never run the test suite against the trading database
+
+`./mvnw test` writes real rows into whatever database it is pointed at, and **`@Transactional`
+does not take them all back**. This is not a theory: a throwaway database used during the
+September audit was left holding orphan `concurrency-tester-*` and `receipt-tester-*` users
+after one clean, all-green run. The concurrency tests commit on purpose — that is the only way
+to test a race — so nothing rolls those back.
+
+The till's own database happens to be clean of them today, but only because it was rebuilt
+from the migrations at 03:21 on 4 September and no suite has been pointed at it since. That is
+luck and timing, not protection.
+
+`./mvnw package` runs the tests too, so building by hand is not a read-only act.
+`scripts/rebuild.sh` is safe — it passes `-DskipTests` — but only that script is; typing the
+Maven command yourself is what catches you out.
+
+**Point it at a throwaway database, every time.** The datasource is read from the environment
+(see the `${DB_*}` placeholders in `application.properties`), so the override is one line:
+
+```
+createdb -h localhost -U supreme supreme_scratch
+
+DB_URL='jdbc:postgresql://localhost:5432/supreme_scratch' \
+DB_USERNAME=supreme DB_PASSWORD=supreme \
+  ./mvnw test
+
+dropdb -h localhost -U supreme supreme_scratch
+```
+
+Flyway builds the schema in the empty database on the first run, so there is nothing to set up
+first. Use the same override for `package`.
+
+Without the override the suite connects to `jdbc:postgresql://localhost:5432/supreme` — the
+till's own database. Before Saturday that means test rows mixed into the data you are checking
+the catalogue against. **After go-live it means invented sales in the takings**, which is why
+`docs/GO-LIVE.md` step 1 is "finish all testing" and why it comes before the reset.
+
+---
+
 ## Starting the database over
 
 There are two scripts that erase the database, and the difference between them matters.
