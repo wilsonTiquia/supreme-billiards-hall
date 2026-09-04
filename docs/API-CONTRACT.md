@@ -290,6 +290,8 @@ period and opens a new one. Never mutates history. A backdated overlap → 409.
 | POST | `/api/v1/sessions/{id}/pause` | authenticated |
 | POST | `/api/v1/sessions/{id}/resume` | authenticated |
 | POST | `/api/v1/sessions/{id}/close` | authenticated |
+| GET | `/api/v1/sessions/{id}/notes` | authenticated |
+| POST | `/api/v1/sessions/{id}/notes` | authenticated |
 
 **POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverrideReason"? }`
 
@@ -335,6 +337,39 @@ the close instant.
 **close** ends the segments, computes billed minutes and writes one TIME line per segment. It does
 **not** take payment.
 
+### Notes — who was on the table
+
+Free text attaching people to a session, and so to its bill. The unpaid strip in §7 shows the most
+recent one, which is the only thing that tells three unpaid "Table 1" bills apart.
+
+**Not admin-only.** The counter is who knows the names, and a note they cannot write is a note
+nobody writes.
+
+**GET `/sessions/{id}/notes`** — the thread for one session, **oldest first**.
+
+```json
+[ { "id", "sessionId", "kind": "STAFF", "body": "Marco + 2",
+    "authorId", "authorUsername": "counter", "createdAt": "..." } ]
+```
+
+`kind` ∈ `STAFF | SYSTEM`. A `SYSTEM` note is written by the server at an event — currently
+settlement, which appends `"Settled by <user> — CASH 1350.00"`. **Mark the two apart in the UI.**
+The kind is never accepted from the client, so a staff member cannot forge one by typing the
+sentence, and that distinction is worth nothing if the screen does not show it.
+
+**POST `/sessions/{id}/notes`** → `{ "body" }` — required, non-blank after trimming, at most 280
+characters, or 400. Nothing else in the body is read: the author is the authenticated user and the
+kind is always `STAFF`.
+
+**Notes are append-only. There is no PUT and no DELETE, and there will not be one.** The database
+blocks UPDATE and DELETE by trigger. A note about money owed that an employee can quietly remove
+defeats the point of writing it, so a wrong note is corrected by a later note and both stay in the
+thread.
+
+A note can be added to a session in **any** state, including a closed one — staff forget during a
+busy shift and put the name on when they see the unpaid card. Another branch's session is 404, for
+both the read and the write.
+
 ---
 
 ## 7. Bills, orders and voids
@@ -345,6 +380,7 @@ the close instant.
 | GET | `/api/v1/bills/{id}` | authenticated |
 | POST | `/api/v1/bills/{id}/lines` | authenticated |
 | POST | `/api/v1/bills/{id}/lines/{lineId}/void` | authenticated |
+| GET | `/api/v1/bills/{id}/notes` | authenticated |
 
 **GET `/bills?businessDate=`** — one business day's **settled** sales, newest receipt first,
 paged (`size` capped at 200). `businessDate` is required, `YYYY-MM-DD`.
@@ -411,12 +447,26 @@ would never be collected. Each row carries its own `businessDate` so an old one 
 
 ```json
 [ { "id", "openedAt", "sessionEndedAt", "businessDate", "customerTypeName",
-    "tableNames": ["Table 3"], "totalAmount": 5054.00 } ]
+    "tableNames": ["Table 3"], "totalAmount": 5054.00,
+    "latestNote": { "id", "sessionId", "kind", "body", "authorId", "authorUsername", "createdAt" } } ]
 ```
+
+`latestNote` is the most recent note on the bill, or **null** when nobody has written one — the
+name of who owes the money, so three unpaid bills on the same table are told apart. It is one more
+line on the card; nothing about how these bills are detected, totalled or collected changed. The
+whole thread is at `GET /bills/{id}/notes`.
 
 Bills totalling `0.00` are excluded: payment validation requires at least 0.01, so they can never
 be settled and would sit in the floor strip for ever. Carries no cost field, so one shape serves
 both roles.
+
+**GET `/bills/{id}/notes`** — every note on every session this bill carried, oldest first,
+including the settlement note. Same shape as `/sessions/{id}/notes` in §6.
+
+**Nothing is dropped when the debt is collected.** The bill leaves the unpaid strip through the
+existing status logic and its notes travel with it, which is what makes "who keeps playing on
+credit" answerable a year from now. A quick sale carries no session and so has no thread — it is
+created and settled in one transaction, and never had a debt to attribute.
 
 **POST `/bills/{id}/lines/{lineId}/void`** → `{ "reason" }` — **required**, non-blank, or 400. The
 line is retained, the stock is returned, and an audit row is written. Voiding twice → 409. A TIME
