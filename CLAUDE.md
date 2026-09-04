@@ -123,7 +123,7 @@ Already in the project — keep these, do not swap them:
 | Concern | Choice |
 |---|---|
 | Language | Java 21 target (JDK 25 installed locally) |
-| Framework | **Spring Boot 4.0.1** (note: `spring-boot-starter-webmvc`, not `-web`) |
+| Framework | **Spring Boot 4.0.x**, currently **4.0.5** (note: `spring-boot-starter-webmvc`, not `-web`) |
 | Build | Maven |
 | Mapping | MapStruct + Lombok |
 | Persistence | Spring Data JPA for CRUD; **native SQL for reports and aggregates** |
@@ -136,6 +136,18 @@ To be added:
 | Migrations | **Flyway** — `schema.sql` becomes `V1__baseline.sql`, seed is `V2__seed.sql` |
 | Auth | Spring Security, server-side session cookie. Not JWT |
 | PDF | OpenPDF, server-side |
+
+**"Pinned" means the major and minor, not the patch.** A patch-level bump inside 4.0.x is
+expected and does not need asking about — it is how a transitive CVE gets fixed, since the
+vulnerable library is usually Spring Security or Tomcat and their versions come from Boot's
+dependency management rather than from this `pom.xml`. The commit must name the CVE, the
+before and after versions, and where they were confirmed; `git log pom.xml` is the record.
+
+The table said 4.0.1 for a while after the project was already on 4.0.5, which cost a session
+the time to flag the difference as an unauthorised substitution. Move the version here in the
+same commit as the bump.
+
+Changing the major or minor, or swapping anything else in either table, still needs asking.
 
 `spring.jpa.hibernate.ddl-auto` **must become `validate`**. It is currently `update`, which lets
 Hibernate silently reshape the schema — unacceptable for a database holding money, and it would
