@@ -6,8 +6,11 @@ scripts/
 logs/
 run/
 
-# Vulnerability roadmap. Stays local, even in a private repo.
+# Vulnerability roadmaps. Stay local, even in a private repo: they name where the
+# credentials and the unfixed weaknesses are, which is the one document you would not
+# hand an attacker along with the source.
 docs/security-audit-2026-09-03.md
+docs/pre-internet-audit.md
 
 ### Build output ###
 target/
