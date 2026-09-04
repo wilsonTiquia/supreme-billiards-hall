@@ -27,6 +27,12 @@ export type BillStatus = 'OPEN' | 'CLOSED' | 'VOIDED' | 'MERGED';
 export type BillLineKind = 'TIME' | 'PRODUCT';
 export type PaymentMethod = 'CASH' | 'GCASH' | 'MAYA';
 export type StockReason = 'SALE' | 'SALE_VOID' | 'DELIVERY' | 'CORRECTION' | 'STAFF_COMP';
+/**
+ * `SYSTEM` notes are written by the server at an event — currently settlement. The API never
+ * accepts a kind from the client, so a staff member cannot forge one by typing the sentence.
+ * Mark the two apart on screen: that distinction is the whole reason the field exists.
+ */
+export type SessionNoteKind = 'STAFF' | 'SYSTEM';
 
 /* ── §2 Auth ─────────────────────────────────────────────────────────────────────── */
 export interface LoginRequest {
@@ -302,6 +308,28 @@ export interface PauseSessionRequest {
   reason?: string;
 }
 
+/**
+ * Who was on the table. Append-only: there is no edit and no delete, here or on the server,
+ * and there will not be one — a note about who owes money that an employee can quietly remove
+ * defeats the point of writing it. A wrong note is corrected by a later note.
+ */
+export interface SessionNote {
+  id: UUID;
+  sessionId: UUID;
+  kind: SessionNoteKind;
+  /** Free text. Rendered by React and so escaped; never `dangerouslySetInnerHTML`. */
+  body: string;
+  authorId: UUID;
+  authorUsername: string;
+  createdAt: IsoInstant;
+}
+
+/** Only the words. The author and the kind are decided server-side. */
+export interface AddSessionNoteRequest {
+  /** Required, non-blank, at most 280 characters, or 400. */
+  body: string;
+}
+
 /* ── §7 Bills, orders and voids ──────────────────────────────────────────────────── */
 
 /** What an EMPLOYEE receives: no unitCost, no lineCost. */
@@ -379,6 +407,12 @@ export interface UnsettledBill {
   tableNames: string[];
   /** Computed from live lines — the bill's own total is only finalised at checkout. */
   totalAmount: Money;
+  /**
+   * The most recent note on this bill, so the card can name who owes the money rather than
+   * showing three identical "Table 1" rows. Null until someone writes one; the whole thread
+   * is at `GET /bills/{id}/notes`.
+   */
+  latestNote: SessionNote | null;
 }
 
 export interface VoidBillLineRequest {

@@ -68,6 +68,14 @@ export function UnsettledStrip({ bills }: { bills: UnsettledBill[] }) {
                 <span className="tabular mt-1 text-body text-amount">
                   {formatMoney(bill.totalAmount)}
                 </span>
+                {/* Who owes it. Three unpaid bills on Table 1 read identically without this,
+                    which tells the owner nothing the next morning. The most recent note only —
+                    the whole thread is on the bill. Free text from staff, rendered as text. */}
+                {bill.latestNote ? (
+                  <span className="mt-1 max-w-[16rem] truncate text-label text-text">
+                    {bill.latestNote.body}
+                  </span>
+                ) : null}
               </button>
             </li>
           );

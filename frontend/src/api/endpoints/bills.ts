@@ -12,6 +12,7 @@ import type {
   PaymentPhoto,
   PaymentRequest,
   Receipt,
+  SessionNote,
   UnsettledBill,
   VoidBillLineRequest,
 } from '../types';
@@ -49,6 +50,15 @@ export function voidBillLine(
   body: VoidBillLineRequest,
 ): Promise<BillLine> {
   return request<BillLine>(`/bills/${billId}/lines/${lineId}/void`, { method: 'POST', body });
+}
+
+/**
+ * Every note on every session this bill carried, oldest first, including the settlement note.
+ * Nothing is dropped when the debt is collected — a year of these is what answers who keeps
+ * playing on credit.
+ */
+export function fetchBillNotes(billId: string): Promise<SessionNote[]> {
+  return request<SessionNote[]>(`/bills/${billId}/notes`);
 }
 
 /** A preview and nothing else: reading this writes nothing. */

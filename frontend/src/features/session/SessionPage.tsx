@@ -18,6 +18,7 @@ import { Banner } from '@/components/Banner';
 import { Card } from '@/components/Card';
 import { Spinner } from '@/components/Spinner';
 import { Modal } from '@/components/Modal';
+import { NoteThread } from '@/features/notes/NoteThread';
 import { ProductGrid } from './ProductGrid';
 import { BillLines } from './BillLines';
 import { VoidLineModal } from './VoidLineModal';
@@ -271,6 +272,13 @@ export function SessionPage() {
               }}
             />
           )}
+        </Card>
+
+        {/* While people are playing is when staff know who is on the table, so the box is here
+            rather than only at checkout. It stays after the close: nothing about a note depends
+            on the session still running. */}
+        <Card className="max-h-72 shrink-0 overflow-y-auto">
+          <NoteThread source={{ kind: 'session', sessionId: live.id }} writeTo={live.id} />
         </Card>
 
         {/* Close sits at the bottom, away from Add item, and confirms with the amount. */}

@@ -1,5 +1,5 @@
 import { request } from '../client';
-import type { OpenSessionRequest, Session } from '../types';
+import type { AddSessionNoteRequest, OpenSessionRequest, Session, SessionNote } from '../types';
 
 /**
  * The server stamps the start time — no clock is sent. A 409 here means another tab opened
@@ -38,4 +38,23 @@ export function overrideBilledMinutes(
 
 export function closeSession(id: string): Promise<Session> {
   return request<Session>(`/sessions/${id}/close`, { method: 'POST' });
+}
+
+/** The thread for one session, oldest first. */
+export function fetchSessionNotes(sessionId: string): Promise<SessionNote[]> {
+  return request<SessionNote[]>(`/sessions/${sessionId}/notes`);
+}
+
+/**
+ * Adds one note. There is deliberately no update and no delete to pair with this: the table is
+ * append-only in the database too, and a correction is a later note.
+ *
+ * The author is taken from the session cookie, never sent — anything resembling an author in
+ * the body is ignored by the server.
+ */
+export function addSessionNote(
+  sessionId: string,
+  body: AddSessionNoteRequest,
+): Promise<SessionNote> {
+  return request<SessionNote>(`/sessions/${sessionId}/notes`, { method: 'POST', body });
 }

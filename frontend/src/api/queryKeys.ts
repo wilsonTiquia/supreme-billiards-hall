@@ -18,12 +18,14 @@ export const queryKeys = {
 
   sessions: ['sessions'] as const,
   session: (id: UUID) => ['sessions', id] as const,
+  sessionNotes: (id: UUID) => ['sessions', id, 'notes'] as const,
 
   bills: ['bills'] as const,
   unsettledBills: ['bills', 'unsettled'] as const,
   settledBills: (date: BusinessDate, page: number) =>
     ['bills', 'settled', date, page] as const,
   bill: (id: UUID) => ['bills', id] as const,
+  billNotes: (id: UUID) => ['bills', id, 'notes'] as const,
   checkout: (id: UUID) => ['bills', id, 'checkout'] as const,
   receipt: (id: UUID) => ['bills', id, 'receipt'] as const,
 

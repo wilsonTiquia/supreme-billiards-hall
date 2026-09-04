@@ -15,6 +15,7 @@ import { useBillMorph, type CardRect } from './useBillMorph';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/Button';
+import { NoteThread } from '@/features/notes/NoteThread';
 
 /** A line as it was written into the stored receipt payload. Free-form, so read defensively. */
 interface PayloadLine {
@@ -256,6 +257,16 @@ export function ReceiptPage() {
           {photoNote ? <p className="mt-2 text-label text-text-dim">{photoNote}</p> : null}
         </Card>
       ) : null}
+
+      {/* Outside the receipt card, and never printed: the stored jsonb payload is the legal
+          document and is rendered exactly as it was written. The notes are the hall's own
+          record of who owed the money, kept beside it rather than folded into it.
+
+          Read-only here. The receipt knows a bill, not a session, and a settled sale is a
+          record to read; adding is done from the bill screen. */}
+      <Card className="mt-4 print:hidden">
+        <NoteThread source={{ kind: 'bill', billId }} title="Notes" />
+      </Card>
 
       {/*
         One press for the common path.

@@ -14,6 +14,7 @@ import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
+import { NoteThread } from '@/features/notes/NoteThread';
 import { BillSummary } from './BillSummary';
 import { PaymentForm } from './PaymentForm';
 
@@ -253,6 +254,18 @@ export function CheckoutPage() {
             ))}
           </div>
         ) : null}
+
+        {/* The names travel with the bill. Arriving from the unpaid strip, this is where staff
+            put one on that they forgot during the rush; after payment it stays, and settlement
+            adds its own line saying who collected. Writes go against the bill's most recent
+            session — a quick sale has none, and never had a debt to attribute. */}
+        <div className="mt-6 border-t border-border pt-4">
+          <NoteThread
+            source={{ kind: 'bill', billId }}
+            writeTo={bill.sessions.at(-1)?.sessionId}
+            title="Notes"
+          />
+        </div>
       </Card>
 
       <div className="flex flex-col gap-4">
