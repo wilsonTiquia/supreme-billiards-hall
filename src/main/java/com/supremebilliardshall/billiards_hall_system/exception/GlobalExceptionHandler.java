@@ -2,12 +2,14 @@ package com.supremebilliardshall.billiards_hall_system.exception;
 
 import com.supremebilliardshall.billiards_hall_system.dto.APIResponse;
 import jakarta.validation.ConstraintViolationException;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.FieldError;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -136,6 +138,21 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity.badRequest()
                 .body(new APIResponse<>(null, "That file is too large to upload. The limit is 2 MB.", false));
+    }
+
+    // A body that ran past the ceiling RequestSizeLimitFilter imposes. The message converter
+    // wraps whatever the input stream threw, so the cause is what identifies it. Anything else
+    // that could not be read is a malformed body — the client's error either way, and answered
+    // in the envelope rather than through the container's default error page.
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<APIResponse<Object>> handleUnreadableBody(HttpMessageNotReadableException ex) {
+
+        if (NestedExceptionUtils.getMostSpecificCause(ex) instanceof RequestBodyTooLargeException) {
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                    .body(APIResponse.failure("That request is too large."));
+        }
+        return ResponseEntity.badRequest()
+                .body(APIResponse.failure("The request body could not be read."));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
