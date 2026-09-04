@@ -203,12 +203,11 @@ There are two scripts that erase the database, and the difference between them m
 ~/SupremeBilliards/scripts/reset-for-testing.sh
 ```
 
-Wipes the database, rebuilds it from the migrations, and puts the temporary logins back:
-
-```
-owner   / TEMPORARY-owner-1
-counter / TEMPORARY-counter-1
-```
+Wipes the database, rebuilds it from the migrations, and puts the two temporary logins back —
+`owner` (ADMIN) and `counter` (EMPLOYEE). The passwords it writes are in the script itself,
+which lives only on the POS machine. They are deliberately not repeated here: this file is
+tracked, so anything written in it is published to everyone with repo access and is wrong the
+moment `reset-for-golive.sh` rotates it.
 
 One keypress to confirm, no password prompts. That is deliberate — you will run it many times
 in an evening, and anything slower just means you stop using it and test on dirty data instead.

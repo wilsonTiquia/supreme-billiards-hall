@@ -12,9 +12,10 @@ Operational questions during the week — how to start it, what to do if it won'
 The last three gate items from the product-image work are unverified. Do them yourself; you need to
 know this app anyway.
 
-- [ ] Log in at `http://localhost:8080` as `owner` / `TEMPORARY-owner-1`
+- [ ] Log in at `http://localhost:8080` as the **owner** account (the temporary password is in
+      `scripts/reset-for-testing.sh`, on the POS machine — not in this file)
 - [ ] Admin → Products → upload an image to one product, confirm the preview
-- [ ] Log in as `counter` / `TEMPORARY-counter-1`, open a table, look at the product grid
+- [ ] Log in as the **counter** account, open a table, look at the product grid
 - [ ] **Judge the mixed grid.** One product with a photo, the rest with initials tiles. Does it look
       deliberate or broken? This is the normal state for months — if the placeholders read as errors,
       say so and it gets fixed.
