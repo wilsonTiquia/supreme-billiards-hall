@@ -13,6 +13,7 @@ import com.supremebilliardshall.billiards_hall_system.repository.TableSessionRep
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
 import com.supremebilliardshall.billiards_hall_system.service.AuditService;
 import com.supremebilliardshall.billiards_hall_system.service.BillService;
+import com.supremebilliardshall.billiards_hall_system.service.SessionNoteService;
 import com.supremebilliardshall.billiards_hall_system.service.SessionService;
 import com.supremebilliardshall.billiards_hall_system.service.StockService;
 import org.springframework.data.domain.Page;
@@ -44,6 +45,7 @@ public class BillServiceImpl implements BillService {
     private final PoolTableRepository poolTableRepository;
     private final StockService stockService;
     private final SessionService sessionService;
+    private final SessionNoteService sessionNoteService;
     private final AuditService auditService;
     private final BranchContext branchContext;
 
@@ -54,6 +56,7 @@ public class BillServiceImpl implements BillService {
                            PoolTableRepository poolTableRepository,
                            StockService stockService,
                            SessionService sessionService,
+                           SessionNoteService sessionNoteService,
                            AuditService auditService,
                            BranchContext branchContext) {
         this.billRepository = billRepository;
@@ -63,6 +66,7 @@ public class BillServiceImpl implements BillService {
         this.poolTableRepository = poolTableRepository;
         this.stockService = stockService;
         this.sessionService = sessionService;
+        this.sessionNoteService = sessionNoteService;
         this.auditService = auditService;
         this.branchContext = branchContext;
     }
@@ -221,7 +225,8 @@ public class BillServiceImpl implements BillService {
                 bill.getBusinessDate(),
                 customerTypeName(bill.getCustomerTypeId()),
                 tableNames,
-                totalAmount);
+                totalAmount,
+                sessionNoteService.getLatestNoteForBill(bill.getId()));
     }
 
     private BillResponseDTO toResponseDto(Bill bill) {

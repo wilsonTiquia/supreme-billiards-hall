@@ -18,6 +18,7 @@ import com.supremebilliardshall.billiards_hall_system.repository.*;
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
 import com.supremebilliardshall.billiards_hall_system.service.BillService;
 import com.supremebilliardshall.billiards_hall_system.service.CheckoutService;
+import com.supremebilliardshall.billiards_hall_system.service.SessionNoteService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -41,6 +42,7 @@ public class CheckoutServiceImpl implements CheckoutService {
     private final CustomerTypeRepository customerTypeRepository;
     private final ProductRepository productRepository;
     private final BillService billService;
+    private final SessionNoteService sessionNoteService;
     private final BranchContext branchContext;
 
     public CheckoutServiceImpl(BillRepository billRepository,
@@ -52,6 +54,7 @@ public class CheckoutServiceImpl implements CheckoutService {
                                CustomerTypeRepository customerTypeRepository,
                                ProductRepository productRepository,
                                BillService billService,
+                               SessionNoteService sessionNoteService,
                                BranchContext branchContext) {
         this.billRepository = billRepository;
         this.billLineRepository = billLineRepository;
@@ -62,6 +65,7 @@ public class CheckoutServiceImpl implements CheckoutService {
         this.customerTypeRepository = customerTypeRepository;
         this.productRepository = productRepository;
         this.billService = billService;
+        this.sessionNoteService = sessionNoteService;
         this.branchContext = branchContext;
     }
 
@@ -211,6 +215,11 @@ public class CheckoutServiceImpl implements CheckoutService {
         bill.setClosedBy(actorId);
         // Updating the row bumps @Version, which is what a later stale checkout collides with.
         billRepository.saveAndFlush(bill);
+
+        // Closes the thread that the unpaid card opened: who collected, when, and by what
+        // method, alongside the names of who owed it. Written by the server and marked SYSTEM,
+        // so it cannot be produced by typing the same sentence into the note box.
+        sessionNoteService.recordSettlement(savedPayment);
 
         Receipt receipt = new Receipt();
         receipt.setBranchId(bill.getBranchId());

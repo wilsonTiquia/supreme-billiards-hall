@@ -5,8 +5,10 @@ import com.supremebilliardshall.billiards_hall_system.dto.PagedResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.*;
 import com.supremebilliardshall.billiards_hall_system.dto.payment.PaymentRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.payment.PaymentResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.session.SessionNoteResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.service.BillService;
 import com.supremebilliardshall.billiards_hall_system.service.CheckoutService;
+import com.supremebilliardshall.billiards_hall_system.service.SessionNoteService;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -25,11 +27,14 @@ public class BillController {
 
     private final BillService billService;
     private final CheckoutService checkoutService;
+    private final SessionNoteService sessionNoteService;
 
     public BillController(BillService billService,
-                          CheckoutService checkoutService) {
+                          CheckoutService checkoutService,
+                          SessionNoteService sessionNoteService) {
         this.billService = billService;
         this.checkoutService = checkoutService;
+        this.sessionNoteService = sessionNoteService;
     }
 
     // One business day's settled sales, newest first. ADMIN, because browsing the night's
@@ -109,6 +114,18 @@ public class BillController {
                         payment.isReplayed()
                                 ? "This checkout was already recorded; returning the original payment"
                                 : "Payment recorded successfully"));
+    }
+
+    // The whole thread for this bill, oldest first: every note written on every session it
+    // carried, plus the settlement note. Nothing is dropped when the debt is collected —
+    // permanence is the point, and a year of these is what answers who plays on credit.
+    @GetMapping("/{id}/notes")
+    public ResponseEntity<APIResponse<List<SessionNoteResponseDTO>>> getNotes(@PathVariable UUID id) {
+        List<SessionNoteResponseDTO> notes = sessionNoteService.getNotesForBill(id);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        notes,
+                        "Bill notes fetched successfully"));
     }
 
     @GetMapping("/{id}/receipt")

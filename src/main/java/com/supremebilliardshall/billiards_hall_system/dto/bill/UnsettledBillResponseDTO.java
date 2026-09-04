@@ -1,5 +1,6 @@
 package com.supremebilliardshall.billiards_hall_system.dto.bill;
 
+import com.supremebilliardshall.billiards_hall_system.dto.session.SessionNoteResponseDTO;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -30,4 +31,8 @@ public class UnsettledBillResponseDTO {
     // Computed from the live lines. bill.total_amount is only finalised at checkout, so on an
     // open bill it still reads 0.00 and must not be shown.
     private BigDecimal totalAmount;
+    // The most recent note on this bill, so the card can say who owes the money instead of
+    // three "Table 1" rows that read identically the next morning. Null until someone writes
+    // one. The whole thread is at GET /bills/{id}/notes.
+    private SessionNoteResponseDTO latestNote;
 }
