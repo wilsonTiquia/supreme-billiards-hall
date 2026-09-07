@@ -225,6 +225,48 @@ the catalogue against. **After go-live it means invented sales in the takings**,
 
 ---
 
+## Never start the app from the IDE against the trading database
+
+The section above is one direction of the same hazard; this is the other. **Booting the
+application applies every pending migration.** Flyway runs at startup, before anything else
+happens, and it does not ask. So starting the app is a schema change to whatever database it is
+pointed at — not a read, not a dry run.
+
+IntelliJ's Run button and the live POS read the same `application.properties`, which means they
+point at the same database. Pressing Run migrates production.
+
+That is not hypothetical. At **00:50 on 8 September** `V15__expense.sql` landed on the till's own
+database this way: a rebuild-and-restart applied it before anyone had decided it should go on.
+It was harmless only because `cash_count` was empty at that moment, so dropping and recreating
+the generated `variance` column rewrote no reconciliation. **A single counted night present
+would have been recomputed under a formula the running jar did not yet know about** — the
+drawer's arithmetic changing underneath a jar still doing the old sum.
+
+**`scripts/rebuild.sh` is the only way to put new code on 8080.** It stops the service before
+touching the jar, skips the tests, and waits for the port to answer again.
+
+Anything you run yourself — the IDE, `mvn spring-boot:run`, `java -jar` — needs the datasource
+pointed somewhere else first, the same override the test suite uses:
+
+```
+createdb -h localhost -U supreme supreme_scratch
+
+DB_URL='jdbc:postgresql://localhost:5432/supreme_scratch' \
+DB_USERNAME=supreme DB_PASSWORD=supreme \
+  ./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
+
+dropdb -h localhost -U supreme supreme_scratch
+```
+
+In IntelliJ the same three variables go in the run configuration's **Environment variables**
+field. Set them once, on the configuration you actually use, or the next Run is another
+unplanned migration.
+
+The port override matters as much as the database one: two JVMs cannot both hold 8080, and the
+one that loses is the till.
+
+---
+
 ## Starting the database over
 
 There are two scripts that erase the database, and the difference between them matters.

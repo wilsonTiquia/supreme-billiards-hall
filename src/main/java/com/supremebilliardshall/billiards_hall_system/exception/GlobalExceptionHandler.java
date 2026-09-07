@@ -102,6 +102,7 @@ public class GlobalExceptionHandler {
             Map.entry("product_name_key", "Product name already exists"),
             Map.entry("pool_table_name_key", "Table name already exists"),
             Map.entry("customer_type_name_key", "Customer type name already exists"),
+            Map.entry("expense_category_name_key", "Expense category name already exists"),
             Map.entry("pool_table_rate_no_overlap", "That table already has a rate in force for this period"),
             Map.entry("pool_table_rate_period_chk", "A rate period must end after it starts"),
             Map.entry("table_session_one_open_per_table_key", "That table already has an open session"),

@@ -35,6 +35,9 @@ export const queryKeys = {
   uncountedDays: ['businessDay', 'uncounted'] as const,
   businessDayOpenSessions: (date: BusinessDate) => ['businessDay', date, 'openSessions'] as const,
 
+  expenseCategories: ['expenseCategories'] as const,
+  expenses: (date?: BusinessDate) => ['expenses', date ?? 'current'] as const,
+
   lowStock: ['stock', 'low'] as const,
   tables: ['tables'] as const,
   cashCount: (date: BusinessDate) => ['businessDay', date, 'cashCount'] as const,

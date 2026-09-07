@@ -12,6 +12,7 @@ import {
   recountAfterClose,
 } from '@/api/endpoints/businessDay';
 import { fetchUnsettledBills } from '@/api/endpoints/bills';
+import { fetchExpenses } from '@/api/endpoints/expenses';
 import { queryKeys } from '@/api/queryKeys';
 import { isApiError, messageOf } from '@/api/errors';
 import type { CashCount } from '@/api/types';
@@ -78,6 +79,21 @@ export function EndOfDayPage() {
     queryFn: () => fetchCashCount(businessDate as string),
     enabled: Boolean(businessDate),
   });
+
+  /* What has already been paid out of the drawer tonight.
+   *
+   * Read from the expense list rather than the count, because before the drawer is counted
+   * there is no frozen figure to read — and this is exactly when the counter needs it. Adding
+   * server values for display is allowed; deriving a peso figure from a rate is not.
+   */
+  const expenses = useQuery({
+    queryKey: queryKeys.expenses(businessDate),
+    queryFn: () => fetchExpenses(businessDate),
+    enabled: Boolean(businessDate),
+  });
+  const paidFromDrawer = (expenses.data ?? [])
+    .filter((expense) => !expense.voided && expense.paidFromDrawer)
+    .reduce((sum, expense) => sum + expense.amount, 0);
 
   const cashCount = useMutation({
     mutationFn: ({
@@ -337,6 +353,7 @@ export function EndOfDayPage() {
         <CashCountPanel
           count={settledCount}
           standardFloat={day.data?.standardCashFloat ?? 0}
+          paidFromDrawer={paidFromDrawer}
           pending={cashCount.isPending}
           error={countError}
           canCorrect={user?.role === 'ADMIN'}
@@ -354,7 +371,8 @@ export function EndOfDayPage() {
 
         <Card>
           <h2 className="text-heading text-text">Close the day</h2>
-          {settledCount?.closedAt && settledCount.salesAfterClose > 0 ? (
+          {settledCount?.closedAt &&
+          (settledCount.salesAfterClose > 0 || settledCount.expensesAfterClose > 0) ? (
             <p className="mt-3 text-body text-danger">
               Closed, then traded on. Recount the drawer above, then close it again.
             </p>
@@ -374,7 +392,9 @@ export function EndOfDayPage() {
             </div>
           ) : null}
 
-          {settledCount?.closedAt && settledCount.salesAfterClose === 0 ? null : (
+          {settledCount?.closedAt &&
+          settledCount.salesAfterClose === 0 &&
+          settledCount.expensesAfterClose === 0 ? null : (
             <Button
               variant="danger"
               className="mt-6 h-14 w-full text-heading"

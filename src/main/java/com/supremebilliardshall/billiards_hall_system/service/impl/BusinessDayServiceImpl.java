@@ -15,6 +15,7 @@ import com.supremebilliardshall.billiards_hall_system.repository.BranchRepositor
 import com.supremebilliardshall.billiards_hall_system.repository.BranchSettingRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.AppUserRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.CashCountRepository;
+import com.supremebilliardshall.billiards_hall_system.repository.ExpenseRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.PaymentRepository;
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
 import com.supremebilliardshall.billiards_hall_system.service.AuditService;
@@ -53,6 +54,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
     private final CashCountRepository cashCountRepository;
     private final AppUserRepository appUserRepository;
     private final PaymentRepository paymentRepository;
+    private final ExpenseRepository expenseRepository;
     private final BranchRepository branchRepository;
     private final BranchSettingRepository branchSettingRepository;
     private final SessionService sessionService;
@@ -62,6 +64,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
     public BusinessDayServiceImpl(CashCountRepository cashCountRepository,
                                   AppUserRepository appUserRepository,
                                   PaymentRepository paymentRepository,
+                                  ExpenseRepository expenseRepository,
                                   BranchRepository branchRepository,
                                   BranchSettingRepository branchSettingRepository,
                                   SessionService sessionService,
@@ -70,6 +73,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         this.cashCountRepository = cashCountRepository;
         this.appUserRepository = appUserRepository;
         this.paymentRepository = paymentRepository;
+        this.expenseRepository = expenseRepository;
         this.branchRepository = branchRepository;
         this.branchSettingRepository = branchSettingRepository;
         this.sessionService = sessionService;
@@ -112,6 +116,11 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         // client could influence would not be a control at all.
         BigDecimal cashSales = paymentRepository.sumCashForBusinessDate(businessDate);
 
+        // What was paid out of the till tonight, frozen the same way and for the same reason.
+        // Server-computed: an expense figure the client could propose would let anyone explain
+        // away a shortfall by claiming they had bought something.
+        BigDecimal cashExpenses = expenseRepository.sumPaidFromDrawer(businessDate);
+
         // The float is the one figure the client may propose, and only because the drawer is a
         // physical object the server cannot see. Whether that proposal counts as an override is
         // still decided here, against the standard — the client does not get to say "this was
@@ -126,6 +135,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         cashCount.setBranchId(branchContext.getCurrentBranchId());
         cashCount.setBusinessDate(businessDate);
         cashCount.setCashSales(cashSales);
+        cashCount.setCashExpenses(cashExpenses);
         cashCount.setOpeningFloat(openingFloat);
         cashCount.setFloatOverridden(overridden);
         cashCount.setCountedCash(cashCountRequestDTO.getCountedCash());
@@ -140,7 +150,8 @@ public class BusinessDayServiceImpl implements BusinessDayService {
             before.put("standardFloat", standardFloat);
             Map<String, Object> after = new LinkedHashMap<>();
             after.put("openingFloat", saved.getOpeningFloat());
-            after.put("expectedCash", saved.getCashSales().add(saved.getOpeningFloat()));
+            after.put("cashExpenses", saved.getCashExpenses());
+            after.put("expectedCash", expectedCash(saved));
             after.put("variance", saved.getVariance());
             auditService.record("CASH_FLOAT_OVERRIDDEN", "cash_count", saved.getId(),
                     before, after, cashCountRequestDTO.getNote());
@@ -192,6 +203,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         Map<String, Object> before = new LinkedHashMap<>();
         before.put("countedCash", previousCounted);
         before.put("openingFloat", previousFloat);
+        before.put("cashExpenses", cashCount.getCashExpenses());
         before.put("variance", cashCount.getVariance());
 
         cashCount.setCountedCash(cashCountUpdateRequestDTO.getCountedCash());
@@ -207,6 +219,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         Map<String, Object> after = new LinkedHashMap<>();
         after.put("countedCash", saved.getCountedCash());
         after.put("openingFloat", saved.getOpeningFloat());
+        after.put("cashExpenses", saved.getCashExpenses());
         after.put("variance", saved.getVariance());
 
         // The original figure is never destroyed: it lives here, which is this project's rule
@@ -243,25 +256,34 @@ public class BusinessDayServiceImpl implements BusinessDayService {
 
         PaymentRepository.AfterCloseProjection after = paymentRepository.findActivityAfter(
                 cashCount.getBranchId(), businessDate, cashCount.getClosedAt());
-        if (after.getSales() == 0) {
-            throw new BusinessRuleException("Nothing has been sold on " + businessDate
+        // A payout after the close moves the drawer exactly as a sale does, so it is equally a
+        // reason to count again. Without this the night that was closed and then paid the water
+        // man would have no way back.
+        ExpenseRepository.AfterCloseProjection afterExpenses = expenseRepository.findCashExpensesAfter(
+                cashCount.getBranchId(), businessDate, cashCount.getClosedAt());
+        if (after.getSales() == 0 && afterExpenses.getExpenses() == 0) {
+            throw new BusinessRuleException("Nothing has been sold or paid out on " + businessDate
                     + " since it was closed, so the count still stands.");
         }
 
         Map<String, Object> before = new LinkedHashMap<>();
         before.put("cashSales", cashCount.getCashSales());
         before.put("openingFloat", cashCount.getOpeningFloat());
+        before.put("cashExpenses", cashCount.getCashExpenses());
         before.put("countedCash", cashCount.getCountedCash());
         before.put("variance", cashCount.getVariance());
         before.put("closedAt", cashCount.getClosedAt().toString());
         before.put("closedBy", usernameOf(cashCount.getClosedBy()));
         before.put("salesAfterClose", after.getSales());
         before.put("amountAfterClose", after.getAmount());
+        before.put("expensesAfterClose", afterExpenses.getExpenses());
+        before.put("cashExpensesAfterClose", afterExpenses.getAmount());
 
         // Recomputed from the payments as they stand now, exactly as the first count was.
         // Only the takings are re-read. The float went into the drawer once, at open, and a
         // straggler served at 03:30 does not change what was put in at 10:00.
         cashCount.setCashSales(paymentRepository.sumCashForBusinessDate(businessDate));
+        cashCount.setCashExpenses(expenseRepository.sumPaidFromDrawer(businessDate));
         cashCount.setCountedCash(cashCountRequestDTO.getCountedCash());
         cashCount.setCountedBy(branchContext.getCurrentUserId());
         if (cashCountRequestDTO.getNote() != null) {
@@ -274,6 +296,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
 
         Map<String, Object> afterState = new LinkedHashMap<>();
         afterState.put("cashSales", saved.getCashSales());
+        afterState.put("cashExpenses", saved.getCashExpenses());
         afterState.put("countedCash", saved.getCountedCash());
         afterState.put("variance", saved.getVariance());
         afterState.put("closedAt", null);
@@ -326,7 +349,8 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         after.put("businessDate", businessDate.toString());
         after.put("openingFloat", cashCount.getOpeningFloat());
         after.put("cashSales", cashCount.getCashSales());
-        after.put("expectedCash", cashCount.getCashSales().add(cashCount.getOpeningFloat()));
+        after.put("cashExpenses", cashCount.getCashExpenses());
+        after.put("expectedCash", expectedCash(cashCount));
         after.put("countedCash", cashCount.getCountedCash());
         after.put("variance", cashCount.getVariance());
         auditService.record("BUSINESS_DAY_CLOSED", "cash_count", cashCount.getId(),
@@ -358,7 +382,8 @@ public class BusinessDayServiceImpl implements BusinessDayService {
                 cashCount.getBusinessDate(),
                 cashCount.getOpeningFloat(),
                 cashCount.getCashSales(),
-                cashCount.getCashSales().add(cashCount.getOpeningFloat()),
+                cashCount.getCashExpenses(),
+                expectedCash(cashCount),
                 cashCount.isFloatOverridden(),
                 cashCount.getCountedCash(),
                 cashCount.getVariance(),
@@ -366,7 +391,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
                 cashCount.getNote(),
                 cashCount.getClosedAt(),
                 cashCount.getClosedBy() == null ? null : usernameOf(cashCount.getClosedBy()),
-                0, BigDecimal.ZERO, BigDecimal.ZERO);
+                0, BigDecimal.ZERO, BigDecimal.ZERO, 0, BigDecimal.ZERO);
 
         // Only meaningful once the day is signed off: before that, everything is "after the
         // last thing that happened" and nothing is superseded.
@@ -376,8 +401,28 @@ public class BusinessDayServiceImpl implements BusinessDayService {
             dto.setSalesAfterClose(after.getSales());
             dto.setAmountAfterClose(after.getAmount());
             dto.setCashAfterClose(after.getCash());
+
+            ExpenseRepository.AfterCloseProjection afterExpenses = expenseRepository.findCashExpensesAfter(
+                    cashCount.getBranchId(), cashCount.getBusinessDate(), cashCount.getClosedAt());
+            dto.setExpensesAfterClose(afterExpenses.getExpenses());
+            dto.setCashExpensesAfterClose(afterExpenses.getAmount());
         }
         return dto;
+    }
+
+    /*
+     * What the drawer should have held: the float that went in, plus the takings, less what was
+     * paid out of it.
+     *
+     * Computed here rather than read off the row because nothing stores it — the database stores
+     * the three components and the variance, which is the right split: a stored expected_cash
+     * would be a fourth number that can disagree with the other three. Every caller that shows
+     * or logs the figure comes through here, so they cannot drift.
+     */
+    private BigDecimal expectedCash(CashCount cashCount) {
+        return cashCount.getCashSales()
+                .add(cashCount.getOpeningFloat())
+                .subtract(cashCount.getCashExpenses());
     }
 
     private String usernameOf(UUID userId) {

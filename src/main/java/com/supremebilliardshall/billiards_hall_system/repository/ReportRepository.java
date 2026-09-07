@@ -134,6 +134,30 @@ public class ReportRepository {
                                                 WHERE bs.branch_id = p.branch_id AND bs.key = 'low_stock_threshold'), 10)
               ORDER BY pr.qty_on_hand
             ),
+            expenses AS (
+              -- Operating cost, dated by the expense's OWN business_date rather than a bill's:
+              -- an expense has no bill, and the water man paid at 02:00 belongs to the night
+              -- still running. Voided rows excluded, exactly as voided lines are excluded from
+              -- revenue -- the row is retained, but it is not a cost.
+              SELECT e.business_date,
+                     coalesce(sum(e.amount), 0) AS amount
+              FROM expense e, params p
+              WHERE e.branch_id = p.branch_id
+                AND e.business_date IN (p.d, p.prev_d)
+                AND e.voided_at IS NULL
+              GROUP BY e.business_date
+            ),
+            expenses_by_category AS (
+              -- Joined to the category rather than grouped on an id, and NOT filtered on
+              -- archived_at: a category archived last week still has to report what was spent
+              -- under it, or the breakdown stops adding up to the total beside it.
+              SELECT ec.name AS category, coalesce(sum(e.amount), 0) AS amount
+              FROM expense e
+              JOIN expense_category ec ON ec.id = e.expense_category_id, params p
+              WHERE e.branch_id = p.branch_id AND e.business_date = p.d
+                AND e.voided_at IS NULL
+              GROUP BY ec.name ORDER BY amount DESC
+            ),
             per_employee AS (
               SELECT u.username, u.full_name AS "fullName", count(*)::int AS bills,
                      coalesce(sum(b.total_amount), 0) AS gross,
@@ -159,6 +183,11 @@ public class ReportRepository {
               'paymentMix',         coalesce((SELECT jsonb_agg(to_jsonb(m)) FROM payment_mix m), '[]'::jsonb),
               'losses',             (SELECT to_jsonb(v) || to_jsonb(o) || to_jsonb(c) || to_jsonb(r) || to_jsonb(f)
                                      FROM voids v, overrides o, comps c, time_reductions r, flats f),
+              'expenses',           jsonb_build_object(
+                                      'total',         coalesce((SELECT x.amount FROM expenses x WHERE x.business_date = p.d), 0),
+                                      -- Zero rather than null, so the client can always subtract.
+                                      'previousTotal', coalesce((SELECT x.amount FROM expenses x WHERE x.business_date = p.prev_d), 0),
+                                      'byCategory',    coalesce((SELECT jsonb_agg(to_jsonb(c)) FROM expenses_by_category c), '[]'::jsonb)),
               'lowStock',           coalesce((SELECT jsonb_agg(to_jsonb(l)) FROM low_stock l), '[]'::jsonb),
               'perEmployee',        coalesce((SELECT jsonb_agg(to_jsonb(e)) FROM per_employee e), '[]'::jsonb)
             )::text AS report

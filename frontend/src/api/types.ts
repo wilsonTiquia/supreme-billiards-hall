@@ -620,7 +620,13 @@ export interface CashCount {
   openingFloat: Money;
   /** That day's cash takings. Computed and frozen server-side. Never sent. */
   cashSales: Money;
-  /** `openingFloat + cashSales` — what the drawer should have held. */
+  /**
+   * Cash paid out of the till that night — a water delivery, a bag of ice. Computed and frozen
+   * server-side like `cashSales`, and shown beside it so a counter can see why the expected
+   * figure dropped instead of assuming the drawer is short.
+   */
+  cashExpenses: Money;
+  /** `openingFloat + cashSales - cashExpenses` — what the drawer should have held. */
   expectedCash: Money;
   /** True when this night's float differed from the branch standard. */
   floatOverridden: boolean;
@@ -632,6 +638,13 @@ export interface CashCount {
   /** Null while the drawer is counted but the night is still open. */
   closedAt: IsoInstant | null;
   closedByUsername: string | null;
+  /**
+   * Cash paid out on this business day AFTER it was closed — the payout half of the same
+   * staleness `salesAfterClose` describes. A night closed at 03:00 that then pays the water man
+   * at 03:30 has a frozen `expectedCash` that no longer matches the drawer.
+   */
+  expensesAfterClose: number;
+  cashExpensesAfterClose: Money;
 }
 
 /** ADMIN only. Corrects a mistyped count; the original survives in the audit log. */
@@ -640,6 +653,52 @@ export interface CashCountUpdateRequest {
   /** Null leaves the recorded float alone. ADMIN only, like the rest of this request. */
   openingFloat?: Money;
   note?: string;
+}
+
+/* ── §9 Expenses ─────────────────────────────────────────────────────────────────────
+   What the hall SPENDS, as opposed to what the goods cost. Not gated by role: an expense
+   carries no unit cost, no margin and no profit, so one type serves both — the same reasoning
+   as UnsettledBill. */
+
+export interface ExpenseCategory {
+  id: UUID;
+  name: string;
+  sortOrder: number;
+}
+
+export interface ExpenseCategoryRequest {
+  name: string;
+  sortOrder?: number;
+}
+
+export interface Expense {
+  id: UUID;
+  expenseCategoryId: UUID;
+  categoryName: string | null;
+  amount: Money;
+  note: string | null;
+  /** True when the cash physically left the till, which is what moves the drawer arithmetic. */
+  paidFromDrawer: boolean;
+  incurredAt: IsoInstant;
+  /** Computed by the database, so an expense at 02:00 lands on the night still running. */
+  businessDate: BusinessDate;
+  recordedByUsername: string | null;
+  /** Voided rows come back with the live ones and stay on screen struck through. */
+  voided: boolean;
+  voidedAt: IsoInstant | null;
+  voidedByUsername: string | null;
+  voidReason: string | null;
+}
+
+export interface ExpenseRequest {
+  expenseCategoryId: UUID;
+  amount: Money;
+  note?: string;
+  paidFromDrawer: boolean;
+}
+
+export interface VoidExpenseRequest {
+  reason: string;
 }
 
 /* ── §10 Stock ───────────────────────────────────────────────────────────────────── */
@@ -894,9 +953,30 @@ export interface DailyReport {
   topItems: TopItem[];
   paymentMix: PaymentMix[];
   losses: Losses;
+  /** Operating cost. Deliberately NOT part of `totals.cost`, which is cost of goods. */
+  expenses: ReportExpenses;
   lowStock: ReportLowStock[];
   /** Sums exactly to totals; attributed to whoever took the payment. */
   perEmployee: EmployeeSales[];
+}
+
+/**
+ * What it cost to be open — water, electricity, rent, supplies.
+ *
+ * Kept apart from `totals.cost` on purpose: that is cost of goods, snapshotted at the moment of
+ * sale, and adding the rent to it would put the rent inside the margin on a beer. Voided
+ * expenses are excluded, exactly as voided lines are excluded from revenue.
+ */
+export interface ReportExpenses {
+  total: Money;
+  /** The same figure for the previous business day, so the tile can carry a delta. */
+  previousTotal: Money;
+  byCategory: ExpenseCategoryTotal[];
+}
+
+export interface ExpenseCategoryTotal {
+  category: string;
+  amount: Money;
 }
 
 export interface AuditEntry {

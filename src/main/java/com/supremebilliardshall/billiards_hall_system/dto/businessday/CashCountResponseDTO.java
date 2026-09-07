@@ -23,7 +23,11 @@ public class CashCountResponseDTO {
      */
     private BigDecimal openingFloat;
     private BigDecimal cashSales;
-    // openingFloat + cashSales: what the drawer should have held.
+    // Cash paid out of the till tonight, frozen like the two above. Sent so the end-of-day
+    // panel can say why the expected figure dropped, rather than leaving the counter to
+    // discover that the drawer is 850 light and assume the worst.
+    private BigDecimal cashExpenses;
+    // openingFloat + cashSales - cashExpenses: what the drawer should have held.
     private BigDecimal expectedCash;
     private boolean floatOverridden;
     private BigDecimal countedCash;
@@ -51,7 +55,17 @@ public class CashCountResponseDTO {
     // Only the cash half moves the drawer, so it is the figure a re-count has to reconcile to.
     private BigDecimal cashAfterClose;
 
+    /*
+     * And money that left the till after the close, for exactly the same reason.
+     *
+     * Adding expenses to the variance formula created a second way for the frozen figure to
+     * stop being true, and unlike a late sale it would have been invisible: a sale after the
+     * close is already surfaced here, a payout after it would not have been.
+     */
+    private int expensesAfterClose;
+    private BigDecimal cashExpensesAfterClose;
+
     public boolean isStale() {
-        return closedAt != null && salesAfterClose > 0;
+        return closedAt != null && (salesAfterClose > 0 || expensesAfterClose > 0);
     }
 }

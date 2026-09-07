@@ -10,7 +10,7 @@ import type { BusinessDayStatus } from '@/api/types';
 import { formatBusinessDate } from '@/lib/datetime';
 import { Sidebar, type NavGroup } from './Sidebar';
 
-/** The counter's three destinations. Short enough to live on a collapsed rail. */
+/** The counter's destinations. Short enough to live on a collapsed rail. */
 const COUNTER: NavGroup[] = [
   {
     emphasis: 'primary',
@@ -19,7 +19,15 @@ const COUNTER: NavGroup[] = [
       { to: '/quick-sale', label: 'Quick sale', short: 'QS' },
     ],
   },
-  { emphasis: 'quiet', items: [{ to: '/end-of-day', label: 'End of day', short: 'EOD' }] },
+  {
+    emphasis: 'quiet',
+    items: [
+      // Beside End of day rather than up with the floor: money paid out is an occasional
+      // errand, and it is the drawer count it has to reconcile with.
+      { to: '/expenses', label: 'Expenses', short: 'Ex' },
+      { to: '/end-of-day', label: 'End of day', short: 'EOD' },
+    ],
+  },
 ];
 
 /** The owner's eight, in the three groups they actually fall into. */
@@ -47,6 +55,7 @@ const ADMIN: NavGroup[] = [
       { to: '/admin/categories', label: 'Categories', short: 'Ca' },
       { to: '/admin/tables', label: 'Tables', short: 'Tb' },
       { to: '/admin/customer-types', label: 'Customer types', short: 'CT' },
+      { to: '/admin/expense-categories', label: 'Expense categories', short: 'EC' },
       { to: '/admin/staff', label: 'Staff', short: 'Sf' },
       { to: '/admin/settings', label: 'Settings', short: 'Se' },
     ],

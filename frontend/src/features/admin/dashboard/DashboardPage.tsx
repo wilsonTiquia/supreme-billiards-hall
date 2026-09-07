@@ -331,12 +331,21 @@ export function DashboardPage() {
               question: what did the night take out. Separating "cost" from "given away" would
               let someone read the first and think they had the answer. */}
           <Group title="What it cost">
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-3">
               <Headline
                 label="Cost of goods"
                 value={data.totals.cost}
                 now={data.totals.cost}
                 before={data.previousTotals.cost}
+              />
+              {/* Beside cost of goods, never added to it: that figure is what the drinks cost,
+                  this one is what the building cost, and a single "cost" number that mixed them
+                  would put the rent inside the margin on a beer. */}
+              <Headline
+                label="Operating expenses"
+                value={data.expenses.total}
+                now={data.expenses.total}
+                before={data.expenses.previousTotal}
               />
               <Headline
                 label="Bills settled"
@@ -346,6 +355,20 @@ export function DashboardPage() {
                 before={data.previousTotals.bills}
               />
             </div>
+
+            <Tile title="What it went on">
+              {data.expenses.byCategory.length === 0 ? (
+                <p className="text-body text-text-dim">Nothing paid out tonight.</p>
+              ) : (
+                data.expenses.byCategory.map((line) => (
+                  <Row
+                    key={line.category}
+                    label={line.category}
+                    value={formatMoney(line.amount)}
+                  />
+                ))
+              )}
+            </Tile>
 
             <Tile title="Given away">
               <p className="mb-3 text-label text-text-dim">

@@ -25,6 +25,9 @@ public class DailyReportResponseDTO {
     private List<TopItemDTO> topItems;
     private List<PaymentMixDTO> paymentMix;
     private LossesDTO losses;
+    // Operating cost — water, electricity, rent, supplies. Kept apart from totals.cost, which
+    // is cost of goods: summing the two would put the rent inside the margin on a beer.
+    private ExpensesDTO expenses;
     private List<LowStockLineDTO> lowStock;
     private List<EmployeeSalesDTO> perEmployee;
 }
