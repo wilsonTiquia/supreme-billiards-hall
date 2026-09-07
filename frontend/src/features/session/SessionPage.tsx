@@ -81,6 +81,7 @@ export function SessionPage() {
         billedMinutes: session.data.billedMinutes,
         billedSeconds: session.data.billedSeconds,
         ratePerMinute: session.data.rateOverridePerMinute ?? session.data.standardRatePerMinute,
+        flatAmount: session.data.flatAmount,
         timeAmount: session.data.timeAmount,
         itemCount: session.data.itemCount,
         itemTotal: session.data.itemTotal,
@@ -225,6 +226,19 @@ export function SessionPage() {
               </div>
             </dl>
 
+            {/*
+              A flat session's charge does not tick, which without saying so looks like a frozen
+              screen rather than the price it is. The timer above keeps running and the minutes
+              keep counting — they are recorded and feed utilisation — they just do not price it.
+            */}
+            {live.flatAmount !== null ? (
+              <p className="mt-3 text-label text-amount">
+                Flat rate — {formatMoney(live.flatAmount)} for the session however long it runs.
+                The timer keeps running; the charge does not change.
+                {live.flatRateReason ? ` (${live.flatRateReason})` : ''}
+              </p>
+            ) : null}
+
             {live.rateOverridePerMinute !== null ? (
               <p className="mt-3 text-label text-amount">
                 {/* Named after the customer type the session was opened on, and quoted in the
@@ -235,6 +249,17 @@ export function SessionPage() {
                 {live.rateOverridePerHour !== null && live.standardRatePerHour !== null
                   ? formatHourlyRate(live.standardRatePerHour)
                   : formatRate(live.standardRatePerMinute)}
+              </p>
+            ) : null}
+
+            {/* Pause stays available on a flat session. It still stops the clock and still
+                reduces the recorded minutes; it just does not change what is charged. Said in a
+                line rather than solved by disabling the button — staff pause for real reasons,
+                and the recorded minutes are what feed utilisation. */}
+            {!finished && live.flatAmount !== null ? (
+              <p className="mt-2 text-label text-text-dim">
+                Pausing stops the clock and lowers the recorded minutes. The charge stays at{' '}
+                {formatMoney(live.flatAmount)}.
               </p>
             ) : null}
 

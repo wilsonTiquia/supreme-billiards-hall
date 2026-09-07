@@ -316,7 +316,7 @@ overlap → 409.
 | GET | `/api/v1/sessions/{id}/notes` | authenticated |
 | POST | `/api/v1/sessions/{id}/notes` | authenticated |
 
-**POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverridePerHour"?, "rateOverrideReason"? }`
+**POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverridePerHour"?, "rateOverrideReason"?, "flatAmount"?, "flatRateReason"? }`
 
 No start time — the server stamps it. Creates the bill, the session and its first segment in one
 transaction.
@@ -334,6 +334,20 @@ transaction.
 - Either form is only accepted when the chosen customer type has `allowsRateOverride: true`;
   otherwise 409. Any value is allowed, with no floor and no approval — **including zero**, which is
   a comped game.
+- `flatAmount` is **tournament pricing**: a fixed charge for the whole session however long it
+  runs, set at session start. `flatRateReason` is **required** with it, and zero is allowed — the
+  reason is the whole control on a fee somebody chose. Unlike the friend rate it is **not gated on
+  the customer type**: a tournament is an event, not a kind of customer, and requiring a
+  "Tournament" customer type would mean remembering to switch it back.
+- A session is priced **one way**. `flatAmount` together with either friend-rate field is a 400.
+- On a flat session the timer still runs and the minutes are still recorded — `billedMinutes` and
+  `billedSeconds` behave exactly as they do on a metered session, and utilisation counts them. What
+  stops growing is the charge: `timeAmount` equals `flatAmount` from the first second. Checkout
+  writes **one** TIME line for the whole session, described as `"Table 3 - flat rate (192 min)"`.
+- **`POST /sessions/{id}/billed-minutes` is refused with 409 on a flat session.** "Charge fewer
+  minutes" has no meaning against a fee that was never per-minute.
+- Pausing works normally: it stops the clock and lowers the recorded minutes, and does not change
+  the charge.
 
 **Session response** (returned by all five routes):
 
@@ -342,6 +356,7 @@ transaction.
   "status", "openedAt", "closedAt", "closeKind",
   "standardRatePerMinute", "rateOverridePerMinute",
   "standardRatePerHour", "rateOverridePerHour",
+  "flatAmount", "flatRateReason",
   "billedMinutes", "billedSeconds", "timeAmount", "itemTotal", "runningTotal",
   "segments": [ { "id", "poolTableId", "poolTableName", "seq", "ratePerMinute",
                   "startedAt", "endedAt", "billedMinutes", "amount" } ],
@@ -351,6 +366,12 @@ transaction.
 
 `status` ∈ `OPEN | PAUSED | CLOSED | AUTO_CLOSED | VOIDED`.
 `closeKind` ∈ `MANUAL | AUTO_END_OF_DAY | null`.
+
+`flatAmount` and `flatRateReason` are null on a metered session. When `flatAmount` is set,
+`rateOverridePerMinute` is always null (the two are mutually exclusive) and the session's segments
+carry `ratePerMinute: 0` — **which means priced at session level, not that the table was free**.
+Read `flatAmount` for what was actually charged; the same applies to `TableSessionSummary`, which
+is why it carries `flatAmount` alongside its zero `ratePerMinute`.
 
 `standardRatePerHour` and `rateOverridePerHour` are read-back only, both snapshotted when the
 session opened. `standardRatePerHour` is null if the table was configured per minute at that
@@ -671,7 +692,11 @@ optional and defaults to the night currently running, same as `/reports/daily`.
                    "lines": [ { "poolTableName", "standardRatePerMinute", "chargedRatePerMinute",
                                 "standardRatePerHour", "chargedRatePerHour",
                                 "billedMinutes", "forgoneRevenue", "actorUsername",
-                                "reason", "openedAt" } ] } }
+                                "reason", "openedAt" } ] },
+  "flatRates":   { "flatSessions", "flatForgone",
+                   "lines": [ { "poolTableName", "billedMinutes", "standardRatePerMinute",
+                                "meteredRevenue", "flatAmount", "forgoneRevenue",
+                                "actorUsername", "reason", "openedAt" } ] } }
 ```
 
 Each list is newest first. **Each section repeats its own tile's figure under the same field
@@ -847,6 +872,8 @@ threshold (10), which sweeps up anything negative.
   "paymentMix":       [ { "method", "payments", "amount" } ],
   "losses":           { "voidCount", "voidAmount",
                         "overrideSessions", "forgoneRevenue",
+                        "flatSessions", "flatForgone",
+                        "reducedSessions", "timeReductionForgone",
                         "compQuantity", "compEstimatedCost" },
   "lowStock":         [ { "name", "qtyOnHand" } ],
   "perEmployee":      [ { "username", "fullName", "bills", "gross", "cost", "profit" } ] }
@@ -855,8 +882,12 @@ threshold (10), which sweeps up anything negative.
 - `hour` is the Asia/Manila hour, 10 through 4 across the business day.
 - `utilisationPercent` is against a 19-hour day.
 - `perEmployee` sums exactly to `totals` — attributed to whoever took the payment.
-- `compEstimatedCost` is an **estimate** valued at current average cost; `voidAmount` and
-  `forgoneRevenue` are exact.
+- `compEstimatedCost` is an **estimate** valued at current average cost; `voidAmount`,
+  `forgoneRevenue` and `flatForgone` are exact.
+- `flatForgone` is the metered figure less the flat fee — `standardRatePerMinute × billedMinutes
+  − flatAmount` — **clamped at zero per session**. A flat fee above what the meter would have
+  charged is not a loss and contributes zero rather than netting off against a real giveaway
+  elsewhere, so this figure never understates the night.
 
 **`/audit`** — all filters optional. `entity` is a table name (`bill_line`, `product`,
 `pool_table_rate`, `table_session`, `cash_count`); `actor` is a user UUID; `from`/`to` are business

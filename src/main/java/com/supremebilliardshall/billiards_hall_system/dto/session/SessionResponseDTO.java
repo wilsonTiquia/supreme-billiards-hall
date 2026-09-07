@@ -36,6 +36,11 @@ public class SessionResponseDTO {
     // number on the screen nobody entered. Display only; the money comes from the pair above.
     private BigDecimal standardRatePerHour;
     private BigDecimal rateOverridePerHour;
+    // The fixed charge for the whole session, when it was opened on tournament pricing. Null on
+    // a metered session. When set, timeAmount equals it from the first second and never moves —
+    // the clock keeps running, the charge does not.
+    private BigDecimal flatAmount;
+    private String flatRateReason;
 
     // While the session is live these are recomputed server-side on every read; at close they
     // are the values stored on table_session. The client never sends either one.

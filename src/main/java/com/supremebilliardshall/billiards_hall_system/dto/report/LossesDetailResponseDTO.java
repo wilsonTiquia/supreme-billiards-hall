@@ -23,6 +23,7 @@ public class LossesDetailResponseDTO {
     private VoidSection voids;
     private RateOverrideSection friendRates;
     private TimeReductionSection timeReductions;
+    private FlatRateSection flatRates;
 
     @Data
     @NoArgsConstructor
@@ -58,5 +59,14 @@ public class LossesDetailResponseDTO {
         private Integer overrideSessions;
         private BigDecimal forgoneRevenue;
         private List<RateOverrideLossLineDTO> lines;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FlatRateSection {
+        private Integer flatSessions;
+        private BigDecimal flatForgone;
+        private List<FlatRateLossLineDTO> lines;
     }
 }

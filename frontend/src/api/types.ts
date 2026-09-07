@@ -207,7 +207,14 @@ export interface TableSessionSummary {
    * instead of trailing it by up to 59 seconds.
    */
   billedSeconds: number;
+  /** Zero on a flat session: the segments are not priced, the session is. Read `flatAmount`. */
   ratePerMinute: Rate;
+  /**
+   * The fixed charge, when this session was opened on tournament pricing. Null on a metered
+   * session. The floor card leads with this rather than the table's configured rate, which is
+   * still whatever it always was and would read as a plausible per-minute figure.
+   */
+  flatAmount: Money | null;
   timeAmount: Money;
   /** Units of product on the bill so far — one round or six, which the value alone cannot say. */
   itemCount: Quantity;
@@ -281,6 +288,13 @@ export interface OpenSessionRequest {
   rateOverridePerMinute?: Rate;
   rateOverridePerHour?: Money;
   rateOverrideReason?: string;
+  /**
+   * Tournament pricing: a fixed charge for the whole session however long it runs. Mutually
+   * exclusive with either friend-rate field — both in one request is a 400 — and `flatRateReason`
+   * is required alongside it. Zero is legitimate. Not gated on the customer type.
+   */
+  flatAmount?: Money;
+  flatRateReason?: string;
 }
 
 export interface SessionSegment {
@@ -323,6 +337,13 @@ export interface Session {
    */
   standardRatePerHour: Money | null;
   rateOverridePerHour: Money | null;
+  /**
+   * The fixed charge, when the session was opened on tournament pricing. Null on a metered
+   * session. When set, `timeAmount` equals it from the first second and never moves — the timer
+   * keeps running, the charge does not.
+   */
+  flatAmount: Money | null;
+  flatRateReason: string | null;
   billedMinutes: number;
   /** Exact billable elapsed in seconds, unfloored. For the counter only; money uses minutes. */
   billedSeconds: number;
@@ -765,6 +786,12 @@ export interface Losses {
   /** Table time played but not charged — the third giveaway route. */
   reducedSessions: number;
   timeReductionForgone: Money;
+  /**
+   * Tournament pricing. `flatForgone` is the metered figure less the flat fee, clamped at zero
+   * per session, so a fee above the meter contributes nothing rather than cancelling a real loss.
+   */
+  flatSessions: number;
+  flatForgone: Money;
 }
 
 /* ── Losses drill-down (ADMIN) ─────────────────────────────────────────────────────
@@ -793,6 +820,20 @@ export interface VoidLossLine {
   receiptNo: number | null;
 }
 
+export interface FlatRateLossLine {
+  poolTableName: string;
+  billedMinutes: number;
+  standardRatePerMinute: Rate;
+  /** What the meter would have charged for those minutes. */
+  meteredRevenue: Money;
+  flatAmount: Money;
+  /** Metered less flat, clamped at zero on this row. */
+  forgoneRevenue: Money;
+  actorUsername: string | null;
+  reason: string | null;
+  openedAt: IsoInstant;
+}
+
 export interface RateOverrideLossLine {
   poolTableName: string;
   standardRatePerMinute: Rate;
@@ -815,6 +856,11 @@ export interface LossesDetail {
     overrideSessions: number;
     forgoneRevenue: Money;
     lines: RateOverrideLossLine[];
+  };
+  flatRates: {
+    flatSessions: number;
+    flatForgone: Money;
+    lines: FlatRateLossLine[];
   };
   timeReductions: {
     reducedSessions: number;

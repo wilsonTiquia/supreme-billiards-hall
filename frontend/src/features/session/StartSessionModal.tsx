@@ -13,6 +13,14 @@ import { RateModeField, type RateMode } from '@/components/RateModeField';
 import { Banner } from '@/components/Banner';
 import { formatHourlyRate, formatRate } from '@/lib/money';
 
+type Pricing = 'standard' | 'friend' | 'flat';
+
+const PRICING_CHOICES: { id: Pricing; label: string }[] = [
+  { id: 'standard', label: 'Standard rate' },
+  { id: 'friend', label: 'Friend rate' },
+  { id: 'flat', label: 'Flat rate' },
+];
+
 export function StartSessionModal({
   table,
   onClose,
@@ -25,8 +33,13 @@ export function StartSessionModal({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [customerTypeId, setCustomerTypeId] = useState<string>('');
+  // Standard, friend rate, or a flat tournament fee. Three choices rather than a checkbox,
+  // because they are alternatives: a session has exactly one pricing story.
+  const [pricing, setPricing] = useState<Pricing>('standard');
   const [rateOverride, setRateOverride] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
+  const [flatAmount, setFlatAmount] = useState('');
+  const [flatReason, setFlatReason] = useState('');
   // Opens in the unit the table itself is configured in: starting an hourly table should put
   // the friend rate in hourly mode, because that is the number the counter has in their head.
   const [rateMode, setRateMode] = useState<RateMode>(
@@ -89,14 +102,26 @@ export function StartSessionModal({
     }
 
     const body: OpenSessionRequest = { tableId: table.id, customerTypeId: selectedId };
-    // Only sent when the chosen type allows it; the server rejects it otherwise. One field or
-    // the other, never both — and neither when the box is blank, which means charge the
-    // standard rate. Number() rather than a truthiness test, so a zero friend rate (a comped
-    // game) is sent as the giveaway it is instead of being dropped as falsy.
-    if (allowsOverride && rateOverride.trim() !== '') {
+
+    // One pricing story per session, so exactly one of these branches contributes. Number()
+    // rather than a truthiness test throughout: a zero friend rate and a zero flat fee are both
+    // comps, and dropping them as falsy would silently bill the standard rate instead.
+    if (pricing === 'friend' && allowsOverride && rateOverride.trim() !== '') {
       if (rateMode === 'hour') body.rateOverridePerHour = Number(rateOverride);
       else body.rateOverridePerMinute = Number(rateOverride);
       if (overrideReason.trim() !== '') body.rateOverrideReason = overrideReason.trim();
+    }
+    if (pricing === 'flat') {
+      if (flatAmount.trim() === '') {
+        setError('Enter the flat amount for this session.');
+        return;
+      }
+      if (flatReason.trim() === '') {
+        setError('A flat rate needs a reason — what event is it for?');
+        return;
+      }
+      body.flatAmount = Number(flatAmount);
+      body.flatRateReason = flatReason.trim();
     }
     start.mutate(body);
   }
@@ -120,9 +145,12 @@ export function StartSessionModal({
           data-autofocus
           onChange={(event) => {
             setCustomerTypeId(event.target.value);
+            // The flat fee is deliberately NOT reset: it belongs to the event, not to who is
+            // playing, and changing the customer type mid-form should not silently drop it.
             setRateOverride('');
             setOverrideReason('');
             setRateMode(table.ratePerHour != null ? 'hour' : 'minute');
+            if (pricing === 'friend') setPricing('standard');
           }}
         >
           {customerTypes.map((type) => (
@@ -133,7 +161,72 @@ export function StartSessionModal({
           ))}
         </Select>
 
-        {allowsOverride ? (
+        {/*
+          Three alternatives, not a checkbox each. Friend rate is offered only where the
+          customer type allows it; the flat fee is offered always, because a tournament is an
+          event rather than a kind of customer — gating it would mean creating a "Tournament"
+          customer type to run one, which is the thing-to-switch-back this design removes.
+        */}
+        <div className="flex flex-col gap-3">
+          <div className="text-label uppercase text-text-dim">Price this session</div>
+          <div className="flex flex-wrap gap-2">
+            {PRICING_CHOICES.filter((choice) => choice.id !== 'friend' || allowsOverride).map(
+              (choice) => {
+                const active = pricing === choice.id;
+                return (
+                  <button
+                    key={choice.id}
+                    type="button"
+                    aria-pressed={active}
+                    onClick={() => {
+                      setPricing(choice.id);
+                      setError(null);
+                    }}
+                    className={`hit rounded-lg border px-4 text-body font-semibold transition ${
+                      active
+                        ? 'border-green bg-green text-ink'
+                        : 'border-border bg-raised text-text-dim hover:border-text-dim hover:text-text'
+                    }`}
+                  >
+                    {choice.label}
+                  </button>
+                );
+              },
+            )}
+          </div>
+          {pricing === 'standard' ? (
+            <p className="text-label text-text-dim">
+              The table&rsquo;s own rate, {standardLabel('minute')}.
+            </p>
+          ) : null}
+        </div>
+
+        {pricing === 'flat' ? (
+          <>
+            <Field
+              label="Flat amount for the whole session"
+              type="number"
+              step="0.01"
+              min="0"
+              inputMode="decimal"
+              prefix="₱"
+              value={flatAmount}
+              // The charge is the whole story here, so it is stated rather than implied: the
+              // timer still runs and the minutes are still recorded, they just do not price it.
+              hint="Charged once, however long the session runs. The timer still runs and the minutes are still recorded."
+              onChange={(event) => setFlatAmount(event.target.value)}
+            />
+            <Field
+              label="Reason"
+              value={flatReason}
+              placeholder="Saturday tournament"
+              hint="Required. This is the only record of why the table was not on the meter."
+              onChange={(event) => setFlatReason(event.target.value)}
+            />
+          </>
+        ) : null}
+
+        {pricing === 'friend' && allowsOverride ? (
           <>
             <RateModeField
               mode={rateMode}

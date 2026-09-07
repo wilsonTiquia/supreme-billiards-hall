@@ -89,10 +89,22 @@ public class SessionServiceImpl implements SessionService {
             throw new BusinessRuleException(
                     "Customer type '" + customerType.getName() + "' does not allow a rate override.");
         }
+        // Tournament pricing. Not gated on the customer type: an event is not a kind of
+        // customer. The same detection-not-prevention posture applies, so the actor and the
+        // reason are recorded and the giveaway is reported — see the flats CTE.
+        BigDecimal flatAmount = openSessionRequestDTO.getFlatAmount();
+
         // Any value, no floor and no approval — the owner's rule. Detection, not prevention:
         // what makes that safe is that the override, the standard rate and the actor are all
         // recorded, so the foregone revenue is arithmetic.
-        BigDecimal effectiveRate = overrideRate != null ? overrideRate : standardRate;
+        //
+        // A flat session prices its segments at ZERO. session_segment.rate_per_minute is NOT
+        // NULL, and zero is the only honest value for a segment that is not priced: the charge
+        // lives on the session. It does not mean the table was free — see the column comment
+        // in V14, and read flatAmount to find what was actually charged.
+        BigDecimal effectiveRate = flatAmount != null
+                ? BigDecimal.ZERO
+                : overrideRate != null ? overrideRate : standardRate;
 
         UUID branchId = branchContext.getCurrentBranchId();
         UUID actorId = branchContext.getCurrentUserId();
@@ -128,6 +140,11 @@ public class SessionServiceImpl implements SessionService {
             session.setRateOverrideBy(actorId);
             session.setRateOverrideReason(openSessionRequestDTO.getRateOverrideReason());
         }
+        if (flatAmount != null) {
+            session.setFlatAmount(flatAmount);
+            session.setFlatRateBy(actorId);
+            session.setFlatRateReason(openSessionRequestDTO.getFlatRateReason());
+        }
         // saveAndFlush so table_session_one_open_per_table_key fires here, as a clean 409,
         // rather than at commit. The index is the check — there is deliberately no pre-select,
         // which would only be a race with a second counter tab.
@@ -142,6 +159,12 @@ public class SessionServiceImpl implements SessionService {
         segment.setStartedAt(savedSession.getOpenedAt());
         sessionSegmentRepository.saveAndFlush(segment);
 
+        if (flatAmount != null) {
+            auditService.record("SESSION_FLAT_RATE", "table_session", savedSession.getId(),
+                    rateSnapshot(standardRate, standardRateRow.getRatePerHour()),
+                    flatSnapshot(flatAmount),
+                    openSessionRequestDTO.getFlatRateReason());
+        }
         if (overrideRate != null) {
             auditService.record("SESSION_RATE_OVERRIDE", "table_session", savedSession.getId(),
                     rateSnapshot(standardRate, standardRateRow.getRatePerHour()),
@@ -254,6 +277,39 @@ public class SessionServiceImpl implements SessionService {
         BigDecimal totalAmount = BigDecimal.ZERO.setScale(2, RoundingMode.UNNECESSARY);
         int seq = billLineRepository.findMaxSeq(session.getBillId());
 
+        /*
+         * A flat session is ONE line for the whole session, not one per segment.
+         *
+         * The fee was sold for the session, so it attaches to the session; splitting it across
+         * segments would need a split rule, and every split rule is wrong on a bill somebody
+         * reads. The minutes are still recorded on the line — they are just not what priced it.
+         *
+         * Same line shape as below: quantity 1, the whole charge as unit_price. No second
+         * encoding to teach the receipt, the checkout sum or the reports about.
+         */
+        if (session.getFlatAmount() != null) {
+            for (SessionSegment segment : segments) {
+                totalMinutes += billedMinutesFor(segment, now, pauses);
+            }
+            totalAmount = session.getFlatAmount().setScale(2, RoundingMode.HALF_UP);
+
+            BillLine line = new BillLine();
+            line.setBranchId(session.getBranchId());
+            line.setBillId(session.getBillId());
+            line.setLineKind(BillLineKind.TIME);
+            line.setSeq(++seq);
+            line.setSessionId(session.getId());
+            line.setDescription(poolTableName + " - flat rate (" + totalMinutes + " min)");
+            line.setQuantity(BigDecimal.ONE);
+            line.setUnitPrice(totalAmount);
+            line.setUnitCost(BigDecimal.ZERO);
+            line.setBilledMinutes(totalMinutes);
+            line.setCreatedBy(actorId);
+            billLineRepository.saveAndFlush(line);
+
+            return finishClose(session, totalMinutes, totalAmount, now, actorId, closeKind, needsReview);
+        }
+
         // One TIME line per segment, so a transferred session shows both tables and both
         // rates. With no transfers built yet there is exactly one, but the shape is what
         // makes transfer an addition later rather than a rewrite.
@@ -281,6 +337,14 @@ public class SessionServiceImpl implements SessionService {
             billLineRepository.saveAndFlush(line);
         }
 
+        return finishClose(session, totalMinutes, totalAmount, now, actorId, closeKind, needsReview);
+    }
+
+    // Everything after the TIME lines are written, shared by the metered and the flat paths so
+    // the two cannot drift on how a session is marked closed.
+    private SessionResponseDTO finishClose(TableSession session, int totalMinutes, BigDecimal totalAmount,
+                                           OffsetDateTime now, UUID actorId,
+                                           SessionCloseKind closeKind, boolean needsReview) {
         session.setBilledMinutes(totalMinutes);
         session.setTimeAmount(totalAmount);
         session.setStatus(closeKind == SessionCloseKind.AUTO_END_OF_DAY
@@ -334,10 +398,11 @@ public class SessionServiceImpl implements SessionService {
                     runningMinutes(segments, pauses, now),
                     runningSeconds(segments, pauses, now),
                     effectiveRateOf(segments, session),
-                    runningAmount(segments, pauses, now),
+                    session.getFlatAmount(),
+                    runningAmount(session, segments, pauses, now),
                     billLineRepository.sumLiveProductQuantity(List.of(session.getBillId())),
                     itemTotals.getOrDefault(session.getBillId(), BigDecimal.ZERO),
-                    runningAmount(segments, pauses, now)
+                    runningAmount(session, segments, pauses, now)
                             .add(itemTotals.getOrDefault(session.getBillId(), BigDecimal.ZERO))));
         }
         return byTable;
@@ -412,7 +477,21 @@ public class SessionServiceImpl implements SessionService {
         return (int) seconds;
     }
 
-    private BigDecimal runningAmount(List<SessionSegment> segments, List<SessionPause> pauses, OffsetDateTime now) {
+    /*
+     * What the table has cost so far.
+     *
+     * On a flat session that is the whole fee from the first second and it never moves — which
+     * is the point, and is why this returns before touching the segments. Summing them would
+     * give zero and show a free table for the length of a tournament.
+     *
+     * The minutes keep counting either way. runningMinutes and runningSeconds are untouched:
+     * the clock is still the clock, and the recorded minutes still feed utilisation.
+     */
+    private BigDecimal runningAmount(TableSession session, List<SessionSegment> segments,
+                                     List<SessionPause> pauses, OffsetDateTime now) {
+        if (session.getFlatAmount() != null) {
+            return session.getFlatAmount().setScale(2, RoundingMode.HALF_UP);
+        }
         BigDecimal amount = BigDecimal.ZERO.setScale(2, RoundingMode.UNNECESSARY);
         for (SessionSegment segment : segments) {
             amount = amount.add(amountFor(segment.getRatePerMinute(), billedMinutesFor(segment, now, pauses)));
@@ -457,7 +536,7 @@ public class SessionServiceImpl implements SessionService {
                 : runningMinutes(segments, pauses, now);
         BigDecimal timeAmount = session.getTimeAmount() != null
                 ? session.getTimeAmount()
-                : runningAmount(segments, pauses, now);
+                : runningAmount(session, segments, pauses, now);
 
         // A closed session's stored minutes are authoritative, so its seconds are reported as
         // exactly that many minutes: there is nothing left running to be precise about.
@@ -482,6 +561,8 @@ public class SessionServiceImpl implements SessionService {
                 session.getRateOverridePerMinute(),
                 session.getStandardRatePerHour(),
                 session.getRateOverridePerHour(),
+                session.getFlatAmount(),
+                session.getFlatRateReason(),
                 billedMinutes,
                 billedSeconds,
                 timeAmount,
@@ -510,10 +591,15 @@ public class SessionServiceImpl implements SessionService {
                 session.getBilledMinutes() != null ? session.getBilledMinutes() : runningMinutes(segments, pauses, now),
                 session.getBilledMinutes() != null ? session.getBilledMinutes() * 60 : runningSeconds(segments, pauses, now),
                 effectiveRateOf(segments, session),
-                session.getTimeAmount() != null ? session.getTimeAmount() : runningAmount(segments, pauses, now),
+                session.getFlatAmount(),
+                session.getTimeAmount() != null
+                        ? session.getTimeAmount()
+                        : runningAmount(session, segments, pauses, now),
                 billLineRepository.sumLiveProductQuantity(List.of(session.getBillId())),
                 itemTotal,
-                (session.getTimeAmount() != null ? session.getTimeAmount() : runningAmount(segments, pauses, now))
+                (session.getTimeAmount() != null
+                        ? session.getTimeAmount()
+                        : runningAmount(session, segments, pauses, now))
                         .add(itemTotal));
     }
 
@@ -576,6 +662,18 @@ public class SessionServiceImpl implements SessionService {
                                                     BilledMinutesOverrideRequestDTO request) {
         TableSession session = tableSessionRepository.findById(sessionId)
                 .orElseThrow(() -> new ResourceNotFoundException("Session", sessionId));
+
+        // Refused before anything else is checked. "Charge fewer minutes" has no meaning
+        // against a fee that was never per-minute, and the arithmetic further down would
+        // silently scale or zero it: amountFor(rate, lineCharged) on a flat session multiplies
+        // the zero rate its segments carry.
+        if (session.getFlatAmount() != null) {
+            throw new BusinessRuleException(
+                    "That session was charged a flat rate of "
+                    + session.getFlatAmount().setScale(2, RoundingMode.HALF_UP).toPlainString()
+                    + " for the whole session, so there are no minutes to reduce. Void the line "
+                    + "or change the amount instead.");
+        }
 
         if (session.getBilledMinutes() == null) {
             throw new BusinessRuleException(
@@ -675,6 +773,12 @@ public class SessionServiceImpl implements SessionService {
     private static String rateDigits(BigDecimal ratePerMinute) {
         BigDecimal trimmed = ratePerMinute.stripTrailingZeros();
         return (trimmed.scale() < 2 ? trimmed.setScale(2, RoundingMode.UNNECESSARY) : trimmed).toPlainString();
+    }
+
+    private Map<String, Object> flatSnapshot(BigDecimal flatAmount) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("flatAmount", flatAmount);
+        return snapshot;
     }
 
     private Map<String, Object> rateSnapshot(BigDecimal ratePerMinute, BigDecimal ratePerHour) {

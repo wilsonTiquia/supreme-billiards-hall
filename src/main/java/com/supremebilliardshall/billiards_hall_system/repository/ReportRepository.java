@@ -90,6 +90,27 @@ public class ReportRepository {
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d
                 AND ts.rate_override_per_minute IS NOT NULL
             ),
+            flats AS (
+              -- A flat fee below what the meter would have charged is a giveaway, and nothing
+              -- else would report it: the overrides CTE below filters on
+              -- rate_override_per_minute, which table_session_flat_xor_override_chk guarantees
+              -- is NULL on every flat session. PHP 50 on a five-hour table would be invisible.
+              --
+              -- Clamped PER ROW with GREATEST, not on the sum. A flat fee ABOVE the metered
+              -- figure is not a loss, and letting it net off would hide a real giveaway behind
+              -- someone else's good night.
+              --
+              -- coalesce on both factors because the failure mode here is silent: NULL * n is
+              -- NULL, and sum() skips NULL rather than raising, so a missing standard rate
+              -- would quietly under-count instead of failing loudly.
+              SELECT count(*)::int AS "flatSessions",
+                     coalesce(sum(GREATEST(
+                       coalesce(ts.standard_rate_per_minute, 0) * coalesce(ts.billed_minutes, 0)
+                         - ts.flat_amount, 0)), 0) AS "flatForgone"
+              FROM table_session ts JOIN bill b ON b.id = ts.bill_id, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date = p.d
+                AND ts.flat_amount IS NOT NULL
+            ),
             time_reductions AS (
               SELECT count(*)::int AS "reducedSessions",
                      coalesce(sum((ts.billed_minutes - ts.billed_minutes_override)
@@ -136,8 +157,8 @@ public class ReportRepository {
               'tableUtilisation',   coalesce((SELECT jsonb_agg(to_jsonb(t)) FROM table_util t), '[]'::jsonb),
               'topItems',           coalesce((SELECT jsonb_agg(to_jsonb(i)) FROM top_items i), '[]'::jsonb),
               'paymentMix',         coalesce((SELECT jsonb_agg(to_jsonb(m)) FROM payment_mix m), '[]'::jsonb),
-              'losses',             (SELECT to_jsonb(v) || to_jsonb(o) || to_jsonb(c) || to_jsonb(r)
-                                     FROM voids v, overrides o, comps c, time_reductions r),
+              'losses',             (SELECT to_jsonb(v) || to_jsonb(o) || to_jsonb(c) || to_jsonb(r) || to_jsonb(f)
+                                     FROM voids v, overrides o, comps c, time_reductions r, flats f),
               'lowStock',           coalesce((SELECT jsonb_agg(to_jsonb(l)) FROM low_stock l), '[]'::jsonb),
               'perEmployee',        coalesce((SELECT jsonb_agg(to_jsonb(e)) FROM per_employee e), '[]'::jsonb)
             )::text AS report
@@ -205,6 +226,28 @@ public class ReportRepository {
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d
                 AND ts.rate_override_per_minute IS NOT NULL
             ),
+            flat_lines AS (
+              SELECT t.name                             AS "poolTableName",
+                     coalesce(ts.billed_minutes, 0)     AS "billedMinutes",
+                     ts.standard_rate_per_minute        AS "standardRatePerMinute",
+                     -- What the meter would have charged, beside what was actually charged, so
+                     -- the reader can see the giveaway without doing the multiplication.
+                     (coalesce(ts.standard_rate_per_minute, 0)
+                        * coalesce(ts.billed_minutes, 0)) AS "meteredRevenue",
+                     ts.flat_amount                     AS "flatAmount",
+                     GREATEST(coalesce(ts.standard_rate_per_minute, 0)
+                                * coalesce(ts.billed_minutes, 0)
+                              - ts.flat_amount, 0)      AS "forgoneRevenue",
+                     u.username                         AS "actorUsername",
+                     ts.flat_rate_reason                AS reason,
+                     ts.opened_at                       AS "openedAt"
+              FROM table_session ts
+              JOIN bill b ON b.id = ts.bill_id
+              JOIN pool_table t ON t.id = ts.pool_table_id
+              LEFT JOIN app_user u ON u.id = ts.flat_rate_by, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date = p.d
+                AND ts.flat_amount IS NOT NULL
+            ),
             time_reduction_lines AS (
               SELECT t.name                              AS "poolTableName",
                      ts.billed_minutes                   AS "actualMinutes",
@@ -247,7 +290,14 @@ public class ReportRepository {
                 'overrideSessions', coalesce((SELECT count(*)::int          FROM override_lines o), 0),
                 'forgoneRevenue',   coalesce((SELECT sum(o."forgoneRevenue") FROM override_lines o), 0),
                 'lines', coalesce((SELECT jsonb_agg(to_jsonb(o) ORDER BY o."openedAt" DESC)
-                                   FROM override_lines o), '[]'::jsonb))
+                                   FROM override_lines o), '[]'::jsonb)),
+              'flatRates', jsonb_build_object(
+                'flatSessions', coalesce((SELECT count(*)::int           FROM flat_lines f), 0),
+                -- Summed from the rows listed beneath it, each already clamped at zero, so this
+                -- equals the tile's figure by construction rather than by coincidence.
+                'flatForgone',  coalesce((SELECT sum(f."forgoneRevenue") FROM flat_lines f), 0),
+                'lines', coalesce((SELECT jsonb_agg(to_jsonb(f) ORDER BY f."openedAt" DESC)
+                                   FROM flat_lines f), '[]'::jsonb))
             )::text AS detail
             FROM params p
             """;

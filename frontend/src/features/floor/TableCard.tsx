@@ -127,8 +127,17 @@ export function TableCard({
                   ? `${session.itemCount} on the bill · ${formatMoney(session.itemTotal)}`
                   : 'Nothing on the bill yet'}
               </span>
+              {/*
+                The SESSION's pricing, not the table's. On a flat session the table is still
+                configured at its own rate — a flat fee never touches the table — so showing
+                table.ratePerMinute here would read "₱4.00 / min" while the session is actually
+                on a fixed fee. That is plausible enough that nobody would ever question it,
+                which is worse than a figure that looks broken.
+              */}
               <span className="tabular shrink-0 normal-case">
-                {formatRate(table.ratePerMinute)}
+                {session.flatAmount !== null
+                  ? `Flat ${formatMoney(session.flatAmount)}`
+                  : formatRate(table.ratePerMinute)}
               </span>
             </div>
           </>

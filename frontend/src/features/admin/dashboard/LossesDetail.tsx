@@ -10,11 +10,12 @@ import { Spinner } from '@/components/Spinner';
 import { formatDateTime } from '@/lib/datetime';
 import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
 
-export type LossKind = 'voids' | 'friendRates' | 'comps' | 'timeReductions';
+export type LossKind = 'voids' | 'friendRates' | 'flatRates' | 'comps' | 'timeReductions';
 
 const TITLES: Record<LossKind, string> = {
   voids: 'Voided lines',
   friendRates: 'Rate overrides',
+  flatRates: 'Flat rates',
   comps: 'Given away',
   timeReductions: 'Time not charged',
 };
@@ -88,6 +89,8 @@ export function LossesDetail({
         <Voids data={detail.data} summary={summary} />
       ) : kind === 'timeReductions' ? (
         <TimeReductions data={detail.data} summary={summary} />
+      ) : kind === 'flatRates' ? (
+        <FlatRates data={detail.data} summary={summary} />
       ) : (
         <FriendRates data={detail.data} summary={summary} />
       )}
@@ -176,6 +179,53 @@ function Voids({ data, summary }: { data: LossesDetailData; summary: Losses }) {
                 ) : (
                   ' · bill still open'
                 )}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Tournament pricing. A flat fee below what the meter would have charged is a giveaway, and
+ * nothing else on this screen would show it — the rate-override figures are computed only over
+ * sessions carrying a per-minute override, which a flat session never has.
+ *
+ * Each row's forgone figure is clamped at zero server-side, so a fee ABOVE the metered figure
+ * contributes nothing here rather than cancelling out a real loss on another table.
+ */
+function FlatRates({ data, summary }: { data: LossesDetailData; summary: Losses }) {
+  const { lines, flatSessions, flatForgone } = data.flatRates;
+  return (
+    <div className="flex flex-col gap-4">
+      <SectionTotal
+        label={`${flatSessions} ${flatSessions === 1 ? 'session' : 'sessions'} at a flat rate`}
+        detail={flatForgone}
+        summary={summary.flatForgone}
+        format={formatMoney}
+      />
+      {lines.length === 0 ? (
+        <Empty what="flat rates" />
+      ) : (
+        <ul className="divide-y divide-border border-t border-border">
+          {lines.map((line, index) => (
+            <li key={index} className="py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-body text-text">{line.poolTableName}</span>
+                <span className="tabular text-body text-danger">
+                  {formatMoney(line.forgoneRevenue)}
+                </span>
+              </div>
+              <p className="tabular mt-1 text-label text-text-dim">
+                {formatMoney(line.flatAmount)} flat · {line.billedMinutes} min at{' '}
+                {formatRate(line.standardRatePerMinute)} would have been{' '}
+                {formatMoney(line.meteredRevenue)}
+              </p>
+              <p className="mt-1 text-body text-text">{line.reason ?? '— no reason recorded —'}</p>
+              <p className="text-label uppercase text-text-dim">
+                {line.actorUsername ?? 'unknown'} · {formatDateTime(line.openedAt)}
               </p>
             </li>
           ))}

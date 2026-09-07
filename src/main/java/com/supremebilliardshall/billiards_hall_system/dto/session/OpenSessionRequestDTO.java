@@ -35,6 +35,15 @@ public class OpenSessionRequestDTO {
 
     private String rateOverrideReason;
 
+    // Tournament pricing: a fixed charge for the whole session however long it runs. NOT gated
+    // on the customer type — a tournament is an event, not a kind of customer, and requiring a
+    // "Tournament" customer type would reintroduce the thing to remember to switch back that
+    // setting this per session exists to remove. The control is the reason and the actor.
+    @DecimalMin(value = "0.00", message = "Flat amount must not be negative")
+    private BigDecimal flatAmount;
+
+    private String flatRateReason;
+
     // AT MOST one, not exactly one — unlike the table rate, where a rate is mandatory. Neither
     // is the ordinary case and means "charge the standard rate"; both is the client asking for
     // two different giveaways at once, which has no sensible reading.
@@ -42,5 +51,24 @@ public class OpenSessionRequestDTO {
     @AssertTrue(message = "Give a friend rate per minute or per hour, not both")
     public boolean isOnlyOneOverrideGiven() {
         return rateOverridePerMinute == null || rateOverridePerHour == null;
+    }
+
+    // One session, one pricing story. The database says so too, but answered here as well
+    // because a constraint violation surfaces as a 409 — the right answer to a conflict with
+    // existing state, and the wrong one to a request that was malformed before it was sent.
+    @JsonIgnore
+    @AssertTrue(message = "A session is priced at a friend rate or a flat amount, not both")
+    public boolean isOnlyOnePricingGiven() {
+        return flatAmount == null
+                || (rateOverridePerMinute == null && rateOverridePerHour == null);
+    }
+
+    // The reason is the whole control on a fee somebody chose, so it is not optional. Zero is
+    // still allowed — a comped tournament table — which is exactly why the reason has to be
+    // there: without it the row is a smaller number with nobody's name on it.
+    @JsonIgnore
+    @AssertTrue(message = "A flat rate needs a reason")
+    public boolean isFlatRateReasonGiven() {
+        return flatAmount == null || (flatRateReason != null && !flatRateReason.isBlank());
     }
 }

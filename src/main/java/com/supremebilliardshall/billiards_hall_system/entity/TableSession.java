@@ -95,6 +95,18 @@ public class TableSession implements BranchScoped {
     @Column(name = "rate_override_reason", columnDefinition = "text")
     private String rateOverrideReason;
 
+    // Tournament pricing: a fixed charge for the whole session, however long it runs. Set at
+    // session start and mutually exclusive with the rate override — one session, one pricing
+    // story. Null on a metered session, which is every session that predates this.
+    @Column(name = "flat_amount", precision = 12, scale = 2)
+    private BigDecimal flatAmount;
+
+    @Column(name = "flat_rate_by")
+    private UUID flatRateBy;
+
+    @Column(name = "flat_rate_reason", columnDefinition = "text")
+    private String flatRateReason;
+
     // What was CHARGED, when the counter charged less time than was played. billedMinutes
     // above stays what actually happened; this never overwrites it.
     @Column(name = "billed_minutes_override")

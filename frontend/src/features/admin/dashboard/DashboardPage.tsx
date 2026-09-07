@@ -366,6 +366,14 @@ export function DashboardPage() {
                   } · exact`}
                   onOpen={() => setOpenLoss('friendRates')}
                 />
+                <LossFigure
+                  label="Flat rates"
+                  amount={formatMoney(data.losses.flatForgone)}
+                  note={`${data.losses.flatSessions} ${
+                    data.losses.flatSessions === 1 ? 'session' : 'sessions'
+                  } · exact`}
+                  onOpen={() => setOpenLoss('flatRates')}
+                />
                 {/* The difference matters: this one is valued at today's average cost, so it
                     moves when costs move. The other two are exact figures from the ledger. */}
                 <LossFigure

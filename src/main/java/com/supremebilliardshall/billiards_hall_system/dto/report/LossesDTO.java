@@ -6,8 +6,8 @@ import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
 
-// The three ways money leaves without a sale, reported together because they are the same
-// class of loss and only comparable side by side.
+// The ways money leaves without a sale, reported together because they are the same class of
+// loss and only comparable side by side.
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -29,4 +29,12 @@ public class LossesDTO {
     // comps — the owner needs all three on one screen or the control is worthless.
     private Integer reducedSessions;
     private BigDecimal timeReductionForgone;
+
+    // Tournament pricing. A flat fee below what the meter would have charged is a giveaway like
+    // any other, and without this it would be invisible: the friend-rate figures above are
+    // computed only over sessions carrying a per-minute override, which a flat session never
+    // does. Each row is clamped at zero before summing, so a fee above the metered figure
+    // contributes nothing rather than cancelling out a real loss elsewhere.
+    private Integer flatSessions;
+    private BigDecimal flatForgone;
 }
