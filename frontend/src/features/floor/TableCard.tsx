@@ -1,6 +1,6 @@
 import type { PoolTable } from '@/api/types';
 import { useElapsed } from '@/time/useElapsed';
-import { formatMoney, formatRate } from '@/lib/money';
+import { formatMoney, formatRate, formatRatePair } from '@/lib/money';
 import { formatElapsed } from '@/lib/datetime';
 import { RackMark } from './RackMark';
 import { PixelTable } from './PixelTable';
@@ -39,6 +39,10 @@ export function TableCard({
   const elapsedMs = useElapsed(session);
   const paused = session?.status === 'PAUSED';
   const { number, tag } = readName(table.name);
+
+  // The table's own standing rate, for the free branch below. The occupied branch deliberately
+  // shows the SESSION's pricing instead — see the comment on that line.
+  const rates = formatRatePair(table.ratePerMinute, table.ratePerHour ?? table.effectiveRatePerHour);
 
   const skin = !session
     ? 'bg-surface rail-free'
@@ -143,7 +147,28 @@ export function TableCard({
           </>
         ) : (
           <>
-            <div className="tabular text-heading text-text">{formatRate(table.ratePerMinute)}</div>
+            {/*
+              Both units, hourly first: the owner prices the hall in pesos per hour and the
+              meter bills per minute, and this is the figure someone reads before deciding
+              whether to start the table.
+
+              The leading figure keeps the size the rate has always had here — this card is
+              read standing up across a dim room, and buying room for the second line by
+              shrinking the first would trade the thing that works for the thing that is new.
+              It costs nothing: measured at the counter's width the felt grows 18.2px, a plain
+              card stays exactly at its 19rem floor because the extra comes out of the head's
+              flex-1 slack, and only a tagged card grows at all — well inside the grid's 23rem
+              row ceiling.
+
+              NOT uppercase, unlike every other text-label on this card. The occupied footer
+              already overrides rates back to normal-case, and "₱4.00 / MIN" is why.
+            */}
+            <div className="tabular text-heading text-text">{rates.hourly ?? rates.perMinute}</div>
+            {/* Only when there is an hourly figure to lead with. A table with no current rate
+                returns every rate field null, and one "—" is the honest answer there. */}
+            {rates.hourly ? (
+              <div className="tabular text-label text-text-dim">{rates.perMinute}</div>
+            ) : null}
             <div className="hit mt-4 flex min-h-[3.5rem] w-full items-center justify-center rounded-xl bg-green text-heading font-semibold text-ink transition group-hover:brightness-110">
               Start session
             </div>
