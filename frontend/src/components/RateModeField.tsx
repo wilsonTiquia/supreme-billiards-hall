@@ -1,4 +1,5 @@
 import { Field } from './Field';
+import { formatEffectiveHourly, formatMoney, formatPreciseRate } from '@/lib/money';
 
 /**
  * Which figure the person is typing. The owner thinks in pesos per hour and kept mistyping the
@@ -54,8 +55,20 @@ export function RateModeField({
   autoFocus?: boolean;
 }) {
   const typed = Number(value);
-  // >= 0, not > 0: a zero friend rate is a comped game and deserves its preview like any other.
-  const preview = value.trim() !== '' && Number.isFinite(typed) && typed >= 0;
+  const typedIsRate = value.trim() !== '' && Number.isFinite(typed) && typed >= 0;
+
+  /*
+   * What the server will actually store, and what that prices an hour at.
+   *
+   * The rounding has to happen BEFORE the multiplication or the discrepancy disappears:
+   * typed / 60 * 60 is exactly what was typed, every time. The gap exists precisely because the
+   * per-minute rate is rounded to four decimals first, which is what the server does with
+   * HALF_UP — and Math.round is HALF_UP for the non-negative values a rate always has.
+   */
+  const storedPerMinute = Math.round((typed / 60) * 10000) / 10000;
+  const effectivePerHour = storedPerMinute * 60;
+  // Compared at the precision both are displayed to, which sidesteps picking a float epsilon.
+  const reconciles = effectivePerHour.toFixed(4) === typed.toFixed(4);
 
   return (
     <div className="flex flex-col gap-3">
@@ -98,12 +111,23 @@ export function RateModeField({
         data-autofocus={autoFocus ? true : undefined}
         onChange={(event) => onValueChange(event.target.value)}
       />
-      {/* A preview, and labelled as one. It is the only rate figure the browser works out for
-          itself; everything shown after saving comes back from the server. See
-          frontend/CLAUDE.md §2 — this is rate configuration, not a bill. */}
-      {preview && mode === 'hour' ? (
+      {/*
+        A preview, and labelled as one. It is the only rate figure the browser works out for
+        itself; everything shown after saving comes back from the server. See
+        frontend/CLAUDE.md §2 — this is rate configuration, not a bill.
+
+        Shown ONLY when the hourly figure does not divide by 60 evenly. PHP 240/hour is
+        PHP 4.0000/min and prices an hour at exactly PHP 240 — echoing that back teaches the
+        reader nothing and trains them to ignore the line. PHP 500/hour does not reconcile, and
+        that is worth a sentence.
+
+        In hourly mode it speaks hourly. The four decimals on the per-minute figure are the one
+        place four decimals survive, because that rounding is the whole subject of the sentence.
+      */}
+      {typedIsRate && mode === 'hour' && !reconciles ? (
         <p className="tabular text-label text-text-dim">
-          Preview — ₱{(typed / 60).toFixed(4)} / min, once saved.
+          Preview — stored as {formatPreciseRate(storedPerMinute)}, pricing an hour at{' '}
+          {formatEffectiveHourly(effectivePerHour)} rather than {formatMoney(typed)}.
         </p>
       ) : null}
     </div>

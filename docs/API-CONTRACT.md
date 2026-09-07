@@ -931,15 +931,34 @@ reads**: the same history with the stock ledger unioned in and every id already 
 ```json
 { "id", "source": "AUDIT" | "STOCK",
   "action": "SESSION_RATE_OVERRIDE",        // the stored constant; send it back as a filter
-  "actionLabel": "Friend rate given",        // the same thing in words; display this
+  "actionLabel": "Happy Hour rate",          // the same thing in words; display this
   "entityLabel": "Table",                    // what kind of thing changed
   "subject": "Table 5",                      // which one — never an id
   "actorName": "Front Counter",
   "note": "regular customer",
   "quantityDelta": -2,                       // stock rows only; negative took stock out
+  "customerTypeName": "Happy Hour",          // table_session rows only; joined, not snapshotted
   "before": { }, "after": { },               // audit rows only
   "occurredAt", "businessDate" }
 ```
+
+`actionLabel` is usually the fixed wording for the action — `SESSION_RATE_OVERRIDE` is
+`"Rate overridden"`. The one exception is that same action **when the session carries a customer
+type**, where it is named after the type instead: `"Happy Hour rate"`. The owner has customer
+types beyond friends, and one fixed phrase misnames all but one of them.
+
+`customerTypeName` is **joined at read time** from `table_session`, not taken from the audit
+snapshot. Two reasons: `audit_log` is append-only, so rows already written could never be
+backfilled, whereas the join names the history correctly too; and the customer type is not a
+before/after *change*, so putting it in the snapshot would render a meaningless
+`Customer type name  —  →  Happy Hour` row in the diff. It is null on every non-session row, and
+on a session opened without a type — `table_session.customer_type_id` is nullable.
+
+Two display rules the Audit screen applies, worth knowing if anything else renders this feed:
+`entityLabel` is suppressed when `subject` already starts with it on a word boundary, so a row
+reads `· Table 2` rather than `· Table Table 2` while a table named `Corner` still reads
+`· Table Corner`. And in `before`/`after`, `ratePerMinute` and `ratePerHour` are one rate stated
+two ways — render a single row in the unit each side was set in, never both.
 
 Stock movements appear as `STOCK_DELIVERY`, `STOCK_CORRECTION` and `STOCK_STAFF_COMP`. **`SALE` and
 `SALE_VOID` are excluded**: every sold bottle writes a movement, so including sales would bury the

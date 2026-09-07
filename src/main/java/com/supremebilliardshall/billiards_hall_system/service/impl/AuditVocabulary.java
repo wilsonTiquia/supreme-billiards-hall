@@ -38,7 +38,7 @@ final class AuditVocabulary {
             Map.entry("PRODUCT_UPDATED", "Product edited"),
             Map.entry("PRODUCT_ARCHIVED", "Product archived"),
             Map.entry("PRODUCT_RESTORED", "Product restored"),
-            Map.entry("SESSION_RATE_OVERRIDE", "Friend rate given"),
+            Map.entry("SESSION_RATE_OVERRIDE", "Rate overridden"),
             Map.entry("SESSION_TIME_REDUCED", "Time reduced"),
             Map.entry("SETTING_CHANGED", "Setting changed"),
             Map.entry("STOCK_DELIVERY", "Delivery received"),

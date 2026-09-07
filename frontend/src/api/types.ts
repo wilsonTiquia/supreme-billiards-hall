@@ -878,7 +878,10 @@ export interface AuditFeedEntry {
   source: 'AUDIT' | 'STOCK';
   /** The stored constant. Sent back as a filter; not for display. */
   action: string;
-  /** The same thing in words: "Friend rate given". Display this. */
+  /**
+   * The same thing in words: "Rate overridden". Display this. On a rate override the server
+   * names it after the customer type instead — "Happy Hour rate".
+   */
   actionLabel: string;
   /** What kind of thing changed: "Product", "Table", "Drawer count". */
   entityLabel: string;
@@ -888,6 +891,11 @@ export interface AuditFeedEntry {
   note: string | null;
   /** Stock rows only. Negative took stock out, positive put it in. */
   quantityDelta: Quantity | null;
+  /**
+   * The customer type a session row was opened on, joined at read time. Null on every other
+   * kind of row, and on a session opened without one.
+   */
+  customerTypeName: string | null;
   /** Free-form; keys differ per action. Render generically. Null on stock rows. */
   before: Record<string, unknown> | null;
   after: Record<string, unknown> | null;

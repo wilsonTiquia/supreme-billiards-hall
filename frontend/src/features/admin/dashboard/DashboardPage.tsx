@@ -359,7 +359,7 @@ export function DashboardPage() {
                   onOpen={() => setOpenLoss('voids')}
                 />
                 <LossFigure
-                  label="Friend-rate given away"
+                  label="Rate overrides"
                   amount={formatMoney(data.losses.forgoneRevenue)}
                   note={`${data.losses.overrideSessions} ${
                     data.losses.overrideSessions === 1 ? 'session' : 'sessions'

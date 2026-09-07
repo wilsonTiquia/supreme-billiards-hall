@@ -227,9 +227,11 @@ export function SessionPage() {
 
             {live.rateOverridePerMinute !== null ? (
               <p className="mt-3 text-label text-amount">
-                {/* Quoted in the unit the friend rate was set in, and only when BOTH sides were
-                    snapshotted hourly — half a comparison is worse than a per-minute one. */}
-                Friend rate in effect — standard is{' '}
+                {/* Named after the customer type the session was opened on, and quoted in the
+                    unit the override was set in — but only when BOTH sides were snapshotted
+                    hourly, since half a comparison reads worse than a per-minute one. */}
+                {live.customerTypeName ? `${live.customerTypeName} rate` : 'Rate override'} in
+                effect — standard is{' '}
                 {live.rateOverridePerHour !== null && live.standardRatePerHour !== null
                   ? formatHourlyRate(live.standardRatePerHour)
                   : formatRate(live.standardRatePerMinute)}

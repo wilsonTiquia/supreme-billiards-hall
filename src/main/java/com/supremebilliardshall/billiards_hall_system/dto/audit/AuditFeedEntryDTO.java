@@ -27,7 +27,8 @@ public class AuditFeedEntryDTO {
     private String source;
     // The stored constant, kept so the filter has something stable to send back.
     private String action;
-    // The same thing in words: "Friend rate given", not "SESSION_RATE_OVERRIDE".
+    // The same thing in words: "Rate overridden", not "SESSION_RATE_OVERRIDE". On a rate
+    // override this is named after the customer type instead — "Happy Hour rate".
     private String actionLabel;
     // What kind of thing changed, in words: "Product", "Table", "Drawer count".
     private String entityLabel;
@@ -37,6 +38,10 @@ public class AuditFeedEntryDTO {
     private String note;
     // Stock rows only: negative took stock out, positive put it in.
     private BigDecimal quantityDelta;
+    // The customer type the session was opened on, for rows about a table_session. Joined at
+    // read time rather than snapshotted, so it is right for rows written before this existed.
+    // Null on every other kind of row, and on a session opened without one.
+    private String customerTypeName;
     private Map<String, Object> before;
     private Map<String, Object> after;
     private OffsetDateTime occurredAt;

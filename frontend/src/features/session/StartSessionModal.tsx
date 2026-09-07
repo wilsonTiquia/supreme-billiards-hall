@@ -47,6 +47,11 @@ export function StartSessionModal({
   );
   const allowsOverride = selected?.allowsRateOverride ?? false;
 
+  // Named after the type it is being given on — "Happy Hour rate" — because the owner now has
+  // customer types beyond friends, and a field labelled "Friend rate" misnames every one of
+  // them. The fallback is reachable only if a type allows an override without having a name.
+  const rateName = selected?.name ? `${selected.name} rate` : 'Rate override';
+
   // The standard rate in whichever unit is being typed. In hourly mode on a table configured
   // per minute there is no typed hourly figure to quote, so this uses the server's
   // effectiveRatePerHour — 60 x the stored rate, computed there, not here.
@@ -138,9 +143,9 @@ export function StartSessionModal({
               }}
               value={rateOverride}
               onValueChange={setRateOverride}
-              legend="Friend rate by"
-              minuteLabel="Friend rate per minute"
-              hourLabel="Friend rate per hour"
+              legend={`${rateName} by`}
+              minuteLabel={`${rateName} per minute`}
+              hourLabel={`${rateName} per hour`}
               placeholder={standardIn(rateMode)}
               // The giveaway has to be visible while it is typed, not found later in a report —
               // and it is only visible if it is quoted in the unit the person is typing in. So

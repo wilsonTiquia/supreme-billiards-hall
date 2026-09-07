@@ -152,12 +152,13 @@ public class AuditServiceImpl implements AuditService {
                     row.getId(),
                     row.getSource(),
                     row.getAction(),
-                    AuditVocabulary.action(row.getAction()),
+                    actionLabel(row),
                     AuditVocabulary.entity(row.getEntityTable()),
                     row.getEntityLabel(),
                     names.get(row.getActorId()),
                     row.getNote(),
                     row.getQuantityDelta(),
+                    row.getCustomerTypeName(),
                     diffs.containsKey(row.getId()) ? diffs.get(row.getId()).getBefore() : null,
                     diffs.containsKey(row.getId()) ? diffs.get(row.getId()).getAfter() : null,
                     // Native projections hand back Instant for timestamptz.
@@ -190,6 +191,28 @@ public class AuditServiceImpl implements AuditService {
                         .toList();
 
         return new AuditFilterOptionsDTO(actions, actors);
+    }
+
+    /*
+     * A rate override is named after the customer type it was given on: "Happy Hour rate".
+     *
+     * The vocabulary cannot do this on its own -- it maps a constant to a fixed phrase, and the
+     * owner now has customer types beyond friends, so a single phrase misnames all but one of
+     * them. The type comes from the feed's join on table_session.
+     *
+     * Gated on the action. SESSION_TIME_REDUCED also happens on a session with a customer type
+     * and must not read "Happy Hour rate"; it is not a rate change at all.
+     *
+     * Falls back to the vocabulary when the type is absent. That is a real path, not merely a
+     * defensive one: table_session.customer_type_id is nullable.
+     */
+    private String actionLabel(AuditLogRepository.AuditFeedProjection row) {
+        String customerType = row.getCustomerTypeName();
+        if ("SESSION_RATE_OVERRIDE".equals(row.getAction())
+                && customerType != null && !customerType.isBlank()) {
+            return customerType.trim() + " rate";
+        }
+        return AuditVocabulary.action(row.getAction());
     }
 
     // The name people call each other by, falling back to the login when it is missing.

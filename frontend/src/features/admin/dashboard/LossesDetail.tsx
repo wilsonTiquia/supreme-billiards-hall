@@ -14,7 +14,7 @@ export type LossKind = 'voids' | 'friendRates' | 'comps' | 'timeReductions';
 
 const TITLES: Record<LossKind, string> = {
   voids: 'Voided lines',
-  friendRates: 'Friend rates given',
+  friendRates: 'Rate overrides',
   comps: 'Given away',
   timeReductions: 'Time not charged',
 };
@@ -190,13 +190,13 @@ function FriendRates({ data, summary }: { data: LossesDetailData; summary: Losse
   return (
     <div className="flex flex-col gap-4">
       <SectionTotal
-        label={`${overrideSessions} ${overrideSessions === 1 ? 'session' : 'sessions'} at a friend rate`}
+        label={`${overrideSessions} ${overrideSessions === 1 ? 'session' : 'sessions'} at an overridden rate`}
         detail={forgoneRevenue}
         summary={summary.forgoneRevenue}
         format={formatMoney}
       />
       {lines.length === 0 ? (
-        <Empty what="friend rates" />
+        <Empty what="rate overrides" />
       ) : (
         <ul className="divide-y divide-border border-t border-border">
           {lines.map((line, index) => (
