@@ -348,13 +348,26 @@ export function CheckoutPage() {
             session, and a debt has to be for a finished game. */}
         {!blocked && bill.status === 'OPEN' && recovery.kind !== 'alreadyPaid' ? (
           <div className="mt-2 border-t border-border pt-4">
-            <button
+            <p className="text-label uppercase text-text-dim">Not paying tonight?</p>
+            <p className="mt-1 text-body text-text-dim">
+              Record who owes it and collect later.
+            </p>
+            {/* Styled as a button, not a link. §4 is about WHERE a destructive control sits,
+                not about denying it affordance — and this is not destructive anyway: it is a
+                different way of finishing the sale, which is why it is secondary rather than
+                danger. A legitimate action the counter takes deliberately should look like one.
+
+                type="button" is explicit because Button spreads ...rest without defaulting it,
+                so a bare one is type="submit". Harmless today — nothing here is inside a form —
+                and a trap the day somebody wraps this column in one. */}
+            <Button
               type="button"
+              variant="secondary"
+              className="mt-3 w-full"
               onClick={() => setLeavingUnpaid(true)}
-              className="hit inline-flex items-center text-body text-text-dim underline hover:text-text"
             >
-              Leave unpaid — they will settle later
-            </button>
+              Leave unpaid
+            </Button>
           </div>
         ) : null}
       </div>

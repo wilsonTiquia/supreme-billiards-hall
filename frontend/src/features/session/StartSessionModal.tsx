@@ -74,6 +74,34 @@ export function StartSessionModal({
       : formatRate(table.ratePerMinute);
   }
 
+  /*
+   * The standard rate in BOTH units, the configured one first.
+   *
+   * The owner thinks in pesos per hour and the meter bills per minute, and this line is where
+   * someone orients themselves before choosing how to price the session — so it should not make
+   * them convert. Configured unit first because that is the number that was typed and the one
+   * the other screens quote.
+   *
+   * Both figures come from the server: ratePerMinute as stored, and the hourly side from
+   * ratePerHour when the table was configured that way or the server's effectiveRatePerHour
+   * when it was not. Nothing is multiplied here — money is never computed in the browser.
+   *
+   * Two decimals via the ordinary formatters, deliberately not formatEffectiveHourly: that one
+   * carries four decimals to expose the PHP 199.998 gap, which is the admin rate screen's job.
+   * This line is orientation, and a stray two decimals of precision would only read as noise.
+   */
+  function standardBothUnits(): string {
+    const perHour = table.ratePerHour ?? table.effectiveRatePerHour;
+    // A table with no current rate returns all three fields null, and pairing them would render
+    // "— · —". One dash is the honest answer, and it is what this line already showed.
+    if (perHour == null) {
+      return formatRate(table.ratePerMinute);
+    }
+    return table.ratePerHour != null
+      ? `${formatHourlyRate(perHour)} · ${formatRate(table.ratePerMinute)}`
+      : `${formatRate(table.ratePerMinute)} · ${formatHourlyRate(perHour)}`;
+  }
+
   function standardIn(mode: RateMode): string {
     const figure = mode === 'hour' ? (table.ratePerHour ?? table.effectiveRatePerHour) : table.ratePerMinute;
     return figure == null ? '' : String(figure);
@@ -196,7 +224,7 @@ export function StartSessionModal({
           </div>
           {pricing === 'standard' ? (
             <p className="text-label text-text-dim">
-              The table&rsquo;s own rate, {standardLabel('minute')}.
+              The table&rsquo;s own rate, {standardBothUnits()}.
             </p>
           ) : null}
         </div>
