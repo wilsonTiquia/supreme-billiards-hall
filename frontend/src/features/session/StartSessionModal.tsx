@@ -9,8 +9,9 @@ import { Modal } from '@/components/Modal';
 import { Button } from '@/components/Button';
 import { Select } from '@/components/Select';
 import { Field } from '@/components/Field';
+import { RateModeField, type RateMode } from '@/components/RateModeField';
 import { Banner } from '@/components/Banner';
-import { formatRate } from '@/lib/money';
+import { formatHourlyRate, formatRate } from '@/lib/money';
 
 export function StartSessionModal({
   table,
@@ -26,6 +27,11 @@ export function StartSessionModal({
   const [customerTypeId, setCustomerTypeId] = useState<string>('');
   const [rateOverride, setRateOverride] = useState('');
   const [overrideReason, setOverrideReason] = useState('');
+  // Opens in the unit the table itself is configured in: starting an hourly table should put
+  // the friend rate in hourly mode, because that is the number the counter has in their head.
+  const [rateMode, setRateMode] = useState<RateMode>(
+    table.ratePerHour != null ? 'hour' : 'minute',
+  );
 
   const { data: customerTypes = [] } = useQuery({
     queryKey: queryKeys.customerTypes,
@@ -40,6 +46,20 @@ export function StartSessionModal({
     [customerTypes, selectedId],
   );
   const allowsOverride = selected?.allowsRateOverride ?? false;
+
+  // The standard rate in whichever unit is being typed. In hourly mode on a table configured
+  // per minute there is no typed hourly figure to quote, so this uses the server's
+  // effectiveRatePerHour — 60 x the stored rate, computed there, not here.
+  function standardLabel(mode: RateMode): string {
+    return mode === 'hour'
+      ? formatHourlyRate(table.ratePerHour ?? table.effectiveRatePerHour)
+      : formatRate(table.ratePerMinute);
+  }
+
+  function standardIn(mode: RateMode): string {
+    const figure = mode === 'hour' ? (table.ratePerHour ?? table.effectiveRatePerHour) : table.ratePerMinute;
+    return figure == null ? '' : String(figure);
+  }
 
   const start = useMutation({
     mutationFn: (body: OpenSessionRequest) => openSession(body),
@@ -64,9 +84,13 @@ export function StartSessionModal({
     }
 
     const body: OpenSessionRequest = { tableId: table.id, customerTypeId: selectedId };
-    // Only sent when the chosen type allows it; the server rejects it otherwise.
+    // Only sent when the chosen type allows it; the server rejects it otherwise. One field or
+    // the other, never both — and neither when the box is blank, which means charge the
+    // standard rate. Number() rather than a truthiness test, so a zero friend rate (a comped
+    // game) is sent as the giveaway it is instead of being dropped as falsy.
     if (allowsOverride && rateOverride.trim() !== '') {
-      body.rateOverridePerMinute = Number(rateOverride);
+      if (rateMode === 'hour') body.rateOverridePerHour = Number(rateOverride);
+      else body.rateOverridePerMinute = Number(rateOverride);
       if (overrideReason.trim() !== '') body.rateOverrideReason = overrideReason.trim();
     }
     start.mutate(body);
@@ -78,7 +102,10 @@ export function StartSessionModal({
         <div>
           <div className="text-label uppercase text-text-dim">Table</div>
           <div className="text-body text-text">
-            {table.name} · {formatRate(table.ratePerMinute)}
+            {table.name} ·{' '}
+            {table.ratePerHour != null
+              ? formatHourlyRate(table.ratePerHour)
+              : formatRate(table.ratePerMinute)}
           </div>
         </div>
 
@@ -90,6 +117,7 @@ export function StartSessionModal({
             setCustomerTypeId(event.target.value);
             setRateOverride('');
             setOverrideReason('');
+            setRateMode(table.ratePerHour != null ? 'hour' : 'minute');
           }}
         >
           {customerTypes.map((type) => (
@@ -102,17 +130,22 @@ export function StartSessionModal({
 
         {allowsOverride ? (
           <>
-            <Field
-              label="Friend rate per minute"
-              type="number"
-              step="0.0001"
-              min="0"
-              inputMode="decimal"
+            <RateModeField
+              mode={rateMode}
+              onModeChange={(next) => {
+                setRateMode(next);
+                setRateOverride('');
+              }}
               value={rateOverride}
-              placeholder={String(table.ratePerMinute)}
-              // The giveaway has to be visible while it is typed, not found later in a report.
-              hint={`Standard rate is ${formatRate(table.ratePerMinute)}. Leave blank to charge it.`}
-              onChange={(event) => setRateOverride(event.target.value)}
+              onValueChange={setRateOverride}
+              legend="Friend rate by"
+              minuteLabel="Friend rate per minute"
+              hourLabel="Friend rate per hour"
+              placeholder={standardIn(rateMode)}
+              // The giveaway has to be visible while it is typed, not found later in a report —
+              // and it is only visible if it is quoted in the unit the person is typing in. So
+              // this follows the TOGGLE, not the table.
+              hint={`Standard rate is ${standardLabel(rateMode)}. Leave blank to charge it.`}
             />
             <Field
               label="Reason"

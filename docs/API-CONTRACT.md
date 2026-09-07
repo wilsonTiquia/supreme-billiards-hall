@@ -316,7 +316,7 @@ overlap → 409.
 | GET | `/api/v1/sessions/{id}/notes` | authenticated |
 | POST | `/api/v1/sessions/{id}/notes` | authenticated |
 
-**POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverrideReason"? }`
+**POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverridePerHour"?, "rateOverrideReason"? }`
 
 No start time — the server stamps it. Creates the bill, the session and its first segment in one
 transaction.
@@ -324,8 +324,16 @@ transaction.
 - A **second open session on the same table returns 409** `That table already has an open session`.
   This comes from a database index, so it is race-proof: if two tabs both press start, exactly one
   wins.
-- `rateOverridePerMinute` is only accepted when the chosen customer type has
-  `allowsRateOverride: true`; otherwise 409. Any value is allowed, with no floor and no approval.
+- The friend rate takes **at most one** of `rateOverridePerMinute` and `rateOverridePerHour` —
+  both in one request is a 400, and **neither is the ordinary case**, meaning "charge the table's
+  standard rate". This differs from the table endpoints, where a rate is mandatory.
+- When `rateOverridePerHour` is given, the server derives `rateOverridePerMinute = rateOverridePerHour / 60`
+  at HALF_UP to four decimals and stores both. The derived per-minute figure is what is snapshotted
+  onto `session_segment.rate_per_minute` and what bills; the hourly figure is a record of what was
+  typed and prices nothing.
+- Either form is only accepted when the chosen customer type has `allowsRateOverride: true`;
+  otherwise 409. Any value is allowed, with no floor and no approval — **including zero**, which is
+  a comped game.
 
 **Session response** (returned by all five routes):
 
@@ -333,6 +341,7 @@ transaction.
 { "id", "billId", "poolTableId", "poolTableName", "customerTypeId", "customerTypeName",
   "status", "openedAt", "closedAt", "closeKind",
   "standardRatePerMinute", "rateOverridePerMinute",
+  "standardRatePerHour", "rateOverridePerHour",
   "billedMinutes", "billedSeconds", "timeAmount", "itemTotal", "runningTotal",
   "segments": [ { "id", "poolTableId", "poolTableName", "seq", "ratePerMinute",
                   "startedAt", "endedAt", "billedMinutes", "amount" } ],
@@ -342,6 +351,12 @@ transaction.
 
 `status` ∈ `OPEN | PAUSED | CLOSED | AUTO_CLOSED | VOIDED`.
 `closeKind` ∈ `MANUAL | AUTO_END_OF_DAY | null`.
+
+`standardRatePerHour` and `rateOverridePerHour` are read-back only, both snapshotted when the
+session opened. `standardRatePerHour` is null if the table was configured per minute at that
+moment; `rateOverridePerHour` is null if the friend rate was typed per minute or there was none.
+Quote the pair only when **both** are non-null — half an hourly comparison reads worse than a
+per-minute one. Neither figure ever enters an amount.
 
 While the session is live, `billedMinutes` and `timeAmount` are recomputed on every read. Once
 closed they are the stored finals. **Billing is exact-minute, truncated** — 90m59s bills 90 minutes,
@@ -654,6 +669,7 @@ optional and defaults to the night currently running, same as `/reports/daily`.
                                 "actorUsername", "voidedAt", "billId", "receiptNo" } ] },
   "friendRates": { "overrideSessions", "forgoneRevenue",
                    "lines": [ { "poolTableName", "standardRatePerMinute", "chargedRatePerMinute",
+                                "standardRatePerHour", "chargedRatePerHour",
                                 "billedMinutes", "forgoneRevenue", "actorUsername",
                                 "reason", "openedAt" } ] } }
 ```

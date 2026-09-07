@@ -8,7 +8,7 @@ import { Modal } from '@/components/Modal';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
 import { formatDateTime } from '@/lib/datetime';
-import { formatMoney, formatRate } from '@/lib/money';
+import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
 
 export type LossKind = 'voids' | 'friendRates' | 'comps' | 'timeReductions';
 
@@ -208,8 +208,21 @@ function FriendRates({ data, summary }: { data: LossesDetailData; summary: Losse
                 </span>
               </div>
               <p className="tabular mt-1 text-label text-text-dim">
-                {formatRate(line.standardRatePerMinute)} standard, charged{' '}
-                {formatRate(line.chargedRatePerMinute)} · {line.billedMinutes} min billed
+                {/* Both sides in the unit the giveaway was entered in, or both per minute.
+                    Never one of each: the pair is what the reader compares. The forgone figure
+                    beside it is computed per-minute either way. */}
+                {line.chargedRatePerHour !== null && line.standardRatePerHour !== null ? (
+                  <>
+                    {formatHourlyRate(line.standardRatePerHour)} standard, charged{' '}
+                    {formatHourlyRate(line.chargedRatePerHour)}
+                  </>
+                ) : (
+                  <>
+                    {formatRate(line.standardRatePerMinute)} standard, charged{' '}
+                    {formatRate(line.chargedRatePerMinute)}
+                  </>
+                )}{' '}
+                · {line.billedMinutes} min billed
               </p>
               <p className="mt-1 text-body text-text">{line.reason ?? '— no reason recorded —'}</p>
               <p className="text-label uppercase text-text-dim">

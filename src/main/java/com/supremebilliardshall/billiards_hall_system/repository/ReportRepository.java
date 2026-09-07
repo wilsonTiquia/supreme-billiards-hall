@@ -186,6 +186,12 @@ public class ReportRepository {
               SELECT t.name                             AS "poolTableName",
                      ts.standard_rate_per_minute        AS "standardRatePerMinute",
                      ts.rate_override_per_minute        AS "chargedRatePerMinute",
+                     -- Read-back only, and both snapshotted at open. Null on a per-minute
+                     -- table or a per-minute friend rate, in which case the drill-down shows
+                     -- the per-minute pair above exactly as it always has. The forgone figure
+                     -- below is unchanged and stays per-minute: these two never enter it.
+                     ts.standard_rate_per_hour          AS "standardRatePerHour",
+                     ts.rate_override_per_hour          AS "chargedRatePerHour",
                      coalesce(ts.billed_minutes, 0)     AS "billedMinutes",
                      ((ts.standard_rate_per_minute - ts.rate_override_per_minute)
                         * coalesce(ts.billed_minutes, 0)) AS "forgoneRevenue",

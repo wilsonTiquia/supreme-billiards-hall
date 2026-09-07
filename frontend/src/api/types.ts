@@ -271,8 +271,15 @@ export interface PoolTableRateRequest {
 export interface OpenSessionRequest {
   tableId: UUID;
   customerTypeId: UUID;
-  /** Only accepted when the customer type has allowsRateOverride; otherwise 409. */
+  /**
+   * The friend rate, in whichever unit was typed. AT MOST one of the two — both in one request
+   * is a 400, and neither means charge the table's standard rate, which is the usual case.
+   * Only accepted when the customer type has allowsRateOverride; otherwise 409.
+   *
+   * Zero is legitimate: a comped game.
+   */
   rateOverridePerMinute?: Rate;
+  rateOverridePerHour?: Money;
   rateOverrideReason?: string;
 }
 
@@ -310,6 +317,12 @@ export interface Session {
   closeKind: SessionCloseKind | null;
   standardRatePerMinute: Rate;
   rateOverridePerMinute: Rate | null;
+  /**
+   * The same pair as typed, when either was entered hourly. Both null on a per-minute table
+   * with a per-minute friend rate. Display only — the money comes from the per-minute pair.
+   */
+  standardRatePerHour: Money | null;
+  rateOverridePerHour: Money | null;
   billedMinutes: number;
   /** Exact billable elapsed in seconds, unfloored. For the counter only; money uses minutes. */
   billedSeconds: number;
@@ -784,6 +797,9 @@ export interface RateOverrideLossLine {
   poolTableName: string;
   standardRatePerMinute: Rate;
   chargedRatePerMinute: Rate;
+  /** Both snapshotted at open, when the friend rate was entered hourly. Display only. */
+  standardRatePerHour: Money | null;
+  chargedRatePerHour: Money | null;
   billedMinutes: number;
   forgoneRevenue: Money;
   actorUsername: string | null;

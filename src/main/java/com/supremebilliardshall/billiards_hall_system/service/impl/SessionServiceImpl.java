@@ -71,12 +71,20 @@ public class SessionServiceImpl implements SessionService {
             throw new BusinessRuleException("Customer type '" + customerType.getName() + "' is archived.");
         }
 
-        BigDecimal standardRate = poolTableRateRepository.findCurrentByPoolTableId(poolTable.getId())
-                .map(PoolTableRate::getRatePerMinute)
+        // The whole row, not just the per-minute figure: the session snapshots the table's
+        // hourly figure too, so the loss drill-down can quote the standard in the unit it was
+        // set in without reading pool_table_rate back at report time, which would show a
+        // re-rated table's current price against an old session.
+        PoolTableRate standardRateRow = poolTableRateRepository.findCurrentByPoolTableId(poolTable.getId())
                 .orElseThrow(() -> new BusinessRuleException(
                         "Table '" + poolTable.getName() + "' has no rate in force and cannot be opened."));
+        BigDecimal standardRate = standardRateRow.getRatePerMinute();
 
-        BigDecimal overrideRate = openSessionRequestDTO.getRateOverridePerMinute();
+        // At most one of the two arrives; the DTO answers 400 to both at once. Neither is the
+        // ordinary case and derives to null, which is what "no override" means everywhere below.
+        BigDecimal overrideRate = RateConversion.perMinuteFrom(
+                openSessionRequestDTO.getRateOverridePerMinute(),
+                openSessionRequestDTO.getRateOverridePerHour());
         if (overrideRate != null && !Boolean.TRUE.equals(customerType.getAllowsRateOverride())) {
             throw new BusinessRuleException(
                     "Customer type '" + customerType.getName() + "' does not allow a rate override.");
@@ -111,8 +119,12 @@ public class SessionServiceImpl implements SessionService {
         session.setOpenedBy(actorId);
         session.setNeedsReview(false);
         session.setStandardRatePerMinute(standardRate);
+        session.setStandardRatePerHour(standardRateRow.getRatePerHour());
         if (overrideRate != null) {
             session.setRateOverridePerMinute(overrideRate);
+            // As typed, or null when it was typed per minute. table_session_override_hour_derived_chk
+            // is what guarantees this never travels without the derived figure above.
+            session.setRateOverridePerHour(openSessionRequestDTO.getRateOverridePerHour());
             session.setRateOverrideBy(actorId);
             session.setRateOverrideReason(openSessionRequestDTO.getRateOverrideReason());
         }
@@ -132,7 +144,8 @@ public class SessionServiceImpl implements SessionService {
 
         if (overrideRate != null) {
             auditService.record("SESSION_RATE_OVERRIDE", "table_session", savedSession.getId(),
-                    rateSnapshot(standardRate), rateSnapshot(overrideRate),
+                    rateSnapshot(standardRate, standardRateRow.getRatePerHour()),
+                    rateSnapshot(overrideRate, openSessionRequestDTO.getRateOverridePerHour()),
                     openSessionRequestDTO.getRateOverrideReason());
         }
 
@@ -467,6 +480,8 @@ public class SessionServiceImpl implements SessionService {
                 session.getCloseKind(),
                 session.getStandardRatePerMinute(),
                 session.getRateOverridePerMinute(),
+                session.getStandardRatePerHour(),
+                session.getRateOverridePerHour(),
                 billedMinutes,
                 billedSeconds,
                 timeAmount,
@@ -662,9 +677,10 @@ public class SessionServiceImpl implements SessionService {
         return (trimmed.scale() < 2 ? trimmed.setScale(2, RoundingMode.UNNECESSARY) : trimmed).toPlainString();
     }
 
-    private Map<String, Object> rateSnapshot(BigDecimal ratePerMinute) {
+    private Map<String, Object> rateSnapshot(BigDecimal ratePerMinute, BigDecimal ratePerHour) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("ratePerMinute", ratePerMinute);
+        snapshot.put("ratePerHour", ratePerHour);
         return snapshot;
     }
 

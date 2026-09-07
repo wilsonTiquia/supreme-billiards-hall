@@ -76,6 +76,15 @@ public class TableSession implements BranchScoped {
     @Column(name = "standard_rate_per_minute", precision = 10, scale = 4)
     private BigDecimal standardRatePerMinute;
 
+    // The hourly figures, when that is the unit either rate was configured in. Read back by the
+    // screen and the loss drill-down so the giveaway is quoted the way it was entered; neither
+    // is ever used to compute money. Null when the rate concerned was set per minute.
+    @Column(name = "rate_override_per_hour", precision = 12, scale = 2)
+    private BigDecimal rateOverridePerHour;
+
+    @Column(name = "standard_rate_per_hour", precision = 12, scale = 2)
+    private BigDecimal standardRatePerHour;
+
     @Column(name = "rate_override_by")
     private UUID rateOverrideBy;
 

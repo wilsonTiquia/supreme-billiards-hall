@@ -17,6 +17,10 @@ public class RateOverrideLossLineDTO {
     private String poolTableName;
     private BigDecimal standardRatePerMinute;
     private BigDecimal chargedRatePerMinute;
+    // The same pair as typed, when the friend rate was entered hourly. Null otherwise. Display
+    // only — forgoneRevenue is computed from the per-minute pair above.
+    private BigDecimal standardRatePerHour;
+    private BigDecimal chargedRatePerHour;
     private Integer billedMinutes;
     // (standard - charged) x billed minutes. Exact, not an estimate.
     private BigDecimal forgoneRevenue;

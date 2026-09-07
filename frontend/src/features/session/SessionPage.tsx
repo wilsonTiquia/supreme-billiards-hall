@@ -12,7 +12,7 @@ import { useElapsed } from '@/time/useElapsed';
 import { useScreenTheme } from '@/app/useTheme';
 import { BreakFlourish } from './BreakFlourish';
 import { formatElapsed } from '@/lib/datetime';
-import { formatMoney, formatRate } from '@/lib/money';
+import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
 import { Button } from '@/components/Button';
 import { Banner } from '@/components/Banner';
 import { Card } from '@/components/Card';
@@ -227,7 +227,12 @@ export function SessionPage() {
 
             {live.rateOverridePerMinute !== null ? (
               <p className="mt-3 text-label text-amount">
-                Friend rate in effect — standard is {formatRate(live.standardRatePerMinute)}
+                {/* Quoted in the unit the friend rate was set in, and only when BOTH sides were
+                    snapshotted hourly — half a comparison is worse than a per-minute one. */}
+                Friend rate in effect — standard is{' '}
+                {live.rateOverridePerHour !== null && live.standardRatePerHour !== null
+                  ? formatHourlyRate(live.standardRatePerHour)
+                  : formatRate(live.standardRatePerMinute)}
               </p>
             ) : null}
 

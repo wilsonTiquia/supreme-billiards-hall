@@ -31,6 +31,11 @@ public class SessionResponseDTO {
     // revenue is arithmetic rather than guesswork.
     private BigDecimal standardRatePerMinute;
     private BigDecimal rateOverridePerMinute;
+    // The same pair as typed, when either was entered hourly. Null otherwise — a per-minute
+    // table and a per-minute friend rate carry no hourly figure, and inventing one would put a
+    // number on the screen nobody entered. Display only; the money comes from the pair above.
+    private BigDecimal standardRatePerHour;
+    private BigDecimal rateOverridePerHour;
 
     // While the session is live these are recomputed server-side on every read; at close they
     // are the values stored on table_session. The client never sends either one.
