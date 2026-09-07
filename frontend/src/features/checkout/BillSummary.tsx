@@ -79,6 +79,25 @@ export function BillSummary({ bill }: { bill: Bill }) {
           <dt className="text-label uppercase text-text-dim">Items</dt>
           <dd className="tabular text-body text-text">{formatMoney(bill.subtotalItems)}</dd>
         </div>
+        {/* Above the total and below the subtotals, which is where the subtraction actually
+            happens — the operator reads the two figures out, then the discount, then what is
+            owed. The reason sits under it for the same reason a void's does: this is the line
+            the customer is most likely to ask about. */}
+        {bill.discountAmount > 0 ? (
+          <div className="mt-1 flex justify-between gap-3">
+            <dt className="text-label uppercase text-text-dim">
+              Discount
+              {bill.discountReason ? (
+                <span className="block normal-case text-label text-text-dim">
+                  {bill.discountReason}
+                </span>
+              ) : null}
+            </dt>
+            <dd className="tabular text-body text-danger">
+              −{formatMoney(bill.discountAmount)}
+            </dd>
+          </div>
+        ) : null}
         <div className="mt-3 flex items-baseline justify-between gap-3 border-t border-border pt-3">
           <dt className="text-heading text-text">Total</dt>
           <dd className="figure-amount text-amount">{formatMoney(bill.totalAmount)}</dd>

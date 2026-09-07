@@ -478,7 +478,8 @@ dashboard. Open the stored snapshot with `GET /bills/{id}/receipt`.
 ```json
 { "id", "status", "customerTypeId", "customerTypeName", "openedAt", "closedAt",
   "businessDate", "version",
-  "subtotalTime", "subtotalItems", "totalAmount",
+  "subtotalTime", "subtotalItems",
+  "discountAmount", "discountReason", "discountByUsername", "discountAt", "totalAmount",
   "lines": [ { "id", "lineKind", "seq", "productId", "sessionId", "description",
                "unitPrice", "quantity", "billedMinutes", "lineTotal",
                "voidedAt", "voidReason" } ],
@@ -487,6 +488,11 @@ dashboard. Open the stored snapshot with `GET /bills/{id}/receipt`.
 
 An ADMIN additionally receives `totalCost` and `grossProfit` at the top level, and `unitCost` and
 `lineCost` on each line. An EMPLOYEE receives neither key.
+
+`totalAmount` is `subtotalTime + subtotalItems − discountAmount`. **The discount fields are on the
+base shape, not the admin one** — a discount is not a cost or a profit figure, and the counter who
+typed it has to be able to read it back. `discountAmount` is `0.00` and the other three are `null`
+when nothing was given away. See `POST /bills/{id}/discount` below.
 
 **Lines are returned one row per `bill_line`, and always will be.** Four of the same beer are
 four rows. The UI groups identical non-voided lines for display — "4 × San Miguel Pale Pilsen
@@ -593,6 +599,39 @@ line is retained, the stock is returned, and an audit row is written. Voiding tw
 line cannot be voided on its own → 409.
 
 Adding or voiding lines on a bill that is not `OPEN` → 409.
+
+**POST `/bills/{id}/discount`** → `{ "chargeAmount", "reason" }` — knocks money off the **whole**
+bill, food and drink included. Returns the `Bill` shape.
+
+Independent of the "charge less time" control in §6 (`POST /sessions/{id}/billed-minutes`), which
+only ever reaches the TIME lines. **Both can apply to one bill**, both appear separately on the
+receipt and in the dashboard's losses band, and they do not double-count: a time reduction rewrites
+the TIME lines first, so the subtotal a discount is computed against is already the reduced one.
+
+- **`chargeAmount` is what is being CHARGED, not what is coming off.** The server computes
+  `discount_amount = subtotal - chargeAmount`; the browser never sends a discount and never
+  computes a total. The figures shown after saving must be the ones that came back.
+- **`reason` is required**, non-blank, or 400. **Any role may do this** — the owner is not at the
+  hall most nights — so the reason, the recorded actor and the dashboard figure are the whole
+  control. Detection, not prevention: the same posture the friend rate takes.
+- `chargeAmount` below `0.01` → 400.
+- `chargeAmount` **above** the subtotal → 409. That is a surcharge, not a discount.
+- `chargeAmount` **equal to** the subtotal → 409. A bill of `0.00` could never be settled, so it
+  would sit on the floor for ever. A free game is a zero friend or flat rate set when the table is
+  **opened**, not a discount at checkout. (Comping a whole bill at checkout has no route today.)
+- Bill not `OPEN` → 409.
+- Audited as `BILL_DISCOUNTED` with before/after snapshots and the reason.
+
+**The stored discount is a FIXED PESO AMOUNT, not a percentage.** Add a ₱50 beer to a bill
+discounted by ₱54 and the total goes from ₱600 to ₱650 — the discount stays at ₱54. Say so on
+screen; it is the thing that surprises people.
+
+Applying a discount bumps `bill.version`, so a checkout tab still holding the undiscounted total
+gets 409 `STALE_BILL_VERSION` rather than charging the old amount.
+
+**DELETE `/bills/{id}/discount`** — clears it and restores the full amount. All four columns are
+nulled together. No discount to clear → 409; bill not `OPEN` → 409. Audited as
+`BILL_DISCOUNT_CLEARED`, carrying the cleared discount's own reason.
 
 ---
 
@@ -783,7 +822,10 @@ optional and defaults to the night currently running, same as `/reports/daily`.
   "flatRates":   { "flatSessions", "flatForgone",
                    "lines": [ { "poolTableName", "billedMinutes", "standardRatePerMinute",
                                 "meteredRevenue", "flatAmount", "forgoneRevenue",
-                                "actorUsername", "reason", "openedAt" } ] } }
+                                "actorUsername", "reason", "openedAt" } ] },
+  "discounts":   { "discountBills", "discountAmount",
+                   "lines": [ { "billId", "receiptNo", "subtotal", "discountAmount",
+                                "chargedAmount", "reason", "actorUsername", "discountAt" } ] } }
 ```
 
 Each list is newest first. **Each section repeats its own tile's figure under the same field
@@ -972,6 +1014,7 @@ threshold (10), which sweeps up anything negative.
                         "friendSessions", "friendForgone",
                         "flatSessions", "flatForgone",
                         "reducedSessions", "timeReductionForgone",
+                        "discountBills", "discountAmount",
                         "compQuantity", "compEstimatedCost" },
   "lowStock":         [ { "name", "qtyOnHand" } ],
   "perEmployee":      [ { "username", "fullName", "bills", "gross", "cost", "profit" } ],
@@ -1004,8 +1047,15 @@ threshold (10), which sweeps up anything negative.
 - `outstanding` is every open debt across all dates, for the Attention band. The one **live**
   figure here: it answers "right now", so unlike everything else it moves on an old night's report
   when a debt is collected.
+- `discountAmount` is money knocked off whole bills — the one giveaway here that is not about
+  table time. Reported **beside** `timeReductionForgone` and never folded into it: a bill can carry
+  both, and they cannot double-count, because a time reduction rewrites the TIME lines before the
+  discount is computed against the subtotal.
+- **`totals.gross` reports the DISCOUNTED figure**, and that is deliberate: gross has to reconcile
+  to the drawer. ₱600 went in the till, and a gross of ₱654 would leave the cash count ₱54 short
+  every time with nothing explaining it. The losses band is what accounts for the gap.
 - `compEstimatedCost` is an **estimate** valued at current average cost; `voidAmount`,
-  `promoForgone`, `friendForgone` and `flatForgone` are exact.
+  `promoForgone`, `friendForgone`, `flatForgone` and `discountAmount` are exact.
 - `flatForgone` is the metered figure less the flat fee — `standardRatePerMinute × billedMinutes
   − flatAmount` — **clamped at zero per session**. A flat fee above what the meter would have
   charged is not a loss and contributes zero rather than netting off against a real giveaway

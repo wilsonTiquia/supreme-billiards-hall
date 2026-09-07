@@ -69,6 +69,27 @@ export function addBillLine(billId: string, body: AddBillLineRequest): Promise<A
   return request<AddBillLineResult>(`/bills/${billId}/lines`, { method: 'POST', body });
 }
 
+/**
+ * Knocks money off the whole bill — food and drink included, unlike a session's time reduction.
+ * Both can apply to one bill.
+ *
+ * `chargeAmount` is what is being CHARGED, not what is coming off: the server computes the
+ * discount from it, and returns the bill with the authoritative figures. 400 without a reason
+ * or on a charge below 0.01; 409 on a charge above the subtotal, on a charge equal to it
+ * (a bill of 0.00 could never be settled), or on a bill that is no longer OPEN.
+ */
+export function discountBill(
+  billId: string,
+  body: { chargeAmount: number; reason: string },
+): Promise<Bill> {
+  return request<Bill>(`/bills/${billId}/discount`, { method: 'POST', body });
+}
+
+/** Puts the bill back to its full amount. Audited like the discount itself. */
+export function clearBillDiscount(billId: string): Promise<Bill> {
+  return request<Bill>(`/bills/${billId}/discount`, { method: 'DELETE' });
+}
+
 /** The reason is required and non-blank, or the server returns 400. */
 export function voidBillLine(
   billId: string,

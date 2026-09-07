@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchCheckout, payBill } from '@/api/endpoints/bills';
+import { clearBillDiscount, discountBill, fetchCheckout, payBill } from '@/api/endpoints/bills';
 import { overrideBilledMinutes } from '@/api/endpoints/sessions';
 import { Field } from '@/components/Field';
 import { queryKeys } from '@/api/queryKeys';
@@ -39,6 +39,10 @@ export function CheckoutPage() {
   const [reduceTo, setReduceTo] = useState('');
   const [reduceReason, setReduceReason] = useState('');
   const [reduceError, setReduceError] = useState<string | null>(null);
+  const [discounting, setDiscounting] = useState(false);
+  const [chargeAmount, setChargeAmount] = useState('');
+  const [discountReason, setDiscountReason] = useState('');
+  const [discountError, setDiscountError] = useState<string | null>(null);
   const [leavingUnpaid, setLeavingUnpaid] = useState(false);
 
   const checkout = useQuery({
@@ -158,6 +162,34 @@ export function CheckoutPage() {
     onError: (caught) => setReduceError(messageOf(caught)),
   });
 
+  /* Knocking money off the whole bill — the beer as well as the table, which is what makes it
+     a different control from "charge less time" beside it rather than a variant of it. Both
+     can apply to one bill; the server keeps them apart and the dashboard reports them apart.
+
+     The operator types what they are CHARGING, because "make it 600" is the sentence the
+     counter actually produced. The server does the subtraction. */
+  const discount = useMutation({
+    mutationFn: ({ charge, reason }: { charge: number; reason: string }) =>
+      discountBill(billId, { chargeAmount: charge, reason }),
+    onSuccess: () => {
+      setDiscountError(null);
+      setDiscounting(false);
+      setChargeAmount('');
+      setDiscountReason('');
+      void queryClient.invalidateQueries({ queryKey: queryKeys.checkout(billId) });
+    },
+    onError: (caught) => setDiscountError(messageOf(caught)),
+  });
+
+  const removeDiscount = useMutation({
+    mutationFn: () => clearBillDiscount(billId),
+    onSuccess: () => {
+      setDiscountError(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.checkout(billId) });
+    },
+    onError: (caught) => setDiscountError(messageOf(caught)),
+  });
+
   if (checkout.isPending) {
     return (
       <div className="flex justify-center py-16">
@@ -180,6 +212,17 @@ export function CheckoutPage() {
   /* ── Settled ─────────────────────────────────────────────────────────────── */
   /* ── Taking payment ──────────────────────────────────────────────────────── */
   const blocked = !checkout.data.canCheckout;
+
+  /* The bill BEFORE any discount — what the discount is taken off, and the ceiling on what can
+     be charged. Both halves come from the server; adding them is not pricing, it is restating
+     the figure the server already split in two. The stored discount and the total shown after
+     saving are the server's own, never these. */
+  const subtotal = bill.subtotalTime + bill.subtotalItems;
+  const typed = chargeAmount.trim() === '' ? null : Number(chargeAmount);
+  const preview =
+    typed === null || Number.isNaN(typed) || typed < 0 || typed > subtotal
+      ? null
+      : subtotal - typed;
 
   return (
     <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1fr_minmax(24rem,32rem)]">
@@ -257,6 +300,111 @@ export function CheckoutPage() {
                 )}
               </div>
             ))}
+          </div>
+        ) : null}
+
+        {/* Knocking money off the whole bill, beside the control that charges less time. Two
+            controls and not one because they do different things: that one reaches table time,
+            this one reaches everything on the bill. A bill can carry both. */}
+        {!blocked ? (
+          <div className="mt-6 border-t border-border pt-4">
+            {discounting ? (
+              <form
+                className="flex flex-col gap-4"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (chargeAmount.trim() === '' || discountReason.trim() === '') return;
+                  discount.mutate({
+                    charge: Number(chargeAmount),
+                    reason: discountReason.trim(),
+                  });
+                }}
+              >
+                <Field
+                  label="Amount to charge"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  max={subtotal}
+                  inputMode="decimal"
+                  value={chargeAmount}
+                  data-autofocus
+                  hint={`This bill comes to ${formatMoney(subtotal)}. Type what you are actually charging — the discount is worked out from it.`}
+                  onChange={(event) => setChargeAmount(event.target.value)}
+                />
+                {/* A PREVIEW, and labelled as one. The figure that gets stored, and the total
+                    shown once this is saved, are the server's — this only spares the operator
+                    doing the subtraction in their head while the customer waits. */}
+                {preview !== null ? (
+                  <p className="text-label text-text-dim">
+                    Preview — that takes off{' '}
+                    <strong className="text-danger">{formatMoney(preview)}</strong>. The saved
+                    figure comes back from the server.
+                  </p>
+                ) : null}
+                <Field
+                  label="Why"
+                  value={discountReason}
+                  placeholder="Who agreed it, and what for"
+                  onChange={(event) => setDiscountReason(event.target.value)}
+                />
+                {/* Said once, plainly, because it is the thing that surprises people: the
+                    discount is pesos, not a percentage, and it does not follow the bill up. */}
+                <p className="text-label text-text-dim">
+                  A fixed amount. Add something to the bill afterwards and the total goes up —
+                  the discount stays where you put it.
+                </p>
+                {discountError ? <Banner tone="danger">{discountError}</Banner> : null}
+                <div className="flex justify-end gap-3">
+                  <Button type="button" variant="secondary" onClick={() => setDiscounting(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    pending={discount.isPending}
+                    disabled={chargeAmount.trim() === '' || discountReason.trim() === ''}
+                  >
+                    Charge {chargeAmount === '' ? '—' : formatMoney(Number(chargeAmount))}
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-label uppercase text-text-dim">
+                  {bill.discountAmount > 0
+                    ? `${formatMoney(bill.discountAmount)} off · ${bill.discountByUsername ?? 'unknown'}`
+                    : 'Whole bill'}
+                </span>
+                <div className="flex gap-3">
+                  {bill.discountAmount > 0 ? (
+                    <Button
+                      variant="secondary"
+                      pending={removeDiscount.isPending}
+                      onClick={() => {
+                        setDiscountError(null);
+                        removeDiscount.mutate();
+                      }}
+                    >
+                      Remove discount
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setDiscountError(null);
+                      setChargeAmount(String(bill.totalAmount));
+                      setDiscountReason('');
+                      setDiscounting(true);
+                    }}
+                  >
+                    Adjust total
+                  </Button>
+                </div>
+              </div>
+            )}
+            {!discounting && discountError ? (
+              <Banner tone="danger">{discountError}</Banner>
+            ) : null}
           </div>
         ) : null}
 

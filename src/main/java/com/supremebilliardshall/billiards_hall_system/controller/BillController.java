@@ -106,6 +106,35 @@ public class BillController {
     }
 
 
+    /*
+     * Knocking money off the whole bill. Not admin-only, by decision: the owner is not at the
+     * hall most nights, and a discount that needed him would either not happen or would happen
+     * off the books. The control is the mandatory reason, the recorded actor and the figure on
+     * the owner's dashboard the next morning — detection rather than prevention, the same
+     * posture the friend rate takes.
+     *
+     * The body carries what is being CHARGED, not what is being taken off. The server does the
+     * subtraction.
+     */
+    @PostMapping("/{id}/discount")
+    public ResponseEntity<APIResponse<BillResponseDTO>> applyDiscount(@PathVariable UUID id,
+                                                                     @Valid @RequestBody BillDiscountRequestDTO billDiscountRequestDTO) {
+        BillResponseDTO bill = billService.applyDiscount(id, billDiscountRequestDTO);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        bill,
+                        "Discount applied successfully"));
+    }
+
+    @DeleteMapping("/{id}/discount")
+    public ResponseEntity<APIResponse<BillResponseDTO>> clearDiscount(@PathVariable UUID id) {
+        BillResponseDTO bill = billService.clearDiscount(id);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        bill,
+                        "Discount cleared successfully"));
+    }
+
     // Preview only: reading this writes nothing.
     @GetMapping("/{id}/checkout")
     public ResponseEntity<APIResponse<CheckoutPreviewResponseDTO>> previewCheckout(@PathVariable UUID id) {

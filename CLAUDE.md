@@ -167,6 +167,11 @@ Whatever the existing naming turns out to be, these responsibilities hold:
 - **Mapper** — entity ↔ DTO only. No database access, no business rules.
 - **Repository** — data access. Derived queries for simple lookups; `@Query` with native SQL for
   reporting and anything involving `business_date`.
+  - In `DAILY_REPORT_SQL` and `LOSSES_DETAIL_SQL`, **do not alias a CTE `d`, `p` or `prev_d`.**
+    `params` is in scope from the outer query, so an unqualified `d` inside `to_jsonb()` binds to
+    its *date column* rather than to your table alias — which merges a JSON string into the object
+    and turns the whole of `losses` into an array. It fails at DTO deserialisation, not in SQL, so
+    the error names Jackson and points nowhere near the cause.
 - **Service** — all business logic and all transaction boundaries. This is where invariants live.
 - **Exception** — domain exceptions, translated centrally to HTTP status codes.
 
@@ -180,6 +185,15 @@ not at compile time, so get them right the first time:
   Map these `@Column(insertable = false, updatable = false)`. The database computes them; an insert
   that tries to write one will fail. Re-read the entity after insert if you need the value in the
   same transaction.
+  - **If anything UPDATEs a column the generated value derives from, the mapping needs
+    `@Generated(event = { EventType.INSERT, EventType.UPDATE })`, not `INSERT` alone.** With only
+    the insert half, the entity keeps the pre-update value for the rest of the transaction while
+    the row in the database says something else. This bit twice — `bill.business_date` (when
+    `closed_at` is stamped) and `bill_line.line_total` (when `overrideBilledMinutes` rewrites
+    `unit_price`) — and both hid until two operations shared one transaction, because every other
+    reader arrived in a later request and got a fresh row. Both are fixed. The rest were swept and
+    are genuinely insert-only: `expense`, `payment` and `stock_movement` are all `business_date` on
+    rows nothing updates. Do not re-audit them; do check any NEW generated column against this.
 - **Postgres enum types** — there are seven (`user_role`, `session_status`, `bill_status`,
   `bill_line_kind`, `payment_method`, `session_close_kind`, `stock_reason`). A plain
   `@Enumerated(EnumType.STRING)` maps to `varchar` and will not bind against a native enum column.

@@ -395,9 +395,23 @@ public class CheckoutServiceImpl implements CheckoutService {
         List<BillLine> lines = billLineRepository.findByBillId(bill.getId());
         BigDecimal subtotalTime = sumLive(lines, BillLineKind.TIME, false);
         BigDecimal subtotalItems = sumLive(lines, BillLineKind.PRODUCT, false);
-        BigDecimal totalAmount = subtotalTime.add(subtotalItems);
+        /*
+         * The discount is taken off HERE and nowhere else, so every downstream reader -- the
+         * payment check, the receipt, the dashboard's gross -- sees one total.
+         *
+         * A fixed amount, applied to whatever the bill has come to by now. A line added after
+         * the discount raises the subtotal and this figure with it; the discount does not
+         * follow it up. Not clamped here either: applyDiscount refused a charge above the
+         * subtotal at the time, and lines only ever get added, so the subtotal at checkout is
+         * at least what it was then.
+         */
+        BigDecimal discountAmount = bill.getDiscountAmount();
+        BigDecimal totalAmount = subtotalTime.add(subtotalItems).subtract(discountAmount);
         BigDecimal totalCost = sumLive(lines, null, true);
 
+        // The discounted figure, deliberately: a bill discounted down to nothing is a bill
+        // nobody can settle, which is why applyDiscount refuses to produce one in the first
+        // place. This is the backstop for the same state arrived at another way.
         if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessRuleException("There is nothing to charge on this bill.");
         }
@@ -542,6 +556,19 @@ public class CheckoutServiceImpl implements CheckoutService {
         payload.put("lines", linePayloads);
         payload.put("subtotalTime", bill.getSubtotalTime());
         payload.put("subtotalItems", bill.getSubtotalItems());
+        /*
+         * Written only when there was one, so an undiscounted chit reads exactly as it always
+         * has and no reader has to explain a line saying "Discount 0.00".
+         *
+         * The customer should be able to see the 54 pesos they were given. The two subtotals
+         * above are the bill before it, totalAmount below is the bill after it, and this is
+         * the difference between them stated rather than left to be inferred -- a favour the
+         * hall did somebody is worth printing.
+         */
+        if (bill.getDiscountAmount().signum() > 0) {
+            payload.put("discountAmount", bill.getDiscountAmount());
+            payload.put("discountReason", bill.getDiscountReason());
+        }
         payload.put("totalAmount", bill.getTotalAmount());
         if (payment != null) {
             payload.put("method", payment.getMethod().name());

@@ -95,6 +95,31 @@ public class Bill implements BranchScoped {
     @Column(name = "total_cost", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalCost;
 
+    /*
+     * Pesos taken off the whole bill, food and drink included. Distinct from a session's
+     * billed_minutes_override, which only ever reaches table time; a bill can carry both.
+     *
+     * A FIXED amount rather than a rate. Adding a line after the discount raises the total and
+     * leaves this exactly where it was put -- the round number agreed at the counter does not
+     * quietly stop being round because somebody ordered another beer.
+     *
+     * Defaulted in the FIELD rather than by each caller. The column is NOT NULL with a database
+     * default, but Hibernate writes every mapped column on insert, so an unset field goes down
+     * as an explicit null and the insert fails. Every bill starts undiscounted, so the zero
+     * belongs here rather than in each of the places that build one.
+     */
+    @Column(name = "discount_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
+    @Column(name = "discount_reason", columnDefinition = "text")
+    private String discountReason;
+
+    @Column(name = "discount_by")
+    private UUID discountBy;
+
+    @Column(name = "discount_at")
+    private OffsetDateTime discountAt;
+
     // Optimistic lock. Hibernate owns this column; never set it by hand.
     @Version
     @Column(name = "version", nullable = false)

@@ -3,6 +3,7 @@ package com.supremebilliardshall.billiards_hall_system.service;
 import com.supremebilliardshall.billiards_hall_system.dto.PagedResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.AddBillLineRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.AddBillLineResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.bill.BillDiscountRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.BillLineResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.BillResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.BillSummaryResponseDTO;
@@ -23,6 +24,14 @@ public interface BillService {
 
     // Marks the line voided and retained, and returns the stock with a SALE_VOID movement.
     BillLineResponseDTO voidLine(UUID billId, UUID lineId, VoidBillLineRequestDTO voidBillLineRequestDTO);
+
+    // Knocks money off the whole bill. The request carries what is being CHARGED; the server
+    // computes the discount from it. Any role, reason mandatory, audited with the actor.
+    BillResponseDTO applyDiscount(UUID billId, BillDiscountRequestDTO billDiscountRequestDTO);
+
+    // Puts the bill back to its full amount. Audited too — a discount that appeared and
+    // vanished is exactly as interesting to the owner as one that stayed.
+    BillResponseDTO clearDiscount(UUID billId);
 
     // Open bills on the current business day with no live session, for the floor header. A
     // session can close without being paid and the table then reads free; without this the

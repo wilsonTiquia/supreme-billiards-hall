@@ -182,6 +182,38 @@ export function ReceiptPage() {
         </ul>
 
         <dl className="border-t border-border pt-3">
+          {/* Written into the payload only when there was one, so an ordinary chit reads
+              exactly as it always has. Read through the same defensive helper as everything
+              else here: a chit issued before this existed simply has no such key.
+
+              Shown as the subtraction rather than as a lone figure — what it came to, what
+              came off, and the total below — because the 54 pesos the customer was given is
+              the part of the receipt they will look for. */}
+          {money(payload, 'discountAmount') !== null ? (
+            <>
+              <div className="flex justify-between gap-3">
+                <dt className="text-label uppercase text-text-dim">Bill</dt>
+                <dd className="tabular text-body text-text-dim">
+                  {formatMoney(
+                    (money(payload, 'subtotalTime') ?? 0) + (money(payload, 'subtotalItems') ?? 0),
+                  )}
+                </dd>
+              </div>
+              <div className="mb-2 flex justify-between gap-3">
+                <dt className="text-label uppercase text-text-dim">
+                  Discount
+                  {text(payload, 'discountReason') ? (
+                    <span className="block normal-case text-label text-text-dim">
+                      {text(payload, 'discountReason')}
+                    </span>
+                  ) : null}
+                </dt>
+                <dd className="tabular text-body text-danger">
+                  −{formatMoney(money(payload, 'discountAmount'))}
+                </dd>
+              </div>
+            </>
+          ) : null}
           <div className="flex items-baseline justify-between gap-3">
             <dt className="text-heading text-text">Total</dt>
             <dd className="figure-amount text-amount">

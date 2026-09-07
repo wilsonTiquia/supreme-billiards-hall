@@ -30,6 +30,21 @@ public class BillResponseDTO {
 
     private BigDecimal subtotalTime;
     private BigDecimal subtotalItems;
+
+    /*
+     * On the base type and not on BillAdminResponseDTO, deliberately. A discount is not a cost
+     * or a profit figure -- it is what the customer is being charged -- and the counter who
+     * typed it has to be able to read it back off the screen they typed it on.
+     *
+     * Zero, never null, so the client can always subtract. The other three are null together
+     * when nothing was given away.
+     */
+    private BigDecimal discountAmount;
+    private String discountReason;
+    private String discountByUsername;
+    private OffsetDateTime discountAt;
+
+    // subtotalTime + subtotalItems - discountAmount. What is actually being charged.
     private BigDecimal totalAmount;
 
     private List<? extends BillLineResponseDTO> lines;

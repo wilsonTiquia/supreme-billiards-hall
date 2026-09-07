@@ -486,6 +486,17 @@ export function DashboardPage() {
                   } · exact`}
                   onOpen={() => setOpenLoss('timeReductions')}
                 />
+                {/* The one figure in this tile that is not about table time: it reaches the
+                    beer as well. Beside "Time not charged" rather than folded into it — a bill
+                    can carry both, and they do not overlap. */}
+                <LossFigure
+                  label="Discounts"
+                  amount={formatMoney(data.losses.discountAmount)}
+                  note={`${data.losses.discountBills} ${
+                    data.losses.discountBills === 1 ? 'bill' : 'bills'
+                  } · exact`}
+                  onOpen={() => setOpenLoss('discounts')}
+                />
                 <LossFigure
                   label="Voids"
                   amount={formatMoney(data.losses.voidAmount)}

@@ -451,6 +451,18 @@ export interface Bill {
   version: number;
   subtotalTime: Money;
   subtotalItems: Money;
+  /**
+   * Money knocked off the whole bill at the counter — food and drink included, unlike a
+   * session's time reduction. A bill can carry both.
+   *
+   * A FIXED amount, never a rate: add a line afterwards and the total goes up while this stays
+   * exactly where it was put. Zero, never null, when none was given.
+   */
+  discountAmount: Money;
+  discountReason: string | null;
+  discountByUsername: string | null;
+  discountAt: IsoInstant | null;
+  /** subtotalTime + subtotalItems - discountAmount. What is actually being charged. */
   totalAmount: Money;
   lines: BillLine[];
   sessions: TableSessionSummary[];
@@ -952,6 +964,17 @@ export interface Losses {
    */
   flatSessions: number;
   flatForgone: Money;
+  /**
+   * Money knocked off whole bills — the one giveaway here that is not about table time.
+   *
+   * Beside `timeReductionForgone`, never folded into it: a bill can carry both, and they cannot
+   * double-count because a reduction rewrites the TIME lines before the discount is computed.
+   *
+   * This is also what explains gross. `totals.gross` reports the DISCOUNTED figure, because
+   * gross has to reconcile to the drawer.
+   */
+  discountBills: number;
+  discountAmount: Money;
 }
 
 /* ── Losses drill-down (ADMIN) ─────────────────────────────────────────────────────
@@ -978,6 +1001,18 @@ export interface VoidLossLine {
   billId: UUID;
   /** Null while the bill is still open. */
   receiptNo: number | null;
+}
+
+export interface DiscountLossLine {
+  billId: UUID;
+  /** Always present: a discount is taken on an OPEN bill, and every bill here has been settled. */
+  receiptNo: number;
+  subtotal: Money;
+  discountAmount: Money;
+  chargedAmount: Money;
+  reason: string | null;
+  actorUsername: string | null;
+  discountAt: IsoInstant;
 }
 
 export interface FlatRateLossLine {
@@ -1038,6 +1073,11 @@ export interface LossesDetail {
     reducedSessions: number;
     forgoneRevenue: Money;
     lines: TimeReductionLossLine[];
+  };
+  discounts: {
+    discountBills: number;
+    discountAmount: Money;
+    lines: DiscountLossLine[];
   };
 }
 

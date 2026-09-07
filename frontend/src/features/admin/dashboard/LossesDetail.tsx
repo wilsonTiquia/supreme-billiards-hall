@@ -16,7 +16,8 @@ export type LossKind =
   | 'friendRates'
   | 'flatRates'
   | 'comps'
-  | 'timeReductions';
+  | 'timeReductions'
+  | 'discounts';
 
 const TITLES: Record<LossKind, string> = {
   voids: 'Voided lines',
@@ -27,6 +28,7 @@ const TITLES: Record<LossKind, string> = {
   flatRates: 'Flat rates',
   comps: 'Given away',
   timeReductions: 'Time not charged',
+  discounts: 'Discounts',
 };
 
 /** A figure that must equal its tile. When it does not, say so rather than showing both quietly. */
@@ -98,6 +100,8 @@ export function LossesDetail({
         <Voids data={detail.data} summary={summary} />
       ) : kind === 'timeReductions' ? (
         <TimeReductions data={detail.data} summary={summary} />
+      ) : kind === 'discounts' ? (
+        <Discounts data={detail.data} summary={summary} />
       ) : kind === 'flatRates' ? (
         <FlatRates data={detail.data} summary={summary} />
       ) : kind === 'promos' ? (
@@ -200,6 +204,57 @@ function Voids({ data, summary }: { data: LossesDetailData; summary: Losses }) {
                 ) : (
                   ' · bill still open'
                 )}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Money knocked off whole bills at the counter.
+ *
+ * The only giveaway on this screen that is not about table time — it reaches the food and the
+ * drink too — which is why it sits beside "Time not charged" rather than inside it. A bill can
+ * carry both, and they do not overlap: a time reduction rewrites the TIME lines first, so the
+ * subtotal a discount was computed against is already the reduced one.
+ *
+ * Each row shows the whole subtraction rather than the discount alone. "654 less 54, charged
+ * 600" is a sentence the owner can check against the receipt; a lone 54 is not.
+ */
+function Discounts({ data, summary }: { data: LossesDetailData; summary: Losses }) {
+  const { lines, discountBills, discountAmount } = data.discounts;
+  return (
+    <div className="flex flex-col gap-4">
+      <SectionTotal
+        label={`${discountBills} ${discountBills === 1 ? 'bill' : 'bills'} discounted`}
+        detail={discountAmount}
+        summary={summary.discountAmount}
+        format={formatMoney}
+      />
+      {lines.length === 0 ? (
+        <Empty what="discounts" />
+      ) : (
+        <ul className="divide-y divide-border border-t border-border">
+          {lines.map((line, index) => (
+            <li key={index} className="py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-body text-text">
+                  {formatMoney(line.subtotal)} → {formatMoney(line.chargedAmount)}
+                </span>
+                <span className="tabular text-body text-danger">
+                  {formatMoney(line.discountAmount)}
+                </span>
+              </div>
+              <p className="mt-1 text-body text-text">{line.reason ?? '— no reason recorded —'}</p>
+              <p className="text-label uppercase text-text-dim">
+                {line.actorUsername ?? 'unknown'} · {formatDateTime(line.discountAt)}
+                {' · '}
+                <Link to={`/receipt/${line.billId}`} className="text-info underline">
+                  receipt #{line.receiptNo}
+                </Link>
               </p>
             </li>
           ))}

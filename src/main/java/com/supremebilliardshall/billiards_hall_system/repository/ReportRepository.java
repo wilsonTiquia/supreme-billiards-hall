@@ -248,6 +248,33 @@ public class ReportRepository {
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d
                 AND ts.billed_minutes_override IS NOT NULL
             ),
+            discounts AS (
+              /*
+               * Money knocked off whole bills at the counter -- the giveaway route that reaches
+               * the beer as well as the table.
+               *
+               * SEPARATE FROM time_reductions AND NOT DOUBLE-COUNTING IT. A reduction rewrites
+               * the TIME lines before the discount is taken, so the subtotal the discount was
+               * computed against is already the reduced one; each figure is read off a
+               * different table over an amount the other never touches. A bill carrying both
+               * appears in both rows, correctly, and the two add up to what was actually given
+               * away on it.
+               *
+               * Note what this figure means for gross: totals.gross sums total_amount, which is
+               * now the DISCOUNTED number. That is the right answer, because gross has to
+               * reconcile to the drawer -- 600 pesos went in, and a gross of 654 would leave
+               * the cash count short by 54 every time with nothing explaining it. This band is
+               * what explains the gap.
+               *
+               * Dated by the BILL's business_date, like voids and overrides, rather than by
+               * discount_at: the giveaway belongs to the night that was played.
+               */
+              SELECT count(*)::int AS "discountBills",
+                     coalesce(sum(b.discount_amount), 0) AS "discountAmount"
+              FROM bill b, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date = p.d
+                AND b.discount_amount > 0
+            ),
             comps AS (
               SELECT coalesce(sum(-sm.quantity_delta), 0) AS "compQuantity",
                      coalesce(sum(-sm.quantity_delta * pr.avg_cost), 0) AS "compEstimatedCost"
@@ -312,8 +339,12 @@ public class ReportRepository {
               'tableUtilisation',   coalesce((SELECT jsonb_agg(to_jsonb(t)) FROM table_util t), '[]'::jsonb),
               'topItems',           coalesce((SELECT jsonb_agg(to_jsonb(i)) FROM top_items i), '[]'::jsonb),
               'paymentMix',         coalesce((SELECT jsonb_agg(to_jsonb(m)) FROM payment_mix m), '[]'::jsonb),
-              'losses',             (SELECT to_jsonb(v) || to_jsonb(o) || to_jsonb(c) || to_jsonb(r) || to_jsonb(f)
-                                     FROM voids v, overrides o, comps c, time_reductions r, flats f),
+              -- `disc` and not `d`: params.d is a DATE column in the outer scope, and an
+              -- unqualified `d` in to_jsonb() binds to that column rather than to the table
+              -- alias -- which merges a json string into the object and turns the whole of
+              -- `losses` into an array.
+              'losses',             (SELECT to_jsonb(v) || to_jsonb(o) || to_jsonb(c) || to_jsonb(r) || to_jsonb(f) || to_jsonb(disc)
+                                     FROM voids v, overrides o, comps c, time_reductions r, flats f, discounts disc),
               'expenses',           jsonb_build_object(
                                       'total',         coalesce((SELECT x.amount FROM expenses x WHERE x.business_date = p.d), 0),
                                       -- Zero rather than null, so the client can always subtract.
@@ -328,7 +359,7 @@ public class ReportRepository {
             FROM params p
             """;
 
-    // The rows behind the dashboard's three loss figures.
+    // The rows behind the dashboard's loss figures.
     //
     // Every predicate here mirrors the corresponding CTE in DAILY_REPORT_SQL exactly — including
     // the fact that comps are dated by the MOVEMENT's business_date while voids and overrides are
@@ -414,6 +445,24 @@ public class ReportRepository {
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d
                 AND ts.flat_amount IS NOT NULL
             ),
+            discount_lines AS (
+              -- The same predicate as the `discounts` CTE above, to the character: same branch,
+              -- same bill business_date, same discount_amount > 0. The tile and this list are
+              -- the same rows counted twice, and if they ever disagreed the owner would have no
+              -- way to tell which one to believe.
+              SELECT b.id                               AS "billId",
+                     b.receipt_no                       AS "receiptNo",
+                     (b.subtotal_time + b.subtotal_items) AS subtotal,
+                     b.discount_amount                  AS "discountAmount",
+                     b.total_amount                     AS "chargedAmount",
+                     b.discount_reason                  AS reason,
+                     u.username                         AS "actorUsername",
+                     b.discount_at                      AS "discountAt"
+              FROM bill b
+              LEFT JOIN app_user u ON u.id = b.discount_by, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date = p.d
+                AND b.discount_amount > 0
+            ),
             time_reduction_lines AS (
               SELECT t.name                              AS "poolTableName",
                      ts.billed_minutes                   AS "actualMinutes",
@@ -447,6 +496,13 @@ public class ReportRepository {
                 'voidAmount', coalesce((SELECT sum(v."lineTotal")  FROM void_lines v), 0),
                 'lines', coalesce((SELECT jsonb_agg(to_jsonb(v) ORDER BY v."voidedAt" DESC)
                                    FROM void_lines v), '[]'::jsonb)),
+              -- `dl` rather than `d`, for the reason given on `losses` above: params.d is a
+              -- date column in scope here, and to_jsonb(d) would serialise that instead.
+              'discounts', jsonb_build_object(
+                'discountBills',  coalesce((SELECT count(*)::int              FROM discount_lines dl), 0),
+                'discountAmount', coalesce((SELECT sum(dl."discountAmount")   FROM discount_lines dl), 0),
+                'lines', coalesce((SELECT jsonb_agg(to_jsonb(dl) ORDER BY dl."discountAt" DESC)
+                                   FROM discount_lines dl), '[]'::jsonb)),
               'timeReductions', jsonb_build_object(
                 'reducedSessions',  coalesce((SELECT count(*)::int            FROM time_reduction_lines r), 0),
                 'forgoneRevenue',   coalesce((SELECT sum(r."forgoneRevenue")  FROM time_reduction_lines r), 0),

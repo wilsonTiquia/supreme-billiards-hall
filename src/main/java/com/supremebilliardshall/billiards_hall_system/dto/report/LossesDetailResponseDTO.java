@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
-// What is behind the dashboard's three loss figures.
+// What is behind the dashboard's loss figures.
 //
 // Each section repeats its own total using the SAME field name the tile uses, computed from the
 // same rows the list below it shows. If a section total and its tile ever disagree, that is a
@@ -29,6 +29,7 @@ public class LossesDetailResponseDTO {
     private RateOverrideSection friendRates;
     private TimeReductionSection timeReductions;
     private FlatRateSection flatRates;
+    private DiscountSection discounts;
 
     @Data
     @NoArgsConstructor
@@ -64,6 +65,15 @@ public class LossesDetailResponseDTO {
         private Integer overrideSessions;
         private BigDecimal forgoneRevenue;
         private List<RateOverrideLossLineDTO> lines;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DiscountSection {
+        private Integer discountBills;
+        private BigDecimal discountAmount;
+        private List<DiscountLossLineDTO> lines;
     }
 
     @Data

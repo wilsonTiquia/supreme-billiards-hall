@@ -20,6 +20,8 @@ final class AuditVocabulary {
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
             Map.entry("BILL_LINE_VOIDED", "Line voided"),
+            Map.entry("BILL_DISCOUNTED", "Discount given"),
+            Map.entry("BILL_DISCOUNT_CLEARED", "Discount cleared"),
             Map.entry("BILL_LEFT_UNPAID", "Left unpaid"),
             Map.entry("BUSINESS_DAY_CLOSED", "Day closed"),
             Map.entry("CASH_COUNT_CORRECTED", "Drawer count corrected"),
@@ -62,6 +64,7 @@ final class AuditVocabulary {
             Map.entry("pool_table", "Table"),
             Map.entry("pool_table_rate", "Table"),
             Map.entry("table_session", "Table"),
+            Map.entry("bill", "Bill"),
             Map.entry("bill_line", "Bill line"),
             Map.entry("cash_count", "Drawer count"),
             Map.entry("branch_setting", "Setting"),

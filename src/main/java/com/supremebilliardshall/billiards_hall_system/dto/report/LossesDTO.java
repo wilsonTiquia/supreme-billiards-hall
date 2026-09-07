@@ -53,4 +53,19 @@ public class LossesDTO {
     // contributes nothing rather than cancelling out a real loss elsewhere.
     private Integer flatSessions;
     private BigDecimal flatForgone;
+
+    /*
+     * Money knocked off whole bills at the counter. The one giveaway here that is not about
+     * table time: it reaches the beer and the sisig too.
+     *
+     * Reported beside timeReductionForgone and never folded into it. A bill can carry both, and
+     * the two cannot double-count -- a time reduction rewrites the TIME lines first, so the
+     * subtotal a discount is computed against is already the reduced one.
+     *
+     * This is also the figure that explains gross. totals.gross reports the DISCOUNTED amount,
+     * because gross has to reconcile to the drawer: 600 pesos went in, and a gross of 654 would
+     * leave the cash count short by 54 with nothing accounting for it.
+     */
+    private Integer discountBills;
+    private BigDecimal discountAmount;
 }

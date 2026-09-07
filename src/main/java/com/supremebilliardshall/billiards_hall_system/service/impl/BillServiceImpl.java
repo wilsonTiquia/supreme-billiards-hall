@@ -219,14 +219,113 @@ public class BillServiceImpl implements BillService {
         return toResponseDto(voidedLine);
     }
 
+    /*
+     * Knocking money off the whole bill -- the second giveaway route, and independent of the
+     * first.
+     *
+     * SessionServiceImpl.overrideBilledMinutes reduces what the TIME lines cost and can reach
+     * nothing else. This reaches everything, beer included, and the two compose on one bill.
+     * They also cannot double-count: a time reduction rewrites the TIME lines BEFORE this runs,
+     * so the subtotal subtracted from here is already the reduced one, and each is measured off
+     * a different row over an amount the other never touches.
+     *
+     * The counter types the amount being CHARGED and the server does the subtraction. That is
+     * the number the conversation produced -- "make it 600" -- and computing the discount here
+     * rather than accepting one keeps the arithmetic on the side of the wire that owns money.
+     */
+    @Override
+    @Transactional
+    public BillResponseDTO applyDiscount(UUID billId, BillDiscountRequestDTO billDiscountRequestDTO) {
+        Bill bill = requireBill(billId);
+        requireOpen(bill);
+
+        List<BillLine> lines = billLineRepository.findByBillId(bill.getId());
+        // The LIVE subtotal, summed from the lines. bill.subtotal_time and subtotal_items are
+        // still zero at this point -- nothing writes them until checkout finalises the bill --
+        // so reading them off the row would compare the charge against 0.00 and reject
+        // everything. Same reason V19's check constraint is conditioned on the bill being
+        // finalised: this is the only place the figure exists yet.
+        BigDecimal subtotal = sumLive(lines, BillLineKind.TIME).add(sumLive(lines, BillLineKind.PRODUCT));
+        BigDecimal charge = billDiscountRequestDTO.getChargeAmount();
+
+        if (charge.compareTo(subtotal) > 0) {
+            throw new BusinessRuleException("This bill comes to "
+                    + subtotal.toPlainString() + ". Charging " + charge.toPlainString()
+                    + " would be more than that, which is a surcharge rather than a discount.");
+        }
+        /*
+         * A bill charged at nothing cannot be settled: payment requires at least 0.01, so it
+         * would sit in the floor strip for ever with no route out of it.
+         *
+         * The refusal names the route that EXISTS rather than the one that would be
+         * convenient. There is no void-a-bill endpoint -- BillController voids a line, and a
+         * TIME line cannot be voided on its own -- so a bill carrying a session cannot be
+         * zeroed by any path in this system. Pointing staff at a door that is not there is
+         * worse than a blunt no.
+         */
+        if (charge.compareTo(subtotal) == 0) {
+            throw new BusinessRuleException("That would charge nothing at all, and a bill of "
+                    + "0.00 can never be settled. A free game is set as a zero friend or flat "
+                    + "rate when the table is opened, not as a discount at checkout.");
+        }
+
+        BigDecimal discount = subtotal.subtract(charge);
+        Map<String, Object> before = discountSnapshot(bill);
+
+        bill.setDiscountAmount(discount);
+        bill.setDiscountReason(billDiscountRequestDTO.getReason().trim());
+        bill.setDiscountBy(branchContext.getCurrentUserId());
+        bill.setDiscountAt(OffsetDateTime.now());
+        // Bumps @Version, which is what a checkout tab still holding the undiscounted total
+        // collides with. That collision is the point: it must not be able to charge 654.
+        Bill saved = billRepository.saveAndFlush(bill);
+
+        auditService.record("BILL_DISCOUNTED", "bill", saved.getId(),
+                before, discountSnapshot(saved), saved.getDiscountReason());
+
+        return toResponseDto(saved);
+    }
+
+    @Override
+    @Transactional
+    public BillResponseDTO clearDiscount(UUID billId) {
+        Bill bill = requireBill(billId);
+        requireOpen(bill);
+
+        if (bill.getDiscountAmount().signum() == 0) {
+            throw new BusinessRuleException("There is no discount on this bill to clear.");
+        }
+
+        Map<String, Object> before = discountSnapshot(bill);
+
+        // All four together, back to the shape a bill that was never discounted has:
+        // bill_discount_together_chk admits no half-cleared row.
+        bill.setDiscountAmount(BigDecimal.ZERO);
+        bill.setDiscountReason(null);
+        bill.setDiscountBy(null);
+        bill.setDiscountAt(null);
+        Bill saved = billRepository.saveAndFlush(bill);
+
+        // The reason from the BEFORE side, because clearing has no reason of its own and the
+        // question the owner will ask of this row is which discount went away.
+        auditService.record("BILL_DISCOUNT_CLEARED", "bill", saved.getId(),
+                before, discountSnapshot(saved), (String) before.get("discountReason"));
+
+        return toResponseDto(saved);
+    }
+
 
     // Looked up per bill rather than joined. The list is what staff forgot to settle tonight,
     // so it is a handful of rows at most, and the per-bill reads stay far easier to follow
     // than the multi-table aggregate that would replace them.
     private UnsettledBillResponseDTO toUnsettledResponseDto(Bill bill) {
         List<BillLine> lines = billLineRepository.findByBillId(bill.getId());
+        // Discounted, like every other quotation of this bill. A bill can be discounted and
+        // then forgotten on the floor, and a strip quoting the full amount would send staff
+        // back to the customer with a figure that was already agreed away.
         BigDecimal totalAmount = sumLive(lines, BillLineKind.TIME)
-                .add(sumLive(lines, BillLineKind.PRODUCT));
+                .add(sumLive(lines, BillLineKind.PRODUCT))
+                .subtract(bill.getDiscountAmount());
 
         List<TableSession> sessions = tableSessionRepository.findByBillId(bill.getId());
 
@@ -307,7 +406,10 @@ public class BillServiceImpl implements BillService {
 
         BigDecimal subtotalTime = sumLive(lines, BillLineKind.TIME);
         BigDecimal subtotalItems = sumLive(lines, BillLineKind.PRODUCT);
-        BigDecimal totalAmount = subtotalTime.add(subtotalItems);
+        // Fixed, so it does not move when a line is added: the total rises and the discount
+        // stays where it was put.
+        BigDecimal discountAmount = bill.getDiscountAmount();
+        BigDecimal totalAmount = subtotalTime.add(subtotalItems).subtract(discountAmount);
 
         BillResponseDTO responseDto = branchContext.isAdmin()
                 ? new BillAdminResponseDTO()
@@ -323,6 +425,10 @@ public class BillServiceImpl implements BillService {
         responseDto.setVersion(bill.getVersion());
         responseDto.setSubtotalTime(subtotalTime);
         responseDto.setSubtotalItems(subtotalItems);
+        responseDto.setDiscountAmount(discountAmount);
+        responseDto.setDiscountReason(bill.getDiscountReason());
+        responseDto.setDiscountByUsername(usernameOf(bill.getDiscountBy()));
+        responseDto.setDiscountAt(bill.getDiscountAt());
         responseDto.setTotalAmount(totalAmount);
         responseDto.setLines(lines.stream().map(this::toResponseDto).toList());
         responseDto.setSessions(sessionService.getSummariesForBill(bill.getId()));
@@ -389,6 +495,16 @@ public class BillServiceImpl implements BillService {
         return customerTypeRepository.findById(customerTypeId)
                 .map(CustomerType::getName)
                 .orElse(null);
+    }
+
+    // Both sides of a discount change, in the words the audit screen shows. The reason is on
+    // the snapshot as well as in the note because the two sides can carry different ones: a
+    // discount replaced by another is one row holding both.
+    private Map<String, Object> discountSnapshot(Bill bill) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("discountAmount", bill.getDiscountAmount());
+        snapshot.put("discountReason", bill.getDiscountReason());
+        return snapshot;
     }
 
     private Map<String, Object> auditSnapshot(BillLine line) {
