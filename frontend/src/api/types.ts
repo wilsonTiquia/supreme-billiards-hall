@@ -194,6 +194,16 @@ export interface CustomerTypeRequest {
 
 /* ── §5 Floor view and tables ────────────────────────────────────────────────────── */
 
+/**
+ * Which kind of rate override a session carries.
+ *
+ * A PRICING MODE, not a kind of customer. `PROMO` is happy hour — an event, so it is ungated
+ * and runs on any customer type including Regular; `FRIEND` is a favour and is offered only
+ * where `customerType.allowsRateOverride`. Both bill through the same rate fields; this only
+ * says which it was, so the report can tell a promo from a favour.
+ */
+export type RateOverrideKind = 'FRIEND' | 'PROMO';
+
 /** The occupied-table summary. Note `sessionId`, not `id` — it differs from Session. */
 export interface TableSessionSummary {
   sessionId: UUID;
@@ -220,6 +230,12 @@ export interface TableSessionSummary {
    * still whatever it always was and would read as a plausible per-minute figure.
    */
   flatAmount: Money | null;
+  /**
+   * Which kind of override, when the session carries one. Null otherwise. The card names an
+   * override after the customer type, which is right for a favour and wrong for a promo —
+   * happy hour runs on any type, so "Regular rate" would be plausible and untrue.
+   */
+  rateOverrideKind: RateOverrideKind | null;
   timeAmount: Money;
   /** Units of product on the bill so far — one round or six, which the value alone cannot say. */
   itemCount: Quantity;
@@ -294,6 +310,13 @@ export interface OpenSessionRequest {
   rateOverridePerHour?: Money;
   rateOverrideReason?: string;
   /**
+   * Which kind of override the rate above is. `PROMO` is ungated and works on any customer
+   * type, and REQUIRES `rateOverrideReason` — an unlabelled promo is unmeasurable, which is the
+   * whole point of the feature. `FRIEND` keeps its `allowsRateOverride` gate and its optional
+   * reason. Omitted alongside a rate means `FRIEND`; sent without a rate is a 400.
+   */
+  rateOverrideKind?: RateOverrideKind;
+  /**
    * Tournament pricing: a fixed charge for the whole session however long it runs. Mutually
    * exclusive with either friend-rate field — both in one request is a 400 — and `flatRateReason`
    * is required alongside it. Zero is legitimate. Not gated on the customer type.
@@ -342,6 +365,8 @@ export interface Session {
    */
   standardRatePerHour: Money | null;
   rateOverridePerHour: Money | null;
+  /** Which kind of override is in effect, for the banner's label. Null when there is none. */
+  rateOverrideKind: RateOverrideKind | null;
   /**
    * The fixed charge, when the session was opened on tournament pricing. Null on a metered
    * session. When set, `timeAmount` equals it from the first second and never moves — the timer
@@ -854,6 +879,14 @@ export interface DailyTotals {
   itemRevenue: Money;
 }
 
+export interface TimeRevenueByMode {
+  mode: 'STANDARD' | 'PROMO' | 'FRIEND' | 'FLAT';
+  /** Beside the money because they answer different halves: PHP 3,000 across twenty sessions
+      is not the same night as PHP 3,000 across two. */
+  sessions: number;
+  amount: Money;
+}
+
 export interface HourlySales {
   /** Asia/Manila hour, 10 through 4 across the business day. */
   hour: number;
@@ -895,9 +928,18 @@ export interface Losses {
   voidCount: number;
   /** Exact. */
   voidAmount: Money;
-  overrideSessions: number;
-  /** Exact. */
-  forgoneRevenue: Money;
+  /**
+   * The two kinds of rate override, apart. Same arithmetic — (standard - charged) x minutes —
+   * and different facts: a promo is a decision about the night, a friend rate a decision about
+   * one person. Both exact.
+   *
+   * These were one pair called `overrideSessions` / `forgoneRevenue` until promos existed.
+   * Renamed rather than quietly narrowed: "override" at the top level reads as ALL overrides.
+   */
+  promoSessions: number;
+  promoForgone: Money;
+  friendSessions: number;
+  friendForgone: Money;
   compQuantity: Quantity;
   /** An estimate, valued at current average cost. Label it as such. */
   compEstimatedCost: Money;
@@ -964,12 +1006,24 @@ export interface RateOverrideLossLine {
   actorUsername: string | null;
   reason: string | null;
   openedAt: IsoInstant;
+  /** Which section this row belongs in, on the row so a line reads on its own. */
+  rateOverrideKind: RateOverrideKind | null;
 }
 
 export interface LossesDetail {
   businessDate: BusinessDate;
   comps: { compQuantity: Quantity; compEstimatedCost: Money; lines: CompLossLine[] };
   voids: { voidCount: number; voidAmount: Money; lines: VoidLossLine[] };
+  /**
+   * The same shape twice, told apart by kind. Both keep the scoped names an override section
+   * has always had: inside `promos`, `forgoneRevenue` can only mean the promos' own. It is the
+   * tile figures on `Losses` that had to say which they meant.
+   */
+  promos: {
+    overrideSessions: number;
+    forgoneRevenue: Money;
+    lines: RateOverrideLossLine[];
+  };
   friendRates: {
     overrideSessions: number;
     forgoneRevenue: Money;
@@ -1008,6 +1062,14 @@ export interface DailyReport {
   /** Zeros when there is no previous day. */
   previousTotals: DailyTotals;
   salesByHour: HourlySales[];
+  /**
+   * How the night's table time was priced. Always four rows, in the order STANDARD, PROMO,
+   * FRIEND, FLAT, zeros included.
+   *
+   * THE AMOUNTS SUM EXACTLY TO `totals.timeRevenue`. The dashboard says so on screen when they
+   * do not, rather than showing two figures that disagree about the same money.
+   */
+  timeRevenueByMode: TimeRevenueByMode[];
   tableUtilisation: TableUtilisation[];
   topItems: TopItem[];
   paymentMix: PaymentMix[];

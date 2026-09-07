@@ -85,6 +85,14 @@ public class TableSession implements BranchScoped {
     @Column(name = "standard_rate_per_hour", precision = 12, scale = 2)
     private BigDecimal standardRatePerHour;
 
+    // Which kind of override this is — a promo or a favour. Set exactly when the override is,
+    // and never used to compute money: both kinds bill through rateOverridePerMinute above.
+    // It exists so the report can tell a happy hour from a free game for a friend.
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(name = "rate_override_kind", columnDefinition = "rate_override_kind")
+    private RateOverrideKind rateOverrideKind;
+
     @Column(name = "rate_override_by")
     private UUID rateOverrideBy;
 

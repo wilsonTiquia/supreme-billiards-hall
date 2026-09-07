@@ -141,7 +141,12 @@ export function TableCard({
               <span className="tabular shrink-0 normal-case">
                 {session.flatAmount !== null
                   ? `Flat ${formatMoney(session.flatAmount)}`
-                  : formatRate(table.ratePerMinute)}
+                  : // The SESSION's rate, which on an override is not the table's. Reading
+                    // table.ratePerMinute here would quote the standard rate on a discounted
+                    // table — the same class of plausible untruth the flat case above avoids.
+                    session.rateOverrideKind !== null
+                    ? `${session.rateOverrideKind === 'PROMO' ? 'Promo' : 'Friend'} ${formatRate(session.ratePerMinute)}`
+                    : formatRate(table.ratePerMinute)}
               </span>
             </div>
           </>

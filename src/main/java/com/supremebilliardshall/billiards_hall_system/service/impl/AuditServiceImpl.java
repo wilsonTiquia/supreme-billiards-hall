@@ -6,6 +6,7 @@ import com.supremebilliardshall.billiards_hall_system.dto.audit.AuditFilterOptio
 import com.supremebilliardshall.billiards_hall_system.dto.audit.AuditLogResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.entity.AuditLog;
 import com.supremebilliardshall.billiards_hall_system.entity.AppUser;
+import com.supremebilliardshall.billiards_hall_system.entity.RateOverrideKind;
 import com.supremebilliardshall.billiards_hall_system.repository.AppUserRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.AuditLogRepository;
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
@@ -207,9 +208,22 @@ public class AuditServiceImpl implements AuditService {
      * defensive one: table_session.customer_type_id is nullable.
      */
     private String actionLabel(AuditLogRepository.AuditFeedProjection row) {
+        if (!"SESSION_RATE_OVERRIDE".equals(row.getAction())) {
+            return AuditVocabulary.action(row.getAction());
+        }
+        /*
+         * A promo is named after itself, not after who was playing.
+         *
+         * The customer-type rule below is right for a favour -- a friend rate given on Happy
+         * Hour reads "Happy Hour rate" -- and wrong for a promo, which is ungated and runs on
+         * any type. Left to that rule a happy-hour walk-in would read "Regular rate", which
+         * says the opposite of what happened and says it plausibly enough to go unchallenged.
+         */
+        if (RateOverrideKind.PROMO.name().equals(row.getRateOverrideKind())) {
+            return "Promo rate";
+        }
         String customerType = row.getCustomerTypeName();
-        if ("SESSION_RATE_OVERRIDE".equals(row.getAction())
-                && customerType != null && !customerType.isBlank()) {
+        if (customerType != null && !customerType.isBlank()) {
             return customerType.trim() + " rate";
         }
         return AuditVocabulary.action(row.getAction());

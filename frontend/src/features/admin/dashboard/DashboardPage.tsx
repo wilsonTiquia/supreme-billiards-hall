@@ -12,7 +12,7 @@ import { fetchUnsettledBills } from '@/api/endpoints/bills';
 import { Link } from 'react-router-dom';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
-import type { DailyTotals } from '@/api/types';
+import type { DailyTotals, Money, TimeRevenueByMode } from '@/api/types';
 import { AdminPage } from '../AdminPage';
 import { Card } from '@/components/Card';
 import { Spinner } from '@/components/Spinner';
@@ -351,6 +351,12 @@ export function DashboardPage() {
                 <Split totals={data.totals} />
               </Tile>
 
+              {/* What the time half of that split was sold under. Beside it rather than inside
+                  it: the bar answers "time or drinks", this answers "at what price". */}
+              <Tile title="How table time was priced">
+                <PricingModes rows={data.timeRevenueByMode} timeRevenue={data.totals.timeRevenue} />
+              </Tile>
+
               <Tile title="Payment mix">
                 {data.paymentMix.map((method) => (
                   <Row
@@ -445,38 +451,33 @@ export function DashboardPage() {
                 Click a figure to see who, when, and why.
               </p>
               <div className="grid gap-4 md:grid-cols-2">
+                {/* Promos first, then friend rates. Same arithmetic, different facts: a promo
+                    is a decision about the night and a friend rate is a decision about one
+                    person, and the owner cannot manage either while they are one number. */}
                 <LossFigure
-                  label="Voids"
-                  amount={formatMoney(data.losses.voidAmount)}
-                  note={`${data.losses.voidCount} ${data.losses.voidCount === 1 ? 'line' : 'lines'} · exact`}
-                  onOpen={() => setOpenLoss('voids')}
+                  label="Promos"
+                  amount={formatMoney(data.losses.promoForgone)}
+                  note={`${data.losses.promoSessions} ${
+                    data.losses.promoSessions === 1 ? 'session' : 'sessions'
+                  } · exact`}
+                  onOpen={() => setOpenLoss('promos')}
                 />
                 <LossFigure
-                  label="Rate overrides"
-                  amount={formatMoney(data.losses.forgoneRevenue)}
-                  note={`${data.losses.overrideSessions} ${
-                    data.losses.overrideSessions === 1 ? 'session' : 'sessions'
+                  label="Friend rates"
+                  amount={formatMoney(data.losses.friendForgone)}
+                  note={`${data.losses.friendSessions} ${
+                    data.losses.friendSessions === 1 ? 'session' : 'sessions'
                   } · exact`}
                   onOpen={() => setOpenLoss('friendRates')}
                 />
                 <LossFigure
-                  label="Flat rates"
+                  label="Flat rate"
                   amount={formatMoney(data.losses.flatForgone)}
                   note={`${data.losses.flatSessions} ${
                     data.losses.flatSessions === 1 ? 'session' : 'sessions'
                   } · exact`}
                   onOpen={() => setOpenLoss('flatRates')}
                 />
-                {/* The difference matters: this one is valued at today's average cost, so it
-                    moves when costs move. The other two are exact figures from the ledger. */}
-                <LossFigure
-                  label="Comps"
-                  amount={formatMoney(data.losses.compEstimatedCost)}
-                  note={`${data.losses.compQuantity} units · ESTIMATE at current average cost`}
-                  noteTone="estimate"
-                  onOpen={() => setOpenLoss('comps')}
-                />
-                {/* The third giveaway route. All three on one screen, or the control is not one. */}
                 <LossFigure
                   label="Time not charged"
                   amount={formatMoney(data.losses.timeReductionForgone)}
@@ -484,6 +485,21 @@ export function DashboardPage() {
                     data.losses.reducedSessions === 1 ? 'session' : 'sessions'
                   } · exact`}
                   onOpen={() => setOpenLoss('timeReductions')}
+                />
+                <LossFigure
+                  label="Voids"
+                  amount={formatMoney(data.losses.voidAmount)}
+                  note={`${data.losses.voidCount} ${data.losses.voidCount === 1 ? 'line' : 'lines'} · exact`}
+                  onOpen={() => setOpenLoss('voids')}
+                />
+                {/* The difference matters: this one is valued at today's average cost, so it
+                    moves when costs move. Every figure above it is exact, from the ledger. */}
+                <LossFigure
+                  label="Comps"
+                  amount={formatMoney(data.losses.compEstimatedCost)}
+                  note={`${data.losses.compQuantity} units · ESTIMATE at current average cost`}
+                  noteTone="estimate"
+                  onOpen={() => setOpenLoss('comps')}
                 />
               </div>
             </Tile>
@@ -628,6 +644,58 @@ function Split({ totals }: { totals: DailyTotals }) {
         <Row label="Table time" value={formatMoney(time)} />
         <Row label="Products" value={formatMoney(items)} />
       </div>
+    </div>
+  );
+}
+
+const MODE_LABELS: Record<TimeRevenueByMode['mode'], string> = {
+  STANDARD: 'Standard rate',
+  PROMO: 'Promo',
+  FRIEND: 'Friend rate',
+  FLAT: 'Flat rate',
+};
+
+/**
+ * Table revenue by how it was priced — and a check that it still adds up.
+ *
+ * The four amounts are the whole of `totals.timeRevenue` broken apart, so they must sum back to
+ * it exactly. Asserted on screen rather than assumed: two figures that disagree about the same
+ * money are worse than one figure alone, and the owner has no way to tell which is wrong. Same
+ * rule the losses drill-down applies to its section totals.
+ */
+function PricingModes({
+  rows,
+  timeRevenue,
+}: {
+  rows: TimeRevenueByMode[];
+  timeRevenue: Money;
+}) {
+  const summed = rows.reduce((total, row) => total + row.amount, 0);
+  // A tolerance, not identity: both sides are the database's own sums read back through JSON.
+  const reconciles = Math.abs(summed - timeRevenue) < 0.005;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {rows.map((row) => (
+        <Row
+          key={row.mode}
+          label={MODE_LABELS[row.mode]}
+          value={`${formatMoney(row.amount)} · ${row.sessions} ${
+            row.sessions === 1 ? 'session' : 'sessions'
+          }`}
+        />
+      ))}
+      {reconciles ? (
+        <p className="mt-1 text-label text-text-dim">
+          Adds up to the {formatMoney(timeRevenue)} of table time above.
+        </p>
+      ) : (
+        <p className="mt-1 text-label text-danger">
+          These add up to {formatMoney(summed)}, but table time above is{' '}
+          {formatMoney(timeRevenue)}. One of the two is wrong — do not act on either until it is
+          explained.
+        </p>
+      )}
     </div>
   );
 }

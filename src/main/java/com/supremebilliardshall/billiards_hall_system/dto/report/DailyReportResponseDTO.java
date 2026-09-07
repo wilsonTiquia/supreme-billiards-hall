@@ -21,6 +21,16 @@ public class DailyReportResponseDTO {
     private DailyTotalsDTO previousTotals;
 
     private List<HourlySalesDTO> salesByHour;
+    /*
+     * How the night's table time was priced: standard, promo, friend rate, flat. Always four
+     * rows in that order, zeros included.
+     *
+     * THIS SPLIT RECONSTRUCTS totals.timeRevenue -- the four amounts sum to it exactly, and a
+     * test asserts that on a day carrying one of each. Two figures on one screen that disagree
+     * about the same money are worse than one figure alone, so if they ever stop reconciling
+     * that is a bug to stop on rather than a rounding difference to live with.
+     */
+    private List<TimeRevenueByModeDTO> timeRevenueByMode;
     private List<TableUtilisationDTO> tableUtilisation;
     private List<TopItemDTO> topItems;
     private List<PaymentMixDTO> paymentMix;

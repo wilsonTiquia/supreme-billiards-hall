@@ -16,9 +16,25 @@ public class LossesDTO {
     private Integer voidCount;
     private BigDecimal voidAmount;
 
-    private Integer overrideSessions;
-    // (standard rate - friend rate) x billed minutes: revenue the hall chose not to take.
-    private BigDecimal forgoneRevenue;
+    /*
+     * The two kinds of rate override, reported apart.
+     *
+     * Both are (standard rate - charged rate) x billed minutes -- the same arithmetic, and
+     * deliberately so, because a promo prices through the same mechanism a friend rate does.
+     * What differs is what they mean: a promo is a decision about the night and a friend rate
+     * is a decision about one person, and an owner reading one combined figure cannot tell a
+     * heavy month of promotion from generosity running away.
+     *
+     * These two were one field called forgoneRevenue until promos existed. Renamed rather than
+     * kept with the promo half quietly removed: "override" at the top level of a report reads
+     * as ALL overrides, and a figure that means "some of them" is the lie this change exists
+     * to remove.
+     */
+    private Integer promoSessions;
+    private BigDecimal promoForgone;
+
+    private Integer friendSessions;
+    private BigDecimal friendForgone;
 
     private BigDecimal compQuantity;
     // Valued at the product's CURRENT average cost. stock_movement carries no unit cost for a

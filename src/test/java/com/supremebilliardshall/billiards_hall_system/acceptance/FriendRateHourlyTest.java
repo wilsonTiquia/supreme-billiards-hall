@@ -139,8 +139,8 @@ class FriendRateHourlyTest {
 
         JsonNode daily = body(mockMvc.perform(get("/api/v1/reports/daily?date=" + businessDate)
                 .with(user(principal()))).andExpect(status().isOk())).get("data");
-        assertThat(daily.get("losses").get("overrideSessions").asInt()).isEqualTo(1);
-        assertThat(money(daily.get("losses"), "forgoneRevenue")).isEqualByComparingTo("90.00");
+        assertThat(daily.get("losses").get("friendSessions").asInt()).isEqualTo(1);
+        assertThat(money(daily.get("losses"), "friendForgone")).isEqualByComparingTo("90.00");
 
         JsonNode friendRates = body(mockMvc.perform(
                 get("/api/v1/reports/losses?businessDate=" + businessDate)

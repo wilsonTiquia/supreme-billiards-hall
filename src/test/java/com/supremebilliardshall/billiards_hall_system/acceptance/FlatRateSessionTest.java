@@ -276,8 +276,8 @@ class FlatRateSessionTest {
         JsonNode losses = report.get("losses");
         assertThat(losses.get("flatSessions").asInt()).isEqualTo(1);
         assertThat(money(losses, "flatForgone")).isEqualByComparingTo("268.00");
-        assertThat(losses.get("overrideSessions").asInt()).isZero();
-        assertThat(money(losses, "forgoneRevenue")).isEqualByComparingTo("0.00");
+        assertThat(losses.get("friendSessions").asInt()).isZero();
+        assertThat(money(losses, "friendForgone")).isEqualByComparingTo("0.00");
         assertThat(losses.get("reducedSessions").asInt()).isZero();
 
         // The drill-down rows must sum to the tile, or one of them is lying.

@@ -139,9 +139,35 @@ public class ReportRepository {
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d AND l.voided_at IS NOT NULL
             ),
             overrides AS (
-              SELECT count(*)::int AS "overrideSessions",
+              -- A promo and a favour are the same arithmetic and different facts. Happy hour is
+              -- a decision about the night; a free game for the owner's friend is a decision
+              -- about one person. Reported as one lump they cannot be managed: the owner cannot
+              -- tell whether a heavy month of giveaways was the promotion working or generosity
+              -- running away.
+              --
+              -- Aggregate FILTER rather than GROUP BY, and that is load-bearing. `losses` is
+              -- built by cross-joining these single-row CTEs and merging them with ||, so a CTE
+              -- that returned ZERO rows on a quiet night would take the whole losses object
+              -- with it -- and it would vanish silently, on exactly the nights nobody is
+              -- looking closely. FILTER keeps one row whatever the night held.
+              --
+              -- The friend half is IS DISTINCT FROM 'PROMO', not = 'FRIEND', so a row with no
+              -- kind still lands somewhere and the two halves always reconstruct what the
+              -- single figure used to be. V18 backfilled every such row and the constraint
+              -- stops new ones, so this is a belt on top of braces -- but a lost giveaway is
+              -- not the place to find out a constraint was dropped.
+              SELECT count(*) FILTER (WHERE ts.rate_override_kind = 'PROMO')::int
+                       AS "promoSessions",
                      coalesce(sum((ts.standard_rate_per_minute - ts.rate_override_per_minute)
-                                  * coalesce(ts.billed_minutes, 0)), 0) AS "forgoneRevenue"
+                                  * coalesce(ts.billed_minutes, 0))
+                              FILTER (WHERE ts.rate_override_kind = 'PROMO'), 0)
+                       AS "promoForgone",
+                     count(*) FILTER (WHERE ts.rate_override_kind IS DISTINCT FROM 'PROMO')::int
+                       AS "friendSessions",
+                     coalesce(sum((ts.standard_rate_per_minute - ts.rate_override_per_minute)
+                                  * coalesce(ts.billed_minutes, 0))
+                              FILTER (WHERE ts.rate_override_kind IS DISTINCT FROM 'PROMO'), 0)
+                       AS "friendForgone"
               FROM table_session ts JOIN bill b ON b.id = ts.bill_id, params p
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d
                 AND ts.rate_override_per_minute IS NOT NULL
@@ -166,6 +192,52 @@ public class ReportRepository {
               FROM table_session ts JOIN bill b ON b.id = ts.bill_id, params p
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d
                 AND ts.flat_amount IS NOT NULL
+            ),
+            time_by_mode AS (
+              /*
+               * Table revenue by HOW IT WAS PRICED, not by how much was given away.
+               *
+               * The losses band answers "what did we hand over"; this answers "what did the
+               * night actually sell, and under which pricing". They are different questions:
+               * a promo hour that fills four tables shows up here as revenue and there as a
+               * giveaway, and the owner needs both to decide whether to run it again.
+               *
+               * Read off table_session.time_amount, which is the finalised charge for the
+               * session -- the same figure the TIME lines carry -- so a flat session
+               * contributes its fee and a reduced-time session contributes what was charged
+               * rather than what was played.
+               *
+               * THE SPLIT MUST RECONSTRUCT THE WHOLE: these four modes sum to totals
+               * .timeRevenue, and PromoRateSessionTest asserts exactly that on a day carrying
+               * one of each. That reconciliation is a CURRENT property, not an invariant, and
+               * it rests on three things being true today: a TIME line cannot be voided on its
+               * own (BillServiceImpl refuses it), there is no void-a-session path, and there is
+               * no bill merge. MERGE IS THE ONE THAT WILL BREAK IT -- moving sessions between
+               * bills separates ts.bill_id from the bill whose subtotal_time they built. When
+               * merge is built, this comes back here.
+               */
+              SELECT CASE
+                       WHEN ts.flat_amount IS NOT NULL           THEN 'FLAT'
+                       -- Not "rate_override_per_minute IS NOT NULL then look up the kind": the
+                       -- together-constraint makes these the same test, and reading the kind
+                       -- directly is the one that fails loudly if that ever stops holding.
+                       WHEN ts.rate_override_kind IS NOT NULL    THEN ts.rate_override_kind::text
+                       ELSE 'STANDARD'
+                     END                                         AS mode,
+                     count(*)::int                               AS sessions,
+                     coalesce(sum(ts.time_amount), 0)            AS amount
+              FROM table_session ts JOIN closed_bills b ON b.id = ts.bill_id, params p
+              WHERE b.business_date = p.d
+              GROUP BY 1
+            ),
+            time_revenue_by_mode AS (
+              -- All four modes always, in a fixed order, zeros included. A split that shows
+              -- three rows on a night with no promos reads as "the promo row is missing"
+              -- rather than "there were none", and the four figures have to be addable on
+              -- sight for the reader to check them against the total themselves.
+              SELECT m.mode, coalesce(t.sessions, 0) AS sessions, coalesce(t.amount, 0) AS amount, m.ord
+              FROM (VALUES ('STANDARD', 1), ('PROMO', 2), ('FRIEND', 3), ('FLAT', 4)) AS m(mode, ord)
+              LEFT JOIN time_by_mode t ON t.mode = m.mode
             ),
             time_reductions AS (
               SELECT count(*)::int AS "reducedSessions",
@@ -234,6 +306,9 @@ public class ReportRepository {
                                              jsonb_build_object('bills', 0, 'gross', 0, 'cost', 0, 'profit', 0,
                                                                 'timeRevenue', 0, 'itemRevenue', 0)),
               'salesByHour',        coalesce((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.hour) FROM sales_by_hour s), '[]'::jsonb),
+              -- 'ord' is the ordering key, not a figure, and is dropped rather than shipped.
+              'timeRevenueByMode',  coalesce((SELECT jsonb_agg(to_jsonb(t) - 'ord' ORDER BY t.ord)
+                                              FROM time_revenue_by_mode t), '[]'::jsonb),
               'tableUtilisation',   coalesce((SELECT jsonb_agg(to_jsonb(t)) FROM table_util t), '[]'::jsonb),
               'topItems',           coalesce((SELECT jsonb_agg(to_jsonb(i)) FROM top_items i), '[]'::jsonb),
               'paymentMix',         coalesce((SELECT jsonb_agg(to_jsonb(m)) FROM payment_mix m), '[]'::jsonb),
@@ -306,7 +381,10 @@ public class ReportRepository {
                         * coalesce(ts.billed_minutes, 0)) AS "forgoneRevenue",
                      u.username                         AS "actorUsername",
                      ts.rate_override_reason            AS reason,
-                     ts.opened_at                       AS "openedAt"
+                     ts.opened_at                       AS "openedAt",
+                     -- Carried on the row and filtered on below rather than queried twice, so
+                     -- the two sections cannot select different sets of the same overrides.
+                     ts.rate_override_kind::text        AS "rateOverrideKind"
               FROM table_session ts
               JOIN bill b ON b.id = ts.bill_id
               JOIN pool_table t ON t.id = ts.pool_table_id
@@ -374,11 +452,29 @@ public class ReportRepository {
                 'forgoneRevenue',   coalesce((SELECT sum(r."forgoneRevenue")  FROM time_reduction_lines r), 0),
                 'lines', coalesce((SELECT jsonb_agg(to_jsonb(r) ORDER BY r."closedAt" DESC)
                                    FROM time_reduction_lines r), '[]'::jsonb)),
-              'friendRates', jsonb_build_object(
-                'overrideSessions', coalesce((SELECT count(*)::int          FROM override_lines o), 0),
-                'forgoneRevenue',   coalesce((SELECT sum(o."forgoneRevenue") FROM override_lines o), 0),
+              -- The two halves of override_lines, split the same way the tile is: promo on the
+              -- kind, friend on everything else, so a row with no kind appears in exactly one
+              -- section and the two lists together are still the whole of override_lines.
+              -- Both sections keep the scoped names they have always had: inside `promos` and
+              -- inside `friendRates`, "overrideSessions" and "forgoneRevenue" can only mean
+              -- that section's own overrides. It is the TILE figures that had to be renamed,
+              -- because there the same words sit at the top level with nothing scoping them.
+              'promos', jsonb_build_object(
+                'overrideSessions', coalesce((SELECT count(*)::int           FROM override_lines o
+                                              WHERE o."rateOverrideKind" = 'PROMO'), 0),
+                'forgoneRevenue',   coalesce((SELECT sum(o."forgoneRevenue") FROM override_lines o
+                                              WHERE o."rateOverrideKind" = 'PROMO'), 0),
                 'lines', coalesce((SELECT jsonb_agg(to_jsonb(o) ORDER BY o."openedAt" DESC)
-                                   FROM override_lines o), '[]'::jsonb)),
+                                   FROM override_lines o
+                                   WHERE o."rateOverrideKind" = 'PROMO'), '[]'::jsonb)),
+              'friendRates', jsonb_build_object(
+                'overrideSessions', coalesce((SELECT count(*)::int           FROM override_lines o
+                                              WHERE o."rateOverrideKind" IS DISTINCT FROM 'PROMO'), 0),
+                'forgoneRevenue',   coalesce((SELECT sum(o."forgoneRevenue") FROM override_lines o
+                                              WHERE o."rateOverrideKind" IS DISTINCT FROM 'PROMO'), 0),
+                'lines', coalesce((SELECT jsonb_agg(to_jsonb(o) ORDER BY o."openedAt" DESC)
+                                   FROM override_lines o
+                                   WHERE o."rateOverrideKind" IS DISTINCT FROM 'PROMO'), '[]'::jsonb)),
               'flatRates', jsonb_build_object(
                 'flatSessions', coalesce((SELECT count(*)::int           FROM flat_lines f), 0),
                 -- Summed from the rows listed beneath it, each already clamped at zero, so this

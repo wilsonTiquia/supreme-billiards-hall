@@ -82,6 +82,7 @@ export function SessionPage() {
         billedSeconds: session.data.billedSeconds,
         ratePerMinute: session.data.rateOverridePerMinute ?? session.data.standardRatePerMinute,
         flatAmount: session.data.flatAmount,
+        rateOverrideKind: session.data.rateOverrideKind,
         timeAmount: session.data.timeAmount,
         itemCount: session.data.itemCount,
         itemTotal: session.data.itemTotal,
@@ -243,9 +244,17 @@ export function SessionPage() {
               <p className="mt-3 text-label text-amount">
                 {/* Named after the customer type the session was opened on, and quoted in the
                     unit the override was set in — but only when BOTH sides were snapshotted
-                    hourly, since half a comparison reads worse than a per-minute one. */}
-                {live.customerTypeName ? `${live.customerTypeName} rate` : 'Rate override'} in
-                effect — standard is{' '}
+                    hourly, since half a comparison reads worse than a per-minute one.
+
+                    A PROMO is named after itself. It is ungated and runs on any customer type,
+                    so the customer-type rule would put "Regular rate in effect" on a happy-hour
+                    table — plausible, and the opposite of what happened. */}
+                {live.rateOverrideKind === 'PROMO'
+                  ? 'Promo rate'
+                  : live.customerTypeName
+                    ? `${live.customerTypeName} rate`
+                    : 'Rate override'}{' '}
+                in effect — standard is{' '}
                 {live.rateOverridePerHour !== null && live.standardRatePerHour !== null
                   ? formatHourlyRate(live.standardRatePerHour)
                   : formatRate(live.standardRatePerMinute)}

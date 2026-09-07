@@ -247,7 +247,8 @@ reads this. `allowsRateOverride` is what enables the friend-rate field.
 ```json
 "session": { "sessionId", "billId", "poolTableName", "status", "customerTypeId", "customerTypeName",
              "openedAt", "billedMinutes", "billedSeconds", "ratePerMinute",
-             "timeAmount", "itemTotal", "runningTotal" }
+             "flatAmount", "rateOverrideKind",
+             "timeAmount", "itemCount", "itemTotal", "runningTotal" }
 ```
 
 `status` ∈ `OPEN | PAUSED`. `billedMinutes` and `timeAmount` are the **running** figures the
@@ -317,7 +318,7 @@ overlap → 409.
 | GET | `/api/v1/sessions/{id}/notes` | authenticated |
 | POST | `/api/v1/sessions/{id}/notes` | authenticated |
 
-**POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverridePerHour"?, "rateOverrideReason"?, "flatAmount"?, "flatRateReason"? }`
+**POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverridePerHour"?, "rateOverrideKind"?, "rateOverrideReason"?, "flatAmount"?, "flatRateReason"? }`
 
 No start time — the server stamps it. Creates the bill, the session and its first segment in one
 transaction.
@@ -332,9 +333,21 @@ transaction.
   at HALF_UP to four decimals and stores both. The derived per-minute figure is what is snapshotted
   onto `session_segment.rate_per_minute` and what bills; the hourly figure is a record of what was
   typed and prices nothing.
-- Either form is only accepted when the chosen customer type has `allowsRateOverride: true`;
-  otherwise 409. Any value is allowed, with no floor and no approval — **including zero**, which is
-  a comped game.
+- `rateOverrideKind` ∈ `FRIEND | PROMO` says **which kind of override** the rate is. It is a
+  pricing mode, not a kind of customer, and both kinds bill through the same two rate fields —
+  this only decides the gate, the reason rule, and which figure the report counts it under.
+  Sending it without a rate is a 400: a kind labels an override, it does not create one.
+- **`FRIEND`** — a favour. Only accepted when the chosen customer type has
+  `allowsRateOverride: true`; otherwise 409. The reason is optional. **This is the default**:
+  omitting `rateOverrideKind` alongside a rate means `FRIEND`, which is what every override
+  written before this field existed was, and what they were all backfilled to.
+- **`PROMO`** — happy hour. **Not gated on the customer type**, exactly as the flat rate is not:
+  an event is not a kind of customer, and requiring a "Promo" customer type to run one would file
+  a happy-hour walk-in as customer type Promo and destroy the record of who they actually were.
+  `rateOverrideReason` is **required** — an unlabelled promo is unmeasurable, which is the whole
+  point of recording it apart. Missing reason is a 400.
+- Under either kind, any value is allowed, with no floor and no approval — **including zero**,
+  which is a comped game.
 - `flatAmount` is **tournament pricing**: a fixed charge for the whole session however long it
   runs, set at session start. `flatRateReason` is **required** with it, and zero is allowed — the
   reason is the whole control on a fee somebody chose. Unlike the friend rate it is **not gated on
@@ -356,7 +369,7 @@ transaction.
 { "id", "billId", "poolTableId", "poolTableName", "customerTypeId", "customerTypeName",
   "status", "openedAt", "closedAt", "closeKind",
   "standardRatePerMinute", "rateOverridePerMinute",
-  "standardRatePerHour", "rateOverridePerHour",
+  "standardRatePerHour", "rateOverridePerHour", "rateOverrideKind",
   "flatAmount", "flatRateReason",
   "billedMinutes", "billedSeconds", "timeAmount", "itemTotal", "runningTotal",
   "segments": [ { "id", "poolTableId", "poolTableName", "seq", "ratePerMinute",
@@ -373,6 +386,11 @@ transaction.
 carry `ratePerMinute: 0` — **which means priced at session level, not that the table was free**.
 Read `flatAmount` for what was actually charged; the same applies to `TableSessionSummary`, which
 is why it carries `flatAmount` alongside its zero `ratePerMinute`.
+
+`rateOverrideKind` ∈ `FRIEND | PROMO | null`, null exactly when there is no override. Use it for
+the label: a friend rate is named after the customer type it was given on ("Happy Hour rate"),
+and a **promo is named after itself** — it runs on any customer type, so that rule would render
+"Regular rate" on a happy-hour table. The audit feed applies the same rule to `actionLabel`.
 
 `standardRatePerHour` and `rateOverridePerHour` are read-back only, both snapshotted when the
 session opened. `standardRatePerHour` is null if the table was configured per minute at that
@@ -756,11 +774,12 @@ optional and defaults to the night currently running, same as `/reports/daily`.
   "voids":       { "voidCount", "voidAmount",
                    "lines": [ { "description", "quantity", "lineTotal", "reason",
                                 "actorUsername", "voidedAt", "billId", "receiptNo" } ] },
+  "promos":      { "overrideSessions", "forgoneRevenue", "lines": [ ...override lines... ] },
   "friendRates": { "overrideSessions", "forgoneRevenue",
                    "lines": [ { "poolTableName", "standardRatePerMinute", "chargedRatePerMinute",
                                 "standardRatePerHour", "chargedRatePerHour",
                                 "billedMinutes", "forgoneRevenue", "actorUsername",
-                                "reason", "openedAt" } ] },
+                                "reason", "openedAt", "rateOverrideKind" } ] },
   "flatRates":   { "flatSessions", "flatForgone",
                    "lines": [ { "poolTableName", "billedMinutes", "standardRatePerMinute",
                                 "meteredRevenue", "flatAmount", "forgoneRevenue",
@@ -770,6 +789,12 @@ optional and defaults to the night currently running, same as `/reports/daily`.
 Each list is newest first. **Each section repeats its own tile's figure under the same field
 name**, summed from the very rows listed beneath it — so a mismatch between the detail and
 `/reports/daily`'s `losses` is a bug, and the screen says so rather than showing both quietly.
+
+`promos` and `friendRates` are **the same shape**: one list of rate overrides split on
+`rateOverrideKind`, which every line also carries so it reads on its own. Their scoped field
+names stay `overrideSessions` / `forgoneRevenue` — inside `promos` those can only mean the
+promos' own — and they map onto the top-level `promoSessions` / `promoForgone` and
+`friendSessions` / `friendForgone`, where nothing scopes them.
 
 The predicates mirror the daily report exactly, including that comps are dated by the stock
 movement's `business_date` while voids and friend rates are dated by their bill's.
@@ -935,11 +960,16 @@ threshold (10), which sweeps up anything negative.
   "totals":         { "bills", "gross", "cost", "profit", "timeRevenue", "itemRevenue" },
   "previousTotals": { ...same shape, zeros when there is no previous day... },
   "salesByHour":      [ { "hour": 20, "bills": 5, "amount": 1310.00 } ],
+  "timeRevenueByMode":[ { "mode": "STANDARD", "sessions": 6, "amount": 2880.00 },
+                        { "mode": "PROMO",    "sessions": 3, "amount": 450.00  },
+                        { "mode": "FRIEND",   "sessions": 1, "amount": 120.00  },
+                        { "mode": "FLAT",     "sessions": 1, "amount": 500.00  } ],
   "tableUtilisation": [ { "tableName", "billedMinutes", "utilisationPercent" } ],
   "topItems":         [ { "description", "quantity", "revenue" } ],
   "paymentMix":       [ { "method", "payments", "amount" } ],
   "losses":           { "voidCount", "voidAmount",
-                        "overrideSessions", "forgoneRevenue",
+                        "promoSessions", "promoForgone",
+                        "friendSessions", "friendForgone",
                         "flatSessions", "flatForgone",
                         "reducedSessions", "timeReductionForgone",
                         "compQuantity", "compEstimatedCost" },
@@ -951,6 +981,14 @@ threshold (10), which sweeps up anything negative.
 ```
 
 - `hour` is the Asia/Manila hour, 10 through 4 across the business day.
+- **`timeRevenueByMode` is `totals.timeRevenue` taken apart, and sums back to it exactly.**
+  Always four rows in the order `STANDARD, PROMO, FRIEND, FLAT`, zeros included, each with both
+  the amount and the session count. If the four ever fail to reconcile with `timeRevenue`, that
+  is a bug: show it rather than picking one of the two figures.
+- `promoForgone` and `friendForgone` are the two kinds of rate override, reported apart — same
+  arithmetic, `(standard − charged) × billedMinutes`, and different facts. They were one pair
+  called `overrideSessions` / `forgoneRevenue` before promos existed; renamed rather than
+  quietly narrowed, because "override" at the top level reads as all of them.
 - `utilisationPercent` is against a 19-hour day.
 - `perEmployee` sums exactly to `totals` — attributed to whoever took the payment.
 - **`totals` counts `UNSETTLED` bills as sales.** The regular who plays tonight and pays next
@@ -967,7 +1005,7 @@ threshold (10), which sweeps up anything negative.
   figure here: it answers "right now", so unlike everything else it moves on an old night's report
   when a debt is collected.
 - `compEstimatedCost` is an **estimate** valued at current average cost; `voidAmount`,
-  `forgoneRevenue` and `flatForgone` are exact.
+  `promoForgone`, `friendForgone` and `flatForgone` are exact.
 - `flatForgone` is the metered figure less the flat fee — `standardRatePerMinute × billedMinutes
   − flatAmount` — **clamped at zero per session**. A flat fee above what the meter would have
   charged is not a loss and contributes zero rather than netting off against a real giveaway

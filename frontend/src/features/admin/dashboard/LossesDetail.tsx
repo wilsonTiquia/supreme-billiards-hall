@@ -10,11 +10,20 @@ import { Spinner } from '@/components/Spinner';
 import { formatDateTime } from '@/lib/datetime';
 import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
 
-export type LossKind = 'voids' | 'friendRates' | 'flatRates' | 'comps' | 'timeReductions';
+export type LossKind =
+  | 'voids'
+  | 'promos'
+  | 'friendRates'
+  | 'flatRates'
+  | 'comps'
+  | 'timeReductions';
 
 const TITLES: Record<LossKind, string> = {
   voids: 'Voided lines',
-  friendRates: 'Rate overrides',
+  promos: 'Promos',
+  // No longer "Rate overrides": a promo is one of those too, and the two are now separate
+  // sections. A title that could name either would be the same lump under a new name.
+  friendRates: 'Friend rates',
   flatRates: 'Flat rates',
   comps: 'Given away',
   timeReductions: 'Time not charged',
@@ -91,8 +100,20 @@ export function LossesDetail({
         <TimeReductions data={detail.data} summary={summary} />
       ) : kind === 'flatRates' ? (
         <FlatRates data={detail.data} summary={summary} />
+      ) : kind === 'promos' ? (
+        <Overrides
+          section={detail.data.promos}
+          label="at a promo rate"
+          empty="promos"
+          summary={summary.promoForgone}
+        />
       ) : (
-        <FriendRates data={detail.data} summary={summary} />
+        <Overrides
+          section={detail.data.friendRates}
+          label="at a friend rate"
+          empty="friend rates"
+          summary={summary.friendForgone}
+        />
       )}
     </Modal>
   );
@@ -235,18 +256,35 @@ function FlatRates({ data, summary }: { data: LossesDetailData; summary: Losses 
   );
 }
 
-function FriendRates({ data, summary }: { data: LossesDetailData; summary: Losses }) {
-  const { lines, overrideSessions, forgoneRevenue } = data.friendRates;
+/**
+ * Promos and friend rates, which are one component because they are one mechanism.
+ *
+ * They price through the same columns and their forgone revenue is the same arithmetic; what
+ * differs is what they mean and therefore how they are counted. Two copies of this list would
+ * be two places for the rate pair's hourly/per-minute rule to drift.
+ */
+function Overrides({
+  section,
+  label,
+  empty,
+  summary,
+}: {
+  section: LossesDetailData['friendRates'];
+  label: string;
+  empty: string;
+  summary: number;
+}) {
+  const { lines, overrideSessions, forgoneRevenue } = section;
   return (
     <div className="flex flex-col gap-4">
       <SectionTotal
-        label={`${overrideSessions} ${overrideSessions === 1 ? 'session' : 'sessions'} at an overridden rate`}
+        label={`${overrideSessions} ${overrideSessions === 1 ? 'session' : 'sessions'} ${label}`}
         detail={forgoneRevenue}
-        summary={summary.forgoneRevenue}
+        summary={summary}
         format={formatMoney}
       />
       {lines.length === 0 ? (
-        <Empty what="rate overrides" />
+        <Empty what={empty} />
       ) : (
         <ul className="divide-y divide-border border-t border-border">
           {lines.map((line, index) => (

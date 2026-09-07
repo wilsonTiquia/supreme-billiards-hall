@@ -21,6 +21,11 @@ public class LossesDetailResponseDTO {
     private LocalDate businessDate;
     private CompSection comps;
     private VoidSection voids;
+    // The same shape twice, because they are the same kind of giveaway told apart by its kind.
+    // Both keep the scoped field names an override section has always had: inside `promos`,
+    // "forgoneRevenue" can only mean the promos' own. It is the tile figures on LossesDTO that
+    // had to say which they meant, having nothing to scope them.
+    private RateOverrideSection promos;
     private RateOverrideSection friendRates;
     private TimeReductionSection timeReductions;
     private FlatRateSection flatRates;

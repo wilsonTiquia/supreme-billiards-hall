@@ -85,7 +85,19 @@ public class SessionServiceImpl implements SessionService {
         BigDecimal overrideRate = RateConversion.perMinuteFrom(
                 openSessionRequestDTO.getRateOverridePerMinute(),
                 openSessionRequestDTO.getRateOverridePerHour());
-        if (overrideRate != null && !Boolean.TRUE.equals(customerType.getAllowsRateOverride())) {
+        // Absent means FRIEND: every override written before the kind existed was one, and the
+        // V18 backfill says the same thing about the rows already in the table.
+        RateOverrideKind overrideKind = overrideRate == null ? null
+                : openSessionRequestDTO.getRateOverrideKind() != null
+                        ? openSessionRequestDTO.getRateOverrideKind()
+                        : RateOverrideKind.FRIEND;
+        // The gate is on the FAVOUR, not on the discount. A promo is happy hour — an event, not
+        // a kind of customer — so it runs on any customer type including Regular, for exactly
+        // the reason the flat rate does. Gating it would mean inventing a "Promo" customer type
+        // to run one, which files a happy-hour walk-in as customer type Promo and destroys the
+        // record of who they actually were.
+        if (overrideKind == RateOverrideKind.FRIEND
+                && !Boolean.TRUE.equals(customerType.getAllowsRateOverride())) {
             throw new BusinessRuleException(
                     "Customer type '" + customerType.getName() + "' does not allow a rate override.");
         }
@@ -134,6 +146,9 @@ public class SessionServiceImpl implements SessionService {
         session.setStandardRatePerHour(standardRateRow.getRatePerHour());
         if (overrideRate != null) {
             session.setRateOverridePerMinute(overrideRate);
+            // Set with the rate and never apart from it — table_session_override_kind_together_chk
+            // is the backstop. The charge is the same either way; this is only which kind it was.
+            session.setRateOverrideKind(overrideKind);
             // As typed, or null when it was typed per minute. table_session_override_hour_derived_chk
             // is what guarantees this never travels without the derived figure above.
             session.setRateOverridePerHour(openSessionRequestDTO.getRateOverridePerHour());
@@ -168,7 +183,8 @@ public class SessionServiceImpl implements SessionService {
         if (overrideRate != null) {
             auditService.record("SESSION_RATE_OVERRIDE", "table_session", savedSession.getId(),
                     rateSnapshot(standardRate, standardRateRow.getRatePerHour()),
-                    rateSnapshot(overrideRate, openSessionRequestDTO.getRateOverridePerHour()),
+                    overrideSnapshot(overrideRate, openSessionRequestDTO.getRateOverridePerHour(),
+                            overrideKind),
                     openSessionRequestDTO.getRateOverrideReason());
         }
 
@@ -399,6 +415,7 @@ public class SessionServiceImpl implements SessionService {
                     runningSeconds(segments, pauses, now),
                     effectiveRateOf(segments, session),
                     session.getFlatAmount(),
+                    session.getRateOverrideKind(),
                     runningAmount(session, segments, pauses, now),
                     billLineRepository.sumLiveProductQuantity(List.of(session.getBillId())),
                     itemTotals.getOrDefault(session.getBillId(), BigDecimal.ZERO),
@@ -561,6 +578,7 @@ public class SessionServiceImpl implements SessionService {
                 session.getRateOverridePerMinute(),
                 session.getStandardRatePerHour(),
                 session.getRateOverridePerHour(),
+                session.getRateOverrideKind(),
                 session.getFlatAmount(),
                 session.getFlatRateReason(),
                 billedMinutes,
@@ -592,6 +610,7 @@ public class SessionServiceImpl implements SessionService {
                 session.getBilledMinutes() != null ? session.getBilledMinutes() * 60 : runningSeconds(segments, pauses, now),
                 effectiveRateOf(segments, session),
                 session.getFlatAmount(),
+                session.getRateOverrideKind(),
                 session.getTimeAmount() != null
                         ? session.getTimeAmount()
                         : runningAmount(session, segments, pauses, now),
@@ -778,6 +797,22 @@ public class SessionServiceImpl implements SessionService {
     private Map<String, Object> flatSnapshot(BigDecimal flatAmount) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("flatAmount", flatAmount);
+        return snapshot;
+    }
+
+    /*
+     * The AFTER side of a rate override: the rate, and which kind of override it was.
+     *
+     * The kind is on this side only, and that is not an omission. The before side is the
+     * standard rate the session would otherwise have billed at, which carries no kind because
+     * there was no override — the diff reads "Kind — -> Promo", which is the change that
+     * happened. This is the same rule the rate pair itself follows: each side shows what it
+     * actually held rather than being padded to match the other.
+     */
+    private Map<String, Object> overrideSnapshot(BigDecimal ratePerMinute, BigDecimal ratePerHour,
+                                                 RateOverrideKind kind) {
+        Map<String, Object> snapshot = rateSnapshot(ratePerMinute, ratePerHour);
+        snapshot.put("kind", kind == null ? null : kind.name());
         return snapshot;
     }
 

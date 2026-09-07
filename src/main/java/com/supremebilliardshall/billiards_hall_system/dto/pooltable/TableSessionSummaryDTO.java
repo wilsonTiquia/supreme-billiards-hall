@@ -1,5 +1,6 @@
 package com.supremebilliardshall.billiards_hall_system.dto.pooltable;
 
+import com.supremebilliardshall.billiards_hall_system.entity.RateOverrideKind;
 import com.supremebilliardshall.billiards_hall_system.entity.SessionStatus;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -39,6 +40,10 @@ public class TableSessionSummaryDTO {
     // leads with this instead of the table's configured rate, which is still whatever it always
     // was and would read as a plausible per-minute figure nobody would think to question.
     private BigDecimal flatAmount;
+    // Which kind of override, when the session carries one. The card names an override after
+    // the customer type, which is right for a favour and wrong for a promo — happy hour runs on
+    // any customer type, so "Regular rate" would be a plausible and untrue label.
+    private RateOverrideKind rateOverrideKind;
     private BigDecimal timeAmount;
     // Units of product on the bill so far. The floor card leads with the money, and this is
     // what tells the counter whether that money is one round or six.
