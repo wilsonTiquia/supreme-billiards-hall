@@ -11,6 +11,7 @@ import { CheckoutPage } from '@/features/checkout/CheckoutPage';
 import { QuickSalePage } from '@/features/quicksale/QuickSalePage';
 import { ReceiptPage } from '@/features/checkout/ReceiptPage';
 import { EndOfDayPage } from '@/features/endofday/EndOfDayPage';
+import { UnsettledPage } from '@/features/unsettled/UnsettledPage';
 import { ExpensesPage } from '@/features/expenses/ExpensesPage';
 import { DashboardPage } from '@/features/admin/dashboard/DashboardPage';
 import { ProductsPage } from '@/features/admin/catalog/ProductsPage';
@@ -42,6 +43,8 @@ export function AppRoutes() {
             <Route path="quick-sale" element={<QuickSalePage />} />
             <Route path="receipt/:billId" element={<ReceiptPage />} />
             <Route path="end-of-day" element={<EndOfDayPage />} />
+            {/* Both roles: collecting a debt is counter work, and the shape carries no cost. */}
+            <Route path="unsettled" element={<UnsettledPage />} />
             <Route path="expenses" element={<ExpensesPage />} />
             <Route path="account/password" element={<ChangePasswordPage />} />
 

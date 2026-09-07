@@ -11,8 +11,10 @@ import type {
   Payment,
   PaymentPhoto,
   PaymentRequest,
+  LeaveUnpaidRequest,
   Receipt,
   SessionNote,
+  UnpaidBill,
   UnsettledBill,
   VoidBillLineRequest,
 } from '../types';
@@ -29,9 +31,33 @@ export function fetchSettledBills(
   return request<Paged<BillSummary>>('/bills', { query: { businessDate, page, size } });
 }
 
-/** Open bills on the current business day with nothing running — the floor header strip. */
+/**
+ * OPEN bills with nothing running on them — the floor header strip. These are MISTAKES: the
+ * session closed and nobody took payment, so the table reads free and nothing points at the
+ * bill any more. Not the same list as `fetchUnpaidBills`, and they must not be merged.
+ */
 export function fetchUnsettledBills(): Promise<UnsettledBill[]> {
   return request<UnsettledBill[]>('/bills/unsettled');
+}
+
+/**
+ * Debts: bills deliberately left unpaid, newest first, across every business date. Not scoped
+ * to tonight — one of these can legitimately sit for a month, and a list that reset at the date
+ * roll would mean the money was never collected.
+ */
+export function fetchUnpaidBills(): Promise<UnpaidBill[]> {
+  return request<UnpaidBill[]>('/bills/unpaid');
+}
+
+/**
+ * Records the sale without the money. Runs the same finalisation a checkout runs — totals
+ * freeze, a receipt number is allocated — but takes no payment.
+ *
+ * 409 `SESSION_NOTE_REQUIRED` when the session carries no staff note and none is supplied:
+ * the repair is to make the note field required, not to show the message.
+ */
+export function leaveBillUnpaid(billId: string, body: LeaveUnpaidRequest): Promise<UnpaidBill> {
+  return request<UnpaidBill>(`/bills/${billId}/leave-unpaid`, { method: 'POST', body });
 }
 
 export function fetchBill(id: string): Promise<Bill> {

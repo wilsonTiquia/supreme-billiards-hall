@@ -1,0 +1,16 @@
+-- A bill that was played and not paid for.
+--
+-- ALONE IN THIS FILE, and it has to be. Postgres will not let a transaction USE an enum value
+-- that the same transaction added -- the label is not visible to the catalog until commit --
+-- and Flyway wraps each migration in one transaction. The constraints and the partial index
+-- that name 'UNSETTLED' therefore live in V17, which runs after this one has committed. Putting
+-- them together fails at migrate time with "unsafe use of new value of enum type", which reads
+-- like a Flyway bug and is not.
+--
+-- Appended at the end of the enum rather than positioned with BEFORE/AFTER: nothing orders by
+-- bill_status, so the sort position is arbitrary, and pinning it would only be one more thing
+-- a later reader has to not disturb.
+--
+-- IF NOT EXISTS so a database that was hand-patched ahead of this migration still validates
+-- rather than failing on a label that is already correct.
+ALTER TYPE bill_status ADD VALUE IF NOT EXISTS 'UNSETTLED';

@@ -7,9 +7,15 @@ import { formatMoney } from '@/lib/money';
 import { formatBusinessDate, formatTime } from '@/lib/datetime';
 
 /**
- * Bills whose session has closed but which were never paid. The table reads free again, so
+ * Bills whose session has closed but which nobody checked out. The table reads free again, so
  * without this strip there is nothing anywhere pointing at them — and that is a lost sale,
  * not a tidiness problem.
+ *
+ * These are MISTAKES, and the wording says so. A bill deliberately left unpaid — the regular
+ * who settles next month — is a different thing with a name against it, and it lives on
+ * /unsettled. Showing the two under one heading would teach staff that "unpaid" sometimes
+ * means "someone forgot" and sometimes means "that is fine", which is the end of this strip
+ * being worth looking at.
  *
  * It is not scoped to tonight. Closing a day checks for open sessions, not unpaid bills, so
  * one of these survives the close; if the list only showed today's, it would disappear at the
@@ -32,12 +38,12 @@ export function UnsettledStrip({ bills }: { bills: UnsettledBill[] }) {
     <div className="mb-6 rounded-xl border border-gold bg-surface p-4">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-4">
         <h2 className="text-label uppercase text-amount">
-          Unpaid — {bills.length} {bills.length === 1 ? 'bill' : 'bills'} still to collect
+          Not checked out — {bills.length} {bills.length === 1 ? 'bill' : 'bills'} nobody closed
         </h2>
         <span className="text-label text-text-dim">
           {older > 0
             ? `${older} carried over from an earlier night`
-            : 'Session closed, payment not taken'}
+            : 'Session closed, payment never taken'}
         </span>
       </div>
 

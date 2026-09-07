@@ -61,6 +61,19 @@ public class Bill implements BranchScoped {
     @Column(name = "closed_at")
     private OffsetDateTime closedAt;
 
+    // When this sale was recorded as a debt, and by whom. Written in the same statement as
+    // closed_at, which is what dates the sale; these two say why it closed without a payment.
+    @Column(name = "unsettled_at")
+    private OffsetDateTime unsettledAt;
+
+    @Column(name = "unsettled_by")
+    private UUID unsettledBy;
+
+    // When the debt was collected. Never closed_at: business_date is generated from that, so
+    // settling five weeks later would move the original night's revenue onto the wrong report.
+    @Column(name = "settled_at")
+    private OffsetDateTime settledAt;
+
     @Column(name = "voided_by")
     private UUID voidedBy;
 
@@ -87,8 +100,17 @@ public class Bill implements BranchScoped {
     @Column(name = "version", nullable = false)
     private Integer version;
 
-    // Generated from COALESCE(closed_at, opened_at). The database computes it.
-    @Generated(event = EventType.INSERT)
+    /*
+     * Generated from COALESCE(closed_at, opened_at). The database computes it.
+     *
+     * Read back on UPDATE as well as INSERT. Without the UPDATE half, stamping closed_at leaves
+     * this field holding the opened_at-derived date that came back at insert, while the row in
+     * the database says something else. The divergence is narrow -- it needs a bill that opened
+     * before 05:00 and closed after it, so the two dates differ -- which is exactly why it went
+     * unnoticed on the checkout path for as long as it did. The cost is one extra SELECT after
+     * each bill update, which at a hall's volume is nothing.
+     */
+    @Generated(event = { EventType.INSERT, EventType.UPDATE })
     @Column(name = "business_date", insertable = false, updatable = false)
     private LocalDate businessDate;
 }

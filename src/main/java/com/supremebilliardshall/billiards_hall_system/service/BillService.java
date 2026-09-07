@@ -6,6 +6,7 @@ import com.supremebilliardshall.billiards_hall_system.dto.bill.AddBillLineRespon
 import com.supremebilliardshall.billiards_hall_system.dto.bill.BillLineResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.BillResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.BillSummaryResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.bill.UnpaidBillResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.UnsettledBillResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.VoidBillLineRequestDTO;
 
@@ -27,6 +28,13 @@ public interface BillService {
     // session can close without being paid and the table then reads free; without this the
     // bill cannot be found again.
     List<UnsettledBillResponseDTO> getUnsettledBills();
+
+    // The debt list: bills deliberately left unpaid, newest first, across every business date.
+    // A different question from getUnsettledBills — that one finds bills nobody remembered to
+    // check out, this one finds money the hall agreed to wait for.
+    List<UnpaidBillResponseDTO> getUnpaidBills();
+
+    UnpaidBillResponseDTO getUnpaidBill(UUID billId);
 
     // ADMIN. One business day's settled sales, newest first, so the owner can find a receipt
     // without a database client.

@@ -101,12 +101,15 @@ function Tile({ title, children }: { title: string; children: React.ReactNode })
 function Attention({
   lowStock,
   unsettledCount,
+  outstanding,
   uncountedCount,
   variance,
   counted,
 }: {
   lowStock: { name: string; qtyOnHand: number }[];
   unsettledCount: number;
+  /** Every debt still open, across all dates. A live figure, not a fact about this night. */
+  outstanding: { count: number; amount: number };
   uncountedCount: number;
   variance: number | null;
   counted: boolean;
@@ -114,13 +117,17 @@ function Attention({
   // Only a non-zero variance is worth surfacing here; a drawer that balanced is not an action.
   const varianceOff = counted && variance !== null && variance !== 0;
   const clear =
-    lowStock.length === 0 && unsettledCount === 0 && uncountedCount === 0 && !varianceOff;
+    lowStock.length === 0 &&
+    unsettledCount === 0 &&
+    outstanding.count === 0 &&
+    uncountedCount === 0 &&
+    !varianceOff;
 
   if (clear) {
     return (
       <Card>
         <p className="text-body text-green">
-          Nothing outstanding. Stock is fine, every bill is settled, and the drawer balanced.
+          Nothing outstanding. Stock is fine, nobody owes anything, and the drawer balanced.
         </p>
       </Card>
     );
@@ -157,14 +164,31 @@ function Attention({
         </Tile>
       ) : null}
 
+      {/* Two different problems, never one row. A bill nobody checked out is a miss to be
+          fixed tonight; a debt is money somebody agreed to wait for, and it is chased on a
+          different screen and a different timescale. */}
       {unsettledCount > 0 ? (
-        <Tile title="Unsettled bills">
+        <Tile title="Not checked out">
           <p className="text-body text-text">
-            {unsettledCount} {unsettledCount === 1 ? 'bill has' : 'bills have'} no payment against{' '}
-            {unsettledCount === 1 ? 'it' : 'them'}.
+            {unsettledCount} {unsettledCount === 1 ? 'bill was' : 'bills were'} never checked out
+            — most likely a miss.
           </p>
           <Link to="/end-of-day" className="hit mt-2 inline-flex items-center text-body text-info underline">
             See them
+          </Link>
+        </Tile>
+      ) : null}
+
+      {outstanding.count > 0 ? (
+        <Tile title="Owed to the hall">
+          <p className="flex items-baseline justify-between gap-3">
+            <span className="text-body text-text">
+              {outstanding.count} unpaid {outstanding.count === 1 ? 'bill' : 'bills'}, all dates.
+            </span>
+            <span className="tabular text-amount">{formatMoney(outstanding.amount)}</span>
+          </p>
+          <Link to="/unsettled" className="hit mt-2 inline-flex items-center text-body text-info underline">
+            Chase them
           </Link>
         </Tile>
       ) : null}
@@ -291,6 +315,33 @@ export function DashboardPage() {
               previous={data.previousTotals}
               hours={data.salesByHour}
             />
+            {/* Beneath the rail rather than inside it, and only when there is something to say.
+                Gross ALREADY contains this figure — the sale counted on the night it was
+                played — so this is a qualification of the number above, not a second number
+                beside it. Silent on a night when everyone paid, because a permanent "₱0.00
+                unsettled" tile would train the eye to skip exactly the row that matters. */}
+            {data.unsettledTonight.count > 0 ? (
+              <div className="mt-4">
+                <Tile title="Unsettled tonight">
+                  <p className="flex items-baseline justify-between gap-3">
+                    <span className="text-body text-text">
+                      {data.unsettledTonight.count}{' '}
+                      {data.unsettledTonight.count === 1 ? 'bill was' : 'bills were'} left owed.
+                      Counted in gross above; not in the drawer.
+                    </span>
+                    <span className="tabular text-amount">
+                      {formatMoney(data.unsettledTonight.amount)}
+                    </span>
+                  </p>
+                  <Link
+                    to="/unsettled"
+                    className="hit mt-2 inline-flex items-center text-body text-info underline"
+                  >
+                    Who owes it
+                  </Link>
+                </Tile>
+              </div>
+            ) : null}
           </Group>
 
           {/* 2 — WHERE IT CAME FROM. */}
@@ -309,6 +360,25 @@ export function DashboardPage() {
                   />
                 ))}
               </Tile>
+
+              {/* Money that arrived tonight against an earlier night. It is in the payment mix
+                  above and in tonight's drawer, but deliberately NOT in tonight's gross: that
+                  revenue was recognised on the night it was earned, and counting it again here
+                  would invent a sale that never happened. */}
+              {data.collectedToday.count > 0 ? (
+                <Tile title="Old debts collected">
+                  <p className="flex items-baseline justify-between gap-3">
+                    <span className="text-body text-text">
+                      {data.collectedToday.count}{' '}
+                      {data.collectedToday.count === 1 ? 'debt' : 'debts'} from earlier nights.
+                      In the drawer, not in tonight&rsquo;s gross.
+                    </span>
+                    <span className="tabular text-amount">
+                      {formatMoney(data.collectedToday.amount)}
+                    </span>
+                  </p>
+                </Tile>
+              ) : null}
 
               <Tile title="Top items">
                 {data.topItems.length === 0 ? (
@@ -436,6 +506,7 @@ export function DashboardPage() {
             <Attention
               lowStock={data.lowStock}
               unsettledCount={unsettled.data?.length ?? 0}
+              outstanding={data.outstanding}
               uncountedCount={uncounted.data?.length ?? 0}
               variance={cashCount.data ? cashCount.data.variance : null}
               counted={Boolean(cashCount.data)}

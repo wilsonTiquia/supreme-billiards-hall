@@ -42,6 +42,7 @@ return raw image bytes with the stored content type. There is nothing to wrap an
 |---|---|---|---|
 | `STALE_BILL_VERSION` | 409 | The bill changed since you loaded it | Reload the bill, show the new total, ask again |
 | `DUPLICATE_PAYMENT_REFERENCE` | 409 | That reference is already recorded in this branch | Offer "record anyway" → resend with `duplicateOverride: true` |
+| `SESSION_NOTE_REQUIRED` | 409 | Leaving a bill unpaid when the session carries nobody's name | Mark the note field required and focus it — do not just show the message |
 
 Every other error carries no `code`; show `message`.
 
@@ -519,6 +520,48 @@ Bills totalling `0.00` are excluded: payment validation requires at least 0.01, 
 be settled and would sit in the floor strip for ever. Carries no cost field, so one shape serves
 both roles.
 
+**GET `/bills/unpaid`** — every bill with status `UNSETTLED`, **newest first, all business dates**.
+A different list from `/bills/unsettled` above, and the two must never be merged in the UI:
+
+| | `/bills/unsettled` | `/bills/unpaid` |
+|---|---|---|
+| Status | `OPEN`, no live session | `UNSETTLED` |
+| What it means | **A mistake** — staff forgot to check out | **A debt** — the hall agreed to wait |
+| Totals | Computed from live lines; `total_amount` still reads `0.00` | **Frozen**; has a receipt number |
+| In the night's gross | No — it is not a finished sale | **Yes** |
+| Label on screen | "Not checked out" | "Unpaid" |
+
+```json
+[ { "id", "receiptNo": 412, "businessDate": "2026-09-05", "unsettledAt", "unsettledByUsername",
+    "daysOutstanding": 35, "tableNames": ["Table 3"], "totalAmount": 654.00,
+    "latestNote": { ...same shape as above... } } ]
+```
+
+`businessDate` is the night it was **played**, not the night it will be collected.
+`daysOutstanding` is counted between business dates server-side — the browser never dates money.
+Carries no cost field, so one shape serves both roles.
+
+**POST `/bills/{id}/leave-unpaid`** → `{ "note", "billVersion" }` — records the sale without the
+money. Runs the **same finalisation a checkout runs**: totals recomputed from live lines and frozen,
+`receipt_no` allocated under the branch row lock, `closed_at`/`closed_by` stamped, the `receipt`
+snapshot written. It then sets status `UNSETTLED` and takes no payment. Returns the `UnpaidBill`
+shape above.
+
+- **`note` is conditionally required.** The session must carry at least one `STAFF` note naming who
+  owes the money — either one already written during the session, or this one, which is written
+  through the ordinary note path in the same transaction and authored by the caller. Missing and
+  needed → 409 `SESSION_NOTE_REQUIRED`. A `SYSTEM` note does not satisfy this.
+- **`billVersion`** behaves exactly as at checkout: mismatch → 409 `STALE_BILL_VERSION`.
+- **A quick sale cannot be left unpaid** → 409. It has no session, so there is nowhere to record who
+  owes it, and it is created and settled in one transaction anyway.
+- The same blockers as checkout apply: a session still running → 409.
+- Audited as `BILL_LEFT_UNPAID` with the amount. No `SYSTEM` note is written — unlike settlement,
+  this event always has a staff note beside it already.
+
+**`closed_at` is stamped here and never written again.** `bill.business_date` is generated from it,
+so this is the single write that decides which night the sale reports under. Settlement records
+`settled_at` instead — see §8.
+
 **GET `/bills/{id}/notes`** — every note on every session this bill carried, oldest first,
 including the settlement note. Same shape as `/sessions/{id}/notes` in §6.
 
@@ -588,9 +631,34 @@ Response:
   "duplicateReferenceOverridden": false, "replayed": false }
 ```
 
+#### Settling a debt
+
+The same endpoint collects an `UNSETTLED` bill. Everything above still applies — idempotency, the
+duplicate-reference warning, server-computed change, one payment per bill — with three differences:
+
+- **Totals are not recomputed.** They were frozen when the bill was left unpaid, and `amount` must
+  equal that frozen `total_amount`. Anything else → 409 *"This debt is … and must be settled in
+  full."* **Partial settlement does not exist**; a debt is paid in full or stays outstanding.
+- **`closed_at` is not touched.** The bill records `settled_at` and moves to `CLOSED`. The sale
+  still reports under the night it was played; only `payment.business_date`, generated from
+  `taken_at`, follows the money into today's drawer and today's cash count.
+- **No second receipt is written.** `receipt` is append-only and unique per bill, so the chit issued
+  on the night is the only one. See `GET /receipt` below.
+
+The `SYSTEM` settlement note is written on this path exactly as on a normal checkout.
+
 **GET `/receipt`** returns the stored snapshot, never re-rendered:
-`{ "id", "billId", "receiptNo", "issuedAt", "payload": { ... } }`. `payload` is the customer-facing
-document: lines, subtotals, total, method, tendered, change, reference. It carries no cost.
+`{ "id", "billId", "receiptNo", "issuedAt", "payload": { ... }, "settlement": null }`. `payload` is
+the customer-facing document: lines, subtotals, total, `status`, and — on a bill that was paid at
+the counter — method, tendered, change, reference. It carries no cost.
+
+`payload.status` is `CLOSED` or `UNSETTLED`: read it rather than inferring the state from a missing
+`method` key. A chit issued against a debt carries no payment keys at all, because nothing was paid.
+
+`settlement` is **not part of the snapshot** and is null unless a debt was collected later:
+`{ "method", "amount", "takenAt", "takenByUsername" }`, derived from the payment row at read time.
+Render it as a separate block. The payload is append-only and said "unpaid" because the bill was
+unpaid; annotating it would make the record claim something untrue of the night it was issued.
 
 ### Give-aways (batched comps)
 
@@ -876,12 +944,28 @@ threshold (10), which sweeps up anything negative.
                         "reducedSessions", "timeReductionForgone",
                         "compQuantity", "compEstimatedCost" },
   "lowStock":         [ { "name", "qtyOnHand" } ],
-  "perEmployee":      [ { "username", "fullName", "bills", "gross", "cost", "profit" } ] }
+  "perEmployee":      [ { "username", "fullName", "bills", "gross", "cost", "profit" } ],
+  "unsettledTonight": { "count": 1, "amount": 654.00 },
+  "collectedToday":   { "count": 0, "amount": 0 },
+  "outstanding":      { "count": 3, "amount": 2310.00 } }
 ```
 
 - `hour` is the Asia/Manila hour, 10 through 4 across the business day.
 - `utilisationPercent` is against a 19-hour day.
 - `perEmployee` sums exactly to `totals` — attributed to whoever took the payment.
+- **`totals` counts `UNSETTLED` bills as sales.** The regular who plays tonight and pays next
+  month was still served tonight, so `gross`, `cost`, `profit`, `salesByHour`, `topItems`,
+  `tableUtilisation` and `perEmployee` all include the night's unpaid bills. **`paymentMix` does
+  not** — an unsettled bill has no payment row.
+- `unsettledTonight` says how much of `gross` is still a promise. It is **already inside** `gross`,
+  not additional to it. A **historical** figure keyed on when the bill was left unpaid, so
+  collecting the debt later does not rewrite a night the owner has already read.
+- `collectedToday` is money taken on this business date against an **earlier** night's sale. It is
+  **not** in `gross` — that revenue was recognised when it was earned — but it **is** in today's
+  drawer, which is what makes the cash count add up.
+- `outstanding` is every open debt across all dates, for the Attention band. The one **live**
+  figure here: it answers "right now", so unlike everything else it moves on an old night's report
+  when a debt is collected.
 - `compEstimatedCost` is an **estimate** valued at current average cost; `voidAmount`,
   `forgoneRevenue` and `flatForgone` are exact.
 - `flatForgone` is the metered figure less the flat fee — `standardRatePerMinute × billedMinutes

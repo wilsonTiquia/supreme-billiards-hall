@@ -22,6 +22,8 @@ export const queryKeys = {
 
   bills: ['bills'] as const,
   unsettledBills: ['bills', 'unsettled'] as const,
+  // A different list from the one above: debts, not bills nobody checked out.
+  unpaidBills: ['bills', 'unpaid'] as const,
   settledBills: (date: BusinessDate, page: number) =>
     ['bills', 'settled', date, page] as const,
   bill: (id: UUID) => ['bills', id] as const,

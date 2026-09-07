@@ -63,6 +63,18 @@ public class BillController {
                         "Unsettled bills fetched successfully"));
     }
 
+    // The debt list, and a different question from /unsettled above: that one is bills nobody
+    // checked out, this one is bills the hall agreed to wait for. Both roles — collecting a debt
+    // is counter work, and the shape carries no cost or profit.
+    @GetMapping("/unpaid")
+    public ResponseEntity<APIResponse<List<UnpaidBillResponseDTO>>> getUnpaidBills() {
+        List<UnpaidBillResponseDTO> unpaid = billService.getUnpaidBills();
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        unpaid,
+                        "Unpaid bills fetched successfully"));
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<APIResponse<BillResponseDTO>> getBill(@PathVariable UUID id) {
         BillResponseDTO bill = billService.getBill(id);
@@ -114,6 +126,19 @@ public class BillController {
                         payment.isReplayed()
                                 ? "This checkout was already recorded; returning the original payment"
                                 : "Payment recorded successfully"));
+    }
+
+    // Recording the sale without the money. Not a variant of payment and deliberately not on
+    // the same path: this is the one route by which a bill is completed and nothing goes in the
+    // drawer, and it is audited as such.
+    @PostMapping("/{id}/leave-unpaid")
+    public ResponseEntity<APIResponse<UnpaidBillResponseDTO>> leaveUnpaid(@PathVariable UUID id,
+                                                                          @Valid @RequestBody LeaveUnpaidRequestDTO leaveUnpaidRequestDTO) {
+        UnpaidBillResponseDTO unpaid = checkoutService.leaveUnpaid(id, leaveUnpaidRequestDTO);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        unpaid,
+                        "Bill left unpaid successfully"));
     }
 
     // The whole thread for this bill, oldest first: every note written on every session it

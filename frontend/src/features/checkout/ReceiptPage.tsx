@@ -144,6 +144,8 @@ export function ReceiptPage() {
 
   const payload = receipt.data.payload;
   const lines = Array.isArray(payload.lines) ? (payload.lines as PayloadLine[]) : [];
+  // The status the chit was issued under. Older payloads predate the field and were all paid.
+  const issuedUnpaid = text(payload, 'status') === 'UNSETTLED';
   const groups = groupPayloadLines(lines);
 
   return (
@@ -188,7 +190,13 @@ export function ReceiptPage() {
           </div>
           <div className="mt-2 flex justify-between gap-3">
             <dt className="text-label uppercase text-text-dim">Method</dt>
-            <dd className="text-body text-text">{text(payload, 'method') ?? '—'}</dd>
+            {/* "Unpaid" rather than an em-dash when the chit was issued against a debt. The
+                payload names its own status, so this is read from a field rather than inferred
+                from a missing method key — the inference that breaks the first time the payload
+                gains or loses an unrelated column. */}
+            <dd className="text-body text-text">
+              {text(payload, 'method') ?? (issuedUnpaid ? 'Unpaid' : '—')}
+            </dd>
           </div>
           {money(payload, 'tendered') !== null ? (
             <>
@@ -213,6 +221,38 @@ export function ReceiptPage() {
             </div>
           ) : null}
         </dl>
+
+        {/*
+          * What happened AFTER the document above was issued.
+          *
+          * A separate block, below the receipt's own rule, and never folded into the figures
+          * above it. The payload is append-only in the database and is the record of the night:
+          * it said "unpaid" because the bill was unpaid, and rewriting it to say otherwise
+          * would make the receipt claim something that was not true when it was handed over.
+          * This answers the different question the next member of staff actually has — does he
+          * still owe this? — and answers it from the payment row.
+          */}
+        {receipt.data.settlement ? (
+          <div className="mt-4 border-t border-border pt-4">
+            <p className="text-label uppercase text-text-dim">Settled later</p>
+            <div className="mt-1 flex items-baseline justify-between gap-3">
+              <span className="text-body text-text">
+                {receipt.data.settlement.method} on{' '}
+                {formatDateTime(receipt.data.settlement.takenAt)}
+                {receipt.data.settlement.takenByUsername
+                  ? `, taken by ${receipt.data.settlement.takenByUsername}`
+                  : ''}
+              </span>
+              <span className="tabular text-body text-amount">
+                {formatMoney(receipt.data.settlement.amount)}
+              </span>
+            </div>
+          </div>
+        ) : issuedUnpaid ? (
+          <p className="mt-4 border-t border-border pt-4 text-body text-amount">
+            Still unpaid. This was left owed on the night and has not been collected.
+          </p>
+        ) : null}
 
         {/* Only meaningful on the way in from checkout, and only for a payment that was
             already taken elsewhere. Silence on a normal payment is correct. */}

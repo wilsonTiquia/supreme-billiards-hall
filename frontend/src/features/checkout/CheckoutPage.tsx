@@ -10,12 +10,14 @@ import type { PaymentRequest } from '@/api/types';
 import { newIdempotencyKey } from '@/lib/idempotency';
 import { useScreenTheme } from '@/app/useTheme';
 import { formatMoney } from '@/lib/money';
+import { formatBusinessDate } from '@/lib/datetime';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
 import { NoteThread } from '@/features/notes/NoteThread';
 import { BillSummary } from './BillSummary';
+import { LeaveUnpaidModal } from './LeaveUnpaidModal';
 import { PaymentForm } from './PaymentForm';
 
 /** What went wrong, and what the operator can do about it. */
@@ -37,6 +39,7 @@ export function CheckoutPage() {
   const [reduceTo, setReduceTo] = useState('');
   const [reduceReason, setReduceReason] = useState('');
   const [reduceError, setReduceError] = useState<string | null>(null);
+  const [leavingUnpaid, setLeavingUnpaid] = useState(false);
 
   const checkout = useQuery({
     queryKey: queryKeys.checkout(billId),
@@ -78,6 +81,8 @@ export function CheckoutPage() {
       setRecovery({ kind: 'none' });
       void queryClient.invalidateQueries({ queryKey: queryKeys.floor });
       void queryClient.invalidateQueries({ queryKey: queryKeys.unsettledBills });
+      // A settled debt leaves the unpaid list, so that one has to be dropped too.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.unpaidBills });
       /*
        * Straight to the receipt. There is no confirmation panel any more.
        *
@@ -301,8 +306,18 @@ export function CheckoutPage() {
           <Banner tone="warning">{checkout.data.blockers.join(' ')}</Banner>
         ) : null}
 
+        {bill.status === 'UNSETTLED' ? (
+          <Banner tone="info">
+            This is a debt from {formatBusinessDate(bill.businessDate)}. The amount is fixed at{' '}
+            <strong>{formatMoney(total)}</strong> and must be collected in full — part payment is
+            not recorded.
+          </Banner>
+        ) : null}
+
         <Card>
-          <h2 className="mb-4 text-heading text-text">Take payment</h2>
+          <h2 className="mb-4 text-heading text-text">
+            {bill.status === 'UNSETTLED' ? 'Collect this debt' : 'Take payment'}
+          </h2>
           {blocked || recovery.kind === 'alreadyPaid' ? (
             <p className="text-body text-text-dim">
               {recovery.kind === 'alreadyPaid'
@@ -324,7 +339,40 @@ export function CheckoutPage() {
         <Link to="/floor" className="hit inline-flex items-center text-body text-info underline">
           Back to the floor
         </Link>
+
+        {/* Deliberately down here, below the way out, and never beside Take payment.
+            Completing a sale without collecting the money is the one action on this screen
+            that cannot be undone by taking the payment again, and a control for it sitting
+            next to the one pressed forty times a night is a mis-click waiting to happen.
+            Only offered on a bill that could actually be paid: a blocked one has a running
+            session, and a debt has to be for a finished game. */}
+        {!blocked && bill.status === 'OPEN' && recovery.kind !== 'alreadyPaid' ? (
+          <div className="mt-2 border-t border-border pt-4">
+            <button
+              type="button"
+              onClick={() => setLeavingUnpaid(true)}
+              className="hit inline-flex items-center text-body text-text-dim underline hover:text-text"
+            >
+              Leave unpaid — they will settle later
+            </button>
+          </div>
+        ) : null}
       </div>
+
+      {leavingUnpaid ? (
+        <LeaveUnpaidModal
+          billId={billId}
+          billVersion={bill.version}
+          amount={total}
+          onClose={() => setLeavingUnpaid(false)}
+          onDone={() => {
+            setLeavingUnpaid(false);
+            // Straight to the debt list, so the operator sees the bill land where it now
+            // lives rather than being left on a checkout that no longer takes payment.
+            navigate('/unsettled', { replace: true });
+          }}
+        />
+      ) : null}
     </div>
   );
 }

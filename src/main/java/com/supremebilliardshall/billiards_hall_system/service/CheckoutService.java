@@ -1,7 +1,9 @@
 package com.supremebilliardshall.billiards_hall_system.service;
 
 import com.supremebilliardshall.billiards_hall_system.dto.bill.CheckoutPreviewResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.bill.LeaveUnpaidRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.bill.ReceiptResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.bill.UnpaidBillResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.payment.PaymentRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.payment.PaymentResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.quicksale.QuickSaleQuoteRequestDTO;
@@ -16,7 +18,16 @@ public interface CheckoutService {
 
     // Finalises the bill, takes the one payment, allocates the receipt number under row lock
     // and stores the receipt snapshot — all in one transaction.
+    //
+    // Also collects a debt: an UNSETTLED bill was finalised when it was left unpaid, so this
+    // records the payment against frozen totals and stamps settled_at, leaving closed_at — and
+    // therefore the night the sale reports under — exactly where it was.
     PaymentResponseDTO pay(UUID billId, PaymentRequestDTO paymentRequestDTO);
+
+    // Records the sale without the money: the same finalisation a checkout runs — totals frozen,
+    // receipt number allocated, closed_at stamped — but status UNSETTLED and no payment. The
+    // session must carry a staff note naming who owes it, either already written or supplied here.
+    UnpaidBillResponseDTO leaveUnpaid(UUID billId, LeaveUnpaidRequestDTO leaveUnpaidRequestDTO);
 
     ReceiptResponseDTO getReceipt(UUID billId);
 

@@ -25,6 +25,9 @@ const COUNTER: NavGroup[] = [
       // Beside End of day rather than up with the floor: money paid out is an occasional
       // errand, and it is the drawer count it has to reconcile with.
       { to: '/expenses', label: 'Expenses', short: 'Ex' },
+      // Who owes the hall money. Quiet rather than primary: it is checked when somebody walks
+      // in to settle, not on every sale.
+      { to: '/unsettled', label: 'Unsettled', short: 'Un' },
       { to: '/end-of-day', label: 'End of day', short: 'EOD' },
     ],
   },

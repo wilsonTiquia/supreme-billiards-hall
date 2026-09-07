@@ -46,6 +46,30 @@ public interface BillRepository extends BranchScopedRepository<Bill> {
                 BillStatus.OPEN, List.of(SessionStatus.OPEN, SessionStatus.PAUSED));
     }
 
+    // Every debt in this branch, newest first — bills deliberately left unpaid and awaiting
+    // collection. Across ALL business dates, for the reason findUnsettled gives above: a debt
+    // that disappeared at the date roll would never be collected, and this one can legitimately
+    // sit for a month.
+    //
+    // Ordered on unsettled_at, which is when the debt was recorded, rather than opened_at: that
+    // is the order the partial index bill_unsettled_idx holds them in, and it is the order the
+    // question "what is still outstanding" is asked in.
+    //
+    // The status is bound as a parameter rather than written inline, for the reason
+    // findByStatusWithNoLiveSession gives: Hibernate renders an inline enum literal as
+    // 'UNSETTLED'::BillStatus, naming the Java class rather than the Postgres type.
+    @Query("""
+            select b from Bill b
+            where b.branchId = :#{@branchContext.currentBranchId}
+              and b.status = :status
+            order by b.unsettledAt desc
+            """)
+    List<Bill> findByStatusOrderByUnsettledAtDesc(@Param("status") BillStatus status);
+
+    default List<Bill> findUnpaid() {
+        return findByStatusOrderByUnsettledAtDesc(BillStatus.UNSETTLED);
+    }
+
     // One night's settled sales, newest first, for the owner browsing receipts.
     //
     // Native because business_date is a generated column that JPQL cannot see, and because the

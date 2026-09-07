@@ -8,6 +8,8 @@
 export const ErrorCode = {
   StaleBillVersion: 'STALE_BILL_VERSION',
   DuplicatePaymentReference: 'DUPLICATE_PAYMENT_REFERENCE',
+  /** Leaving a bill unpaid when the session carries nobody's name. The repair is a note. */
+  SessionNoteRequired: 'SESSION_NOTE_REQUIRED',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];

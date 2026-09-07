@@ -11,7 +11,7 @@ import {
   recordCashCount,
   recountAfterClose,
 } from '@/api/endpoints/businessDay';
-import { fetchUnsettledBills } from '@/api/endpoints/bills';
+import { fetchUnpaidBills, fetchUnsettledBills } from '@/api/endpoints/bills';
 import { fetchExpenses } from '@/api/endpoints/expenses';
 import { queryKeys } from '@/api/queryKeys';
 import { isApiError, messageOf } from '@/api/errors';
@@ -68,6 +68,15 @@ export function EndOfDayPage() {
     queryFn: fetchUnsettledBills,
     refetchInterval: 15_000,
     refetchIntervalInBackground: true,
+  });
+
+  // Debts, kept apart from the mistakes above. Also informational, and for a stronger reason:
+  // a debt is not a problem to be fixed before the night can end, it is a decision the hall
+  // already took. It must never block the close.
+  const unpaid = useQuery({
+    queryKey: queryKeys.unpaidBills,
+    queryFn: fetchUnpaidBills,
+    refetchInterval: 60_000,
   });
 
   const businessDate = day.data?.businessDate;
@@ -180,6 +189,8 @@ export function EndOfDayPage() {
 
   const openSessions = day.data.openSessions;
   const uncollected = unsettled.data ?? [];
+  const debts = unpaid.data ?? [];
+  const owed = debts.reduce((sum, bill) => sum + bill.totalAmount, 0);
   // The night being looked at is never listed as one still to do.
   const outstanding = (uncounted.data ?? []).filter(
     (night) => night.businessDate !== day.data?.businessDate,
@@ -306,16 +317,17 @@ export function EndOfDayPage() {
           )}
         </Card>
 
-        {/* ── Unsettled bills: information, never a block ────────────────────── */}
+        {/* ── Bills nobody checked out: a mistake, and information, never a block ── */}
         <Card>
-          <h2 className="text-heading text-text">Uncollected</h2>
+          <h2 className="text-heading text-text">Not checked out</h2>
           {uncollected.length === 0 ? (
-            <p className="mt-3 text-body text-text-dim">Every bill tonight has been settled.</p>
+            <p className="mt-3 text-body text-text-dim">Every bill tonight was checked out.</p>
           ) : (
             <>
               <p className="mt-1 text-body text-text-dim">
-                These bills were never paid. This does not stop the close — it is here so the
-                night is not shut with money quietly left on the table.
+                Nobody took payment on these and nobody left them owed either, so they are most
+                likely a miss. This does not stop the close — it is here so the night is not
+                shut with money quietly left on the table.
               </p>
               <ul className="mt-4 divide-y divide-border">
                 {uncollected.map((bill) => (
@@ -344,6 +356,50 @@ export function EndOfDayPage() {
                   </li>
                 ))}
               </ul>
+            </>
+          )}
+        </Card>
+
+        {/* ── Debts: a decision, not an error, and never a block ───────────────── */}
+        <Card>
+          <h2 className="text-heading text-text">Unpaid</h2>
+          {debts.length === 0 ? (
+            <p className="mt-3 text-body text-text-dim">Nobody owes the hall anything.</p>
+          ) : (
+            <>
+              {/* Worded as a record rather than as a warning. Somebody decided these were fine
+                  and put their name to them; the night closes over the top of them, and the
+                  drawer never expected the money in the first place. */}
+              <p className="mt-1 text-body text-text-dim">
+                Sales left owed on purpose, with a name against each. They counted in the
+                night&rsquo;s takings when they were played, and the drawer does not expect
+                them — so the close is unaffected.
+              </p>
+              <ul className="mt-4 divide-y divide-border">
+                {debts.slice(0, 5).map((bill) => (
+                  <li key={bill.id} className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <div className="text-body text-text">
+                        {bill.latestNote ? bill.latestNote.body : 'No name recorded'}
+                      </div>
+                      <div className="text-label text-text-dim">
+                        {bill.daysOutstanding === 0
+                          ? 'Tonight'
+                          : `${bill.daysOutstanding} ${bill.daysOutstanding === 1 ? 'day' : 'days'} outstanding`}
+                      </div>
+                    </div>
+                    <span className="tabular text-body text-amount">
+                      {formatMoney(bill.totalAmount)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-4">
+                <Link to="/unsettled" className="hit text-body text-info underline">
+                  {debts.length > 5 ? `All ${debts.length} unpaid bills` : 'Go to the unpaid list'}
+                </Link>
+                <span className="tabular text-body text-amount">{formatMoney(owed)} owed</span>
+              </div>
             </>
           )}
         </Card>

@@ -5,8 +5,10 @@ import com.supremebilliardshall.billiards_hall_system.dto.bill.*;
 import com.supremebilliardshall.billiards_hall_system.entity.*;
 import com.supremebilliardshall.billiards_hall_system.exception.BusinessRuleException;
 import com.supremebilliardshall.billiards_hall_system.exception.ResourceNotFoundException;
+import com.supremebilliardshall.billiards_hall_system.repository.AppUserRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.BillLineRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.BillRepository;
+import com.supremebilliardshall.billiards_hall_system.repository.BranchRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.CustomerTypeRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.PoolTableRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.TableSessionRepository;
@@ -25,6 +27,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +43,8 @@ public class BillServiceImpl implements BillService {
 
     private final BillRepository billRepository;
     private final BillLineRepository billLineRepository;
+    private final BranchRepository branchRepository;
+    private final AppUserRepository appUserRepository;
     private final CustomerTypeRepository customerTypeRepository;
     private final TableSessionRepository tableSessionRepository;
     private final PoolTableRepository poolTableRepository;
@@ -51,6 +56,8 @@ public class BillServiceImpl implements BillService {
 
     public BillServiceImpl(BillRepository billRepository,
                            BillLineRepository billLineRepository,
+                           BranchRepository branchRepository,
+                           AppUserRepository appUserRepository,
                            CustomerTypeRepository customerTypeRepository,
                            TableSessionRepository tableSessionRepository,
                            PoolTableRepository poolTableRepository,
@@ -61,6 +68,8 @@ public class BillServiceImpl implements BillService {
                            BranchContext branchContext) {
         this.billRepository = billRepository;
         this.billLineRepository = billLineRepository;
+        this.branchRepository = branchRepository;
+        this.appUserRepository = appUserRepository;
         this.customerTypeRepository = customerTypeRepository;
         this.tableSessionRepository = tableSessionRepository;
         this.poolTableRepository = poolTableRepository;
@@ -112,6 +121,24 @@ public class BillServiceImpl implements BillService {
                 // to ignore the strip, which is the one thing it cannot afford.
                 .filter(unsettled -> unsettled.getTotalAmount().signum() > 0)
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UnpaidBillResponseDTO> getUnpaidBills() {
+        // Every debt, newest first, across every business date. No zero filter, unlike the
+        // unsettled strip above: leaveUnpaid refuses a bill with nothing to charge, so a debt
+        // of 0.00 cannot exist in the first place.
+        LocalDate today = branchRepository.currentBusinessDate();
+        return billRepository.findUnpaid().stream()
+                .map(bill -> toUnpaidResponseDto(bill, today))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UnpaidBillResponseDTO getUnpaidBill(UUID billId) {
+        return toUnpaidResponseDto(requireBill(billId), branchRepository.currentBusinessDate());
     }
 
     @Override
@@ -227,6 +254,52 @@ public class BillServiceImpl implements BillService {
                 tableNames,
                 totalAmount,
                 sessionNoteService.getLatestNoteForBill(bill.getId()));
+    }
+
+    /*
+     * A debt, not a mistake. Deliberately a separate shape from toUnsettledResponseDto above,
+     * and the difference is not cosmetic: that one computes its total from the live lines
+     * because an OPEN bill's total_amount still reads 0.00, while this one reads the frozen
+     * column, because finalisation has already run and the frozen figure IS the amount that
+     * must be tendered. Computing this one from the lines would re-price a month-old sale.
+     *
+     * The business day is passed in rather than read per bill: it costs a query, and every row
+     * in one list must be counted against the same day or two bills from the same night could
+     * report different ages.
+     */
+    private UnpaidBillResponseDTO toUnpaidResponseDto(Bill bill, LocalDate today) {
+        List<String> tableNames = tableSessionRepository.findByBillId(bill.getId()).stream()
+                .map(TableSession::getPoolTableId)
+                .distinct()
+                .map(poolTableId -> poolTableRepository.findById(poolTableId)
+                        .map(PoolTable::getName)
+                        .orElse(null))
+                .filter(Objects::nonNull)
+                .toList();
+
+        // Counted between BUSINESS dates, never from LocalDate.now(): those two differ between
+        // 00:00 and 05:00, which would make a debt look a day older for five hours a night.
+        int daysOutstanding = bill.getBusinessDate() == null
+                ? 0
+                : (int) ChronoUnit.DAYS.between(bill.getBusinessDate(), today);
+
+        return new UnpaidBillResponseDTO(
+                bill.getId(),
+                bill.getReceiptNo(),
+                bill.getBusinessDate(),
+                bill.getUnsettledAt(),
+                usernameOf(bill.getUnsettledBy()),
+                daysOutstanding,
+                tableNames,
+                bill.getTotalAmount(),
+                sessionNoteService.getLatestNoteForBill(bill.getId()));
+    }
+
+    private String usernameOf(UUID userId) {
+        if (userId == null) {
+            return null;
+        }
+        return appUserRepository.findById(userId).map(AppUser::getUsername).orElse("someone");
     }
 
     private BillResponseDTO toResponseDto(Bill bill) {

@@ -23,7 +23,12 @@ export type SessionStatus = 'OPEN' | 'PAUSED' | 'CLOSED' | 'AUTO_CLOSED' | 'VOID
 /** The floor view only ever shows a live session, so it narrows to these two. */
 export type LiveSessionStatus = Extract<SessionStatus, 'OPEN' | 'PAUSED'>;
 export type SessionCloseKind = 'MANUAL' | 'AUTO_END_OF_DAY';
-export type BillStatus = 'OPEN' | 'CLOSED' | 'VOIDED' | 'MERGED';
+/**
+ * UNSETTLED is a finished sale that nobody has paid for yet — the regular who settles next
+ * month. It is NOT the same as an OPEN bill nobody checked out: that is a mistake the floor
+ * strip exists to catch, this is a decision with a name against it.
+ */
+export type BillStatus = 'OPEN' | 'CLOSED' | 'UNSETTLED' | 'VOIDED' | 'MERGED';
 export type BillLineKind = 'TIME' | 'PRODUCT';
 export type PaymentMethod = 'CASH' | 'GCASH' | 'MAYA';
 export type StockReason = 'SALE' | 'SALE_VOID' | 'DELIVERY' | 'CORRECTION' | 'STAFF_COMP';
@@ -468,6 +473,44 @@ export interface UnsettledBill {
   latestNote: SessionNote | null;
 }
 
+/**
+ * A debt: a bill deliberately left unpaid, finalised and awaiting collection.
+ *
+ * Deliberately a different shape from `UnsettledBill`, and the two lists must never be merged.
+ * `totalAmount` here is the FROZEN figure — finalisation has already run, and this is the exact
+ * amount that must be tendered to settle. On an `UnsettledBill` it is computed from live lines,
+ * because that bill has not been finalised at all.
+ *
+ * No cost or profit, so one shape serves both roles.
+ */
+export interface UnpaidBill {
+  id: UUID;
+  /** Allocated when the bill was left unpaid, from the same counter a paid checkout draws on. */
+  receiptNo: number;
+  /** The night it was PLAYED, not the night it will be collected. */
+  businessDate: BusinessDate;
+  unsettledAt: IsoInstant;
+  unsettledByUsername: string | null;
+  /** Whole business days since the sale. Computed server-side; the browser never dates money. */
+  daysOutstanding: number;
+  tableNames: string[];
+  /** Frozen at leave-unpaid. The exact amount that must be tendered. */
+  totalAmount: Money;
+  /** Who owes it. The same shape the floor strip renders. */
+  latestNote: SessionNote | null;
+}
+
+/** Recording the sale without the money. */
+export interface LeaveUnpaidRequest {
+  /**
+   * Who owes it. Required only when the session carries no staff note yet — the server decides,
+   * and answers 409 `SESSION_NOTE_REQUIRED` when it is missing and needed.
+   */
+  note?: string;
+  /** Stale version → 409, exactly as at checkout. */
+  billVersion: number;
+}
+
 export interface VoidBillLineRequest {
   /** Required and non-blank, or 400. */
   reason: string;
@@ -532,6 +575,22 @@ export interface Receipt {
   issuedAt: IsoInstant;
   /** The stored customer-facing snapshot, free-form and never re-rendered. Carries no cost. */
   payload: Record<string, unknown>;
+  /**
+   * How a debt was eventually collected — null on a bill paid at the counter.
+   *
+   * Deliberately NOT merged into `payload`. That is the frozen document handed over on the
+   * night: it is append-only in the database, and it said "unpaid" because the bill was unpaid.
+   * This answers the different question the next member of staff is actually asking — does he
+   * still owe this? Render them as two blocks, never as one.
+   */
+  settlement: ReceiptSettlement | null;
+}
+
+export interface ReceiptSettlement {
+  method: PaymentMethod;
+  amount: Money;
+  takenAt: IsoInstant;
+  takenByUsername: string | null;
 }
 
 export interface QuickSaleRequest {
@@ -958,6 +1017,30 @@ export interface DailyReport {
   lowStock: ReportLowStock[];
   /** Sums exactly to totals; attributed to whoever took the payment. */
   perEmployee: EmployeeSales[];
+  /**
+   * How much of `totals.gross` was left unpaid on this night.
+   *
+   * `totals.gross` ALREADY INCLUDES this: the sale counts on the night it was played. This says
+   * how much of it is still a promise, so the night and the drawer read as two facts rather
+   * than one confusing one. A historical figure — collecting the debt later does not change it.
+   */
+  unsettledTonight: BillCountAndAmount;
+  /**
+   * Money that arrived on this business date against an EARLIER night's sale. NOT in
+   * `totals.gross` — that revenue was recognised when it was earned, and counting it twice
+   * would invent a sale. It is here because it IS in tonight's drawer.
+   */
+  collectedToday: BillCountAndAmount;
+  /**
+   * Every debt still open, across all dates, for the Attention band. The one live figure in
+   * this report: it answers "right now", so it moves even on a report for an old night.
+   */
+  outstanding: BillCountAndAmount;
+}
+
+export interface BillCountAndAmount {
+  count: number;
+  amount: Money;
 }
 
 /**

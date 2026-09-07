@@ -24,9 +24,65 @@ public class ReportRepository {
               SELECT cast(:branchId as uuid) AS branch_id, cast(:reportDate as date) AS d, (cast(:reportDate as date) - 1) AS prev_d
             ),
             closed_bills AS (
+              -- UNSETTLED counts as a sale. The regular who plays tonight and pays next month
+              -- was still served tonight, and the night that reports 654 pesos short because
+              -- nobody has collected it yet is not the truth about the night -- it is the truth
+              -- about the drawer, which is what the cash count is for.
+              --
+              -- Everything downstream of this CTE therefore includes the debt: gross, cost,
+              -- profit, salesByHour, topItems, tableUtilisation and perEmployee. payment_mix
+              -- does NOT, and must not -- it reads the payment table, and an unsettled bill has
+              -- no payment row to mix in.
               SELECT b.* FROM bill b, params p
-              WHERE b.branch_id = p.branch_id AND b.status = 'CLOSED'
+              WHERE b.branch_id = p.branch_id AND b.status IN ('CLOSED', 'UNSETTLED')
                 AND b.business_date IN (p.d, p.prev_d)
+            ),
+            unsettled_tonight AS (
+              -- How much of this night's gross was left unpaid on the night. Reported beside
+              -- gross rather than subtracted from it: the owner needs to see both the takings
+              -- and how much of them was still a promise when the lights went off.
+              --
+              -- A HISTORICAL fact, keyed on unsettled_at IS NOT NULL rather than on the bill's
+              -- CURRENT status, and that distinction is the whole reason this figure can be
+              -- trusted. Were it status = 'UNSETTLED', collecting the debt five weeks later
+              -- would silently rewrite a night the owner had already read and reconciled --
+              -- 654 pesos of unsettled sales would become 0 with no record that it ever said
+              -- anything else. What happened on the night does not change; what is still owed
+              -- is the separate `outstanding` figure below.
+              SELECT count(*)::int AS count, coalesce(sum(b.total_amount), 0) AS amount
+              FROM bill b, params p
+              WHERE b.branch_id = p.branch_id AND b.unsettled_at IS NOT NULL
+                AND b.business_date = p.d
+            ),
+            collected_today AS (
+              -- Money that came in tonight against an EARLIER night's sale.
+              --
+              -- Dated on both sides, and the two dates are different columns for a reason:
+              -- payment.business_date is generated from taken_at, so it follows the money into
+              -- tonight's drawer and tonight's cash count, while bill.business_date is generated
+              -- from closed_at and stays on the night that was played. This figure is the
+              -- difference between them, which is exactly what "old debts collected" means.
+              --
+              -- It is deliberately NOT added to gross: that revenue was recognised on the night
+              -- it was earned, and counting it again here would report the same sale twice.
+              SELECT count(*)::int AS count, coalesce(sum(pm.amount), 0) AS amount
+              FROM payment pm
+              JOIN bill b ON b.id = pm.bill_id, params p
+              WHERE pm.branch_id = p.branch_id AND pm.business_date = p.d
+                AND b.business_date < p.d
+            ),
+            outstanding AS (
+              -- Every debt still open, across all dates, for the Attention band. Not scoped to
+              -- a day: the question is "how much is out there", and a figure that reset each
+              -- night would answer a question nobody asked.
+              --
+              -- The one figure in this report that is deliberately LIVE rather than a record of
+              -- the reported night: it answers "right now", so it moves whenever a debt is
+              -- collected, including on a report for a night three months ago. Everything else
+              -- here is fixed once the night has passed.
+              SELECT count(*)::int AS count, coalesce(sum(b.total_amount), 0) AS amount
+              FROM bill b, params p
+              WHERE b.branch_id = p.branch_id AND b.status = 'UNSETTLED'
             ),
             totals AS (
               SELECT b.business_date,
@@ -189,7 +245,10 @@ public class ReportRepository {
                                       'previousTotal', coalesce((SELECT x.amount FROM expenses x WHERE x.business_date = p.prev_d), 0),
                                       'byCategory',    coalesce((SELECT jsonb_agg(to_jsonb(c)) FROM expenses_by_category c), '[]'::jsonb)),
               'lowStock',           coalesce((SELECT jsonb_agg(to_jsonb(l)) FROM low_stock l), '[]'::jsonb),
-              'perEmployee',        coalesce((SELECT jsonb_agg(to_jsonb(e)) FROM per_employee e), '[]'::jsonb)
+              'perEmployee',        coalesce((SELECT jsonb_agg(to_jsonb(e)) FROM per_employee e), '[]'::jsonb),
+              'unsettledTonight',   (SELECT to_jsonb(u) FROM unsettled_tonight u),
+              'collectedToday',     (SELECT to_jsonb(c) FROM collected_today c),
+              'outstanding',        (SELECT to_jsonb(o) FROM outstanding o)
             )::text AS report
             FROM params p
             """;

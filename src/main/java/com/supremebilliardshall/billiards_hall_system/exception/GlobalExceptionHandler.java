@@ -64,6 +64,14 @@ public class GlobalExceptionHandler {
                 .body(APIResponse.failure(ex.getMessage(), StaleBillVersionException.CODE));
     }
 
+    // Leaving a bill unpaid with no name against it. Coded for the same reason as the two
+    // above: the client's repair is to make the note field required, not to restate a sentence.
+    @ExceptionHandler(SessionNoteRequiredException.class)
+    public ResponseEntity<APIResponse<Object>> handleSessionNoteRequired(SessionNoteRequiredException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(APIResponse.failure(ex.getMessage(), SessionNoteRequiredException.CODE));
+    }
+
     // Hibernate's own optimistic lock, if two transactions raced past the version check.
     @ExceptionHandler(org.springframework.orm.ObjectOptimisticLockingFailureException.class)
     public ResponseEntity<APIResponse<Object>> handleOptimisticLock(
