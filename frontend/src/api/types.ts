@@ -225,7 +225,19 @@ export interface PoolTable {
   name: string;
   tableNumber: number | null;
   isActive: boolean;
+  /** The rate that bills. The two below are for the rate screen and charge nothing. */
   ratePerMinute: Rate;
+  /**
+   * What the admin typed, when they configured this table hourly. Null on a table configured
+   * per minute — do not fill that in by multiplying, it is a number they never typed.
+   */
+  ratePerHour: Money | null;
+  /**
+   * 60 x ratePerMinute, from the server. What an hour is actually priced at, as against what
+   * was typed: PHP 200/hour stores 3.3333/min, whose effective hourly rate is 199.998. Shown
+   * whenever it differs from ratePerHour, because the admin is entitled to know.
+   */
+  effectiveRatePerHour: Money | null;
   /** Null when the table is free. */
   session: TableSessionSummary | null;
 }
@@ -236,15 +248,22 @@ export interface FloorView {
   serverNow: IsoInstant;
 }
 
+/**
+ * Exactly one of ratePerMinute and ratePerHour. Neither or both is a 400 — the rate is
+ * required, and which of the two you send is the input mode, not an option to combine.
+ */
 export interface PoolTableRequest {
   name: string;
   tableNumber?: number;
-  ratePerMinute: Rate;
+  ratePerMinute?: Rate;
+  ratePerHour?: Money;
   isActive?: boolean;
 }
 
+/** Exactly one of the two rates, as with PoolTableRequest. */
 export interface PoolTableRateRequest {
-  ratePerMinute: Rate;
+  ratePerMinute?: Rate;
+  ratePerHour?: Money;
   effectiveFrom?: IsoInstant;
 }
 

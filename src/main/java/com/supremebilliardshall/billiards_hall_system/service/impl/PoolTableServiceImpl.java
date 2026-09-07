@@ -60,9 +60,9 @@ public class PoolTableServiceImpl implements PoolTableService {
     public FloorViewResponseDTO getFloorView() {
         // One query for every current rate, and one for every live session, rather than one
         // per table: this is the screen the counter leaves open all night.
-        Map<UUID, BigDecimal> currentRates = poolTableRateRepository.findAllCurrent()
+        Map<UUID, PoolTableRate> currentRates = poolTableRateRepository.findAllCurrent()
                 .stream()
-                .collect(Collectors.toMap(PoolTableRate::getPoolTableId, PoolTableRate::getRatePerMinute));
+                .collect(Collectors.toMap(PoolTableRate::getPoolTableId, Function.identity()));
         Map<UUID, TableSessionSummaryDTO> liveSessions = sessionService.getLiveSessionSummariesByTable();
 
         List<PoolTableResponseDTO> tables = poolTableRepository.findAllActive()
@@ -92,13 +92,16 @@ public class PoolTableServiceImpl implements PoolTableService {
         }
 
         PoolTable savedTable = poolTableRepository.save(poolTable);
+        // Not routed through changeRate, unlike an update: there is no period to close, and a
+        // POOL_TABLE_RATE_CHANGED row for a table that never had a rate would read as a reprice.
         PoolTableRate rate = openRatePeriod(savedTable.getId(),
-                poolTableRequestDTO.getRatePerMinute(), OffsetDateTime.now());
+                poolTableRequestDTO.getRatePerMinute(), poolTableRequestDTO.getRatePerHour(),
+                OffsetDateTime.now());
 
         auditService.record("POOL_TABLE_CREATED", "pool_table", savedTable.getId(),
-                null, auditSnapshot(savedTable, rate.getRatePerMinute()), null);
+                null, auditSnapshot(savedTable, rate), null);
 
-        return toResponseDto(savedTable, rate.getRatePerMinute());
+        return toResponseDto(savedTable, rate);
     }
 
     @Override
@@ -126,14 +129,26 @@ public class PoolTableServiceImpl implements PoolTableService {
 
         // A changed rate goes through the same close-and-open path as PUT /rate, so the
         // invariant lives in one place.
-        BigDecimal currentRate = currentRateOf(id);
-        BigDecimal requestedRate = poolTableRequestDTO.getRatePerMinute();
-        if (currentRate == null || currentRate.compareTo(requestedRate) != 0) {
+        //
+        // Both figures are compared, not just the per-minute one. A table stored at 4.0000/min
+        // that the admin re-enters as PHP 240/hour is the same rate said differently, and still
+        // a change: the hourly figure is what the screen reads back. Comparing only the derived
+        // rate would leave that edit silently discarded — and comparing only the hourly one
+        // would open a new period every time a rename posted the form back.
+        PoolTableRate currentRate = currentRateOf(id);
+        BigDecimal requestedRate = RateConversion.perMinuteFrom(poolTableRequestDTO.getRatePerMinute(),
+                poolTableRequestDTO.getRatePerHour());
+        boolean rateChanged = currentRate == null
+                || currentRate.getRatePerMinute().compareTo(requestedRate) != 0
+                || !sameFigure(currentRate.getRatePerHour(), poolTableRequestDTO.getRatePerHour());
+
+        if (rateChanged) {
             // changeRate writes its own POOL_TABLE_RATE_CHANGED row; this one records the rest
             // of the edit, so a rename that also repriced leaves both facts on the log.
             auditService.record("POOL_TABLE_UPDATED", "pool_table", updated.getId(),
-                    before, auditSnapshot(updated, requestedRate), null);
-            return changeRate(id, new PoolTableRateRequestDTO(requestedRate, null));
+                    before, auditSnapshot(updated, requestedRate, poolTableRequestDTO.getRatePerHour()), null);
+            return changeRate(id, new PoolTableRateRequestDTO(poolTableRequestDTO.getRatePerMinute(),
+                    poolTableRequestDTO.getRatePerHour(), null));
         }
 
         auditService.record("POOL_TABLE_UPDATED", "pool_table", updated.getId(),
@@ -151,24 +166,27 @@ public class PoolTableServiceImpl implements PoolTableService {
                 ? poolTableRateRequestDTO.getEffectiveFrom()
                 : OffsetDateTime.now();
 
-        BigDecimal previousRate = null;
+        BigDecimal previousRatePerMinute = null;
+        BigDecimal previousRatePerHour = null;
         PoolTableRate current = poolTableRateRepository.findCurrentByPoolTableId(id).orElse(null);
         if (current != null) {
-            previousRate = current.getRatePerMinute();
+            previousRatePerMinute = current.getRatePerMinute();
+            previousRatePerHour = current.getRatePerHour();
             current.setEffectiveTo(effectiveFrom);
             // Flushed before the insert: Hibernate orders inserts ahead of updates, and the
             // pool_table_rate_no_overlap exclusion constraint is not deferrable.
             poolTableRateRepository.saveAndFlush(current);
         }
 
-        PoolTableRate rate = openRatePeriod(id, poolTableRateRequestDTO.getRatePerMinute(), effectiveFrom);
+        PoolTableRate rate = openRatePeriod(id, poolTableRateRequestDTO.getRatePerMinute(),
+                poolTableRateRequestDTO.getRatePerHour(), effectiveFrom);
 
         auditService.record("POOL_TABLE_RATE_CHANGED", "pool_table_rate", rate.getId(),
-                rateSnapshot(previousRate, null),
-                rateSnapshot(rate.getRatePerMinute(), effectiveFrom),
+                rateSnapshot(previousRatePerMinute, previousRatePerHour, null),
+                rateSnapshot(rate.getRatePerMinute(), rate.getRatePerHour(), effectiveFrom),
                 "Rate change for table " + poolTable.getName());
 
-        return toResponseDto(poolTable, rate.getRatePerMinute());
+        return toResponseDto(poolTable, rate);
     }
 
     @Override
@@ -188,42 +206,66 @@ public class PoolTableServiceImpl implements PoolTableService {
                 before, auditSnapshot(archived, currentRateOf(archived.getId())), null);
     }
 
-    private Map<String, Object> auditSnapshot(PoolTable table, BigDecimal ratePerMinute) {
+    private Map<String, Object> auditSnapshot(PoolTable table, PoolTableRate rate) {
+        return auditSnapshot(table,
+                rate == null ? null : rate.getRatePerMinute(),
+                rate == null ? null : rate.getRatePerHour());
+    }
+
+    private Map<String, Object> auditSnapshot(PoolTable table, BigDecimal ratePerMinute, BigDecimal ratePerHour) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("name", table.getName());
         snapshot.put("tableNumber", table.getTableNumber());
         snapshot.put("ratePerMinute", ratePerMinute);
+        snapshot.put("ratePerHour", ratePerHour);
         snapshot.put("isActive", table.getIsActive());
         snapshot.put("archivedAt", table.getArchivedAt());
         return snapshot;
     }
 
-    private PoolTableRate openRatePeriod(UUID poolTableId, BigDecimal ratePerMinute, OffsetDateTime effectiveFrom) {
+    private PoolTableRate openRatePeriod(UUID poolTableId, BigDecimal ratePerMinute,
+                                         BigDecimal ratePerHour, OffsetDateTime effectiveFrom) {
         PoolTableRate rate = new PoolTableRate();
         rate.setBranchId(branchContext.getCurrentBranchId());
         rate.setPoolTableId(poolTableId);
-        rate.setRatePerMinute(ratePerMinute);
+        rate.setRatePerMinute(RateConversion.perMinuteFrom(ratePerMinute, ratePerHour));
+        // Recorded as typed, so the screen can read the admin's own figure back. Null when they
+        // typed a per-minute rate, and nothing downstream ever prices from it.
+        rate.setRatePerHour(ratePerHour);
         rate.setEffectiveFrom(effectiveFrom);
         rate.setCreatedBy(branchContext.getCurrentUserId());
         return poolTableRateRepository.save(rate);
     }
 
-    private BigDecimal currentRateOf(UUID poolTableId) {
-        return poolTableRateRepository.findCurrentByPoolTableId(poolTableId)
-                .map(PoolTableRate::getRatePerMinute)
-                .orElse(null);
+    private PoolTableRate currentRateOf(UUID poolTableId) {
+        return poolTableRateRepository.findCurrentByPoolTableId(poolTableId).orElse(null);
     }
 
-    private PoolTableResponseDTO toResponseDto(PoolTable poolTable, BigDecimal ratePerMinute) {
+    private PoolTableResponseDTO toResponseDto(PoolTable poolTable, PoolTableRate rate) {
         PoolTableResponseDTO responseDto = poolTableMapper.toResponseDto(poolTable);
-        responseDto.setRatePerMinute(ratePerMinute);
+        if (rate != null) {
+            responseDto.setRatePerMinute(rate.getRatePerMinute());
+            responseDto.setRatePerHour(rate.getRatePerHour());
+            responseDto.setEffectiveRatePerHour(RateConversion.effectivePerHour(rate.getRatePerMinute()));
+        }
         return responseDto;
     }
 
-    private Map<String, Object> rateSnapshot(BigDecimal ratePerMinute, OffsetDateTime effectiveFrom) {
+    private Map<String, Object> rateSnapshot(BigDecimal ratePerMinute, BigDecimal ratePerHour,
+                                             OffsetDateTime effectiveFrom) {
         Map<String, Object> snapshot = new LinkedHashMap<>();
         snapshot.put("ratePerMinute", ratePerMinute);
+        snapshot.put("ratePerHour", ratePerHour);
         snapshot.put("effectiveFrom", effectiveFrom);
         return snapshot;
+    }
+
+    // compareTo, so 240 and 240.00 are the same figure, and null-tolerant because the hourly
+    // column is null on every table configured per minute.
+    private static boolean sameFigure(BigDecimal stored, BigDecimal requested) {
+        if (stored == null || requested == null) {
+            return stored == null && requested == null;
+        }
+        return stored.compareTo(requested) == 0;
     }
 }

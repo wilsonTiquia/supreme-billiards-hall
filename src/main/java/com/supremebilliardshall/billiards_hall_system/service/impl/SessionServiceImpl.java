@@ -647,8 +647,19 @@ public class SessionServiceImpl implements SessionService {
     }
 
     private String timeLineDescription(String poolTableName, int minutes, BigDecimal ratePerMinute) {
-        return poolTableName + " - " + minutes + " min @ "
-                + ratePerMinute.setScale(2, RoundingMode.HALF_UP).toPlainString() + "/min";
+        return poolTableName + " - " + minutes + " min @ " + rateDigits(ratePerMinute) + "/min";
+    }
+
+    // The rate at the precision it was snapshotted at, with trailing zeros dropped and never
+    // fewer than two decimals: 4.0000 reads "4.00", 3.3333 reads "3.3333".
+    //
+    // It used to round to two, which was harmless only while every rate was a whole number of
+    // centavos. The hourly input mode ends that -- PHP 200/hour is 3.3333/min -- and a line
+    // reading "180 min @ 3.33/min" against a charge of PHP 599.99 is arithmetic the customer
+    // cannot reconcile. The rate that billed is the rate that prints.
+    private static String rateDigits(BigDecimal ratePerMinute) {
+        BigDecimal trimmed = ratePerMinute.stripTrailingZeros();
+        return (trimmed.scale() < 2 ? trimmed.setScale(2, RoundingMode.UNNECESSARY) : trimmed).toPlainString();
     }
 
     private Map<String, Object> rateSnapshot(BigDecimal ratePerMinute) {

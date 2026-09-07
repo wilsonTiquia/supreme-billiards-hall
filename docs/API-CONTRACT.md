@@ -235,7 +235,7 @@ reads this. `allowsRateOverride` is what enables the friend-rate field.
 ```json
 { "tables": [
     { "id": "uuid", "name": "Table 3", "tableNumber": 3, "isActive": true,
-      "ratePerMinute": 4.0,
+      "ratePerMinute": 4.0, "ratePerHour": 240.00, "effectiveRatePerHour": 240.0000,
       "session": null }
   ],
   "serverNow": "2026-08-31T12:37:26.610539Z" }
@@ -270,12 +270,35 @@ two components together in the client.
 
 Poll this endpoint for the floor; it is one query regardless of how many tables are occupied.
 
-**POST/PUT `/tables`** → `{ "name", "tableNumber"?, "ratePerMinute", "isActive"? }`. `ratePerMinute`
-is required: a table with no rate cannot host a session. On PUT, a changed rate opens a new rate
-period exactly as the dedicated endpoint does.
+### Rates: two ways to type the same number
 
-**PUT `/tables/{id}/rate`** → `{ "ratePerMinute", "effectiveFrom"? }`. Closes the current rate
-period and opens a new one. Never mutates history. A backdated overlap → 409.
+`ratePerMinute` is the only figure that bills. `ratePerHour` is an **input convenience** — the
+owner configures tables in pesos per hour — and a **record of what was typed**, so the screen can
+read the admin's own figure back. Nothing prices from it.
+
+- `ratePerMinute` — what bills. `numeric(10,4)`. Always present on a table that has a rate.
+- `ratePerHour` — what the admin typed, when they typed an hourly figure. `numeric(12,2)`.
+  **Null** on a table configured per minute, which is every table predating this feature. Do not
+  fill that null in by multiplying: it would show a number nobody entered.
+- `effectiveRatePerHour` — `60 × ratePerMinute`, computed server-side. What an hour is *actually*
+  priced at.
+
+`ratePerHour` and `effectiveRatePerHour` differ whenever the hourly figure does not divide by 60
+exactly. ₱240/hour stores `4.0000`/min and both read `240`. ₱200/hour stores `3.3333`/min, whose
+effective hourly rate is `199.9980`. Show the difference rather than hiding it — a full hour still
+bills ₱200.00 because the line rounds to centavos, but three hours bills ₱599.99 against ₱600.00
+nominal.
+
+**POST/PUT `/tables`** → `{ "name", "tableNumber"?, "ratePerMinute"?, "ratePerHour"?, "isActive"? }`.
+**Exactly one** of the two rates is required — neither is a 400 ("a table with no rate cannot host a
+session"), both is a 400. On PUT, a changed rate opens a new rate period exactly as the dedicated
+endpoint does; switching a table between the two input modes counts as a change, so send back the
+figure the table is currently configured with when you are only renaming it.
+
+**PUT `/tables/{id}/rate`** → `{ "ratePerMinute"?, "ratePerHour"?, "effectiveFrom"? }`, again
+exactly one of the two rates. Closes the current rate period and opens a new one. Never mutates
+history — a session already running keeps the rate snapshotted onto its segment. A backdated
+overlap → 409.
 
 **DELETE** archives, and is **rejected with 409 while a session is open** on that table.
 

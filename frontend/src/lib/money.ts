@@ -37,6 +37,45 @@ export function formatRate(perMinute: number | null | undefined): string {
 }
 
 /**
+ * The hourly figure an admin typed — "₱240.00 / hour". Two decimals, because it is a peso
+ * amount typed into a peso box.
+ *
+ * This is a label for a rate, not a price for an hour of play. What an hour actually costs is
+ * the server's effectiveRatePerHour, which is not always the same number.
+ */
+export function formatHourlyRate(perHour: number | null | undefined): string {
+  if (perHour === null || perHour === undefined) return '—';
+  return `${rate.format(perHour)} / hour`;
+}
+
+/**
+ * The server's effectiveRatePerHour — 60 x the stored per-minute rate — at up to four
+ * decimals, because two would round ₱199.998 back to ₱200.00 and hide the very gap this
+ * figure exists to show.
+ */
+const preciseRate = new Intl.NumberFormat('en-PH', {
+  style: 'currency',
+  currency: 'PHP',
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+
+export function formatEffectiveHourly(perHour: number | null | undefined): string {
+  if (perHour === null || perHour === undefined) return '—';
+  return preciseRate.format(perHour);
+}
+
+/**
+ * A stored per-minute rate at the precision it is held at — "₱4.00", "₱3.3333". The same
+ * choice the receipt line makes: a rate rounded for display is a rate the reader cannot
+ * multiply back to the total.
+ */
+export function formatPreciseRate(perMinute: number | null | undefined): string {
+  if (perMinute === null || perMinute === undefined) return '—';
+  return `${preciseRate.format(perMinute)} / min`;
+}
+
+/**
  * The digits of a money figure, grouped and to two places, with no currency symbol —
  * "1,000.00". For a text input that carries its own ₱ prefix.
  *

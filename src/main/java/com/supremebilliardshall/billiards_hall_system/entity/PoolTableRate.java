@@ -35,6 +35,11 @@ public class PoolTableRate implements BranchScoped {
     @Column(name = "rate_per_minute", nullable = false, precision = 10, scale = 4)
     private BigDecimal ratePerMinute;
 
+    // What the admin typed, when they configured the rate hourly. Null when they typed a
+    // per-minute rate. Read back by the screen, never used to compute money.
+    @Column(name = "rate_per_hour", precision = 12, scale = 2)
+    private BigDecimal ratePerHour;
+
     @Column(name = "effective_from", nullable = false)
     private OffsetDateTime effectiveFrom;
 
