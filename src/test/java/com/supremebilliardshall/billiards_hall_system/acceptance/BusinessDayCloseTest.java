@@ -17,6 +17,9 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
@@ -57,6 +60,12 @@ class BusinessDayCloseTest {
 
     @Autowired
     private PaymentRepository paymentRepository;
+
+    // Needed to make the persistence assertions in this class capable of failing: this test is
+    // @Transactional, so every MockMvc request shares one persistence context and a read-back
+    // returns the in-memory entity rather than the row. See detach() below.
+    @PersistenceContext
+    private EntityManager entityManager;
 
     private UUID branchId;
     private UUID employeeId;
@@ -101,6 +110,11 @@ class BusinessDayCloseTest {
         cashCount.setOpeningFloat(BigDecimal.ZERO);
         cashCount.setCountedCash(new BigDecimal("455.00"));
         cashCount.setCountedBy(employeeId);
+        // Set by hand like every other required column here. counted_at is stamped by the
+        // service that owns the event, not by the mapping, so a fixture that builds the row
+        // directly has to supply it -- and the column's DEFAULT now() never applies, because
+        // Hibernate names every mapped column in the INSERT and sends an explicit null.
+        cashCount.setCountedAt(OffsetDateTime.now());
         cashCountRepository.saveAndFlush(cashCount);
     }
 
@@ -173,6 +187,8 @@ class BusinessDayCloseTest {
         JsonNode count = body(mockMvc.perform(get("/api/v1/business-day/" + businessDate + "/cash-count")
                 .with(user(employee()))).andExpect(status().isOk())).get("data");
 
+        String countedAtBefore = count.get("countedAt").asText();
+
         // Visible: the frozen figures still read the old night, and the row says so.
         assertThat(count.get("stale").asBoolean()).isTrue();
         assertThat(money(count, "cashSinceCount")).isEqualByComparingTo("3241.00");
@@ -201,7 +217,25 @@ class BusinessDayCloseTest {
         assertThat(money(recounted, "cashSales")).isEqualByComparingTo("3701.00");
         assertThat(money(recounted, "expectedCash")).isEqualByComparingTo("3701.00");
         assertThat(money(recounted, "variance")).isEqualByComparingTo("-5.00");
-        assertThat(recounted.get("stale").asBoolean()).isFalse();
+
+        /*
+         * Everything above this line reads the response, which is built from the entity still
+         * in the persistence context -- so it would pass even if the recount's writes never
+         * reached the row. Everything below reads the row.
+         *
+         * That distinction is the whole test. The first version of this assertion checked
+         * `stale` on the response, went green, and the same sequence against the deployed jar
+         * left the business day permanently uncloseable: counted_at carried @CreationTimestamp,
+         * Hibernate left it out of the UPDATE, and the close -- a second request, reading the
+         * database -- kept seeing the original count time and refusing for ever.
+         */
+        detach();
+
+        JsonNode fromTheRow = body(mockMvc.perform(get("/api/v1/business-day/" + businessDate + "/cash-count")
+                .with(user(employee()))).andExpect(status().isOk())).get("data");
+        assertThat(fromTheRow.get("stale").asBoolean()).isFalse();
+        assertThat(fromTheRow.get("countedAt").asText()).isNotEqualTo(countedAtBefore);
+        assertThat(money(fromTheRow, "cashSales")).isEqualByComparingTo("3701.00");
 
         // And the night can now be signed off, on figures that describe the drawer.
         mockMvc.perform(post("/api/v1/business-day/" + businessDate + "/close").with(user(employee())))
@@ -274,6 +308,19 @@ class BusinessDayCloseTest {
     private AppUserDetails employee() {
         return new AppUserDetails(employeeId, branchId, "close-employee",
                 "unused", "Close Tester", UserRole.EMPLOYEE, true);
+    }
+
+    /*
+     * Push the pending writes to the database and forget every managed entity, so the next read
+     * has to come from the row rather than the persistence context.
+     *
+     * Without this, an assertion about what was PERSISTED cannot fail: Hibernate silently drops
+     * columns that a mapping annotation has declared unwritable, and the entity in memory still
+     * holds the value that never left it.
+     */
+    private void detach() {
+        entityManager.flush();
+        entityManager.clear();
     }
 
     private BigDecimal money(JsonNode node, String field) {

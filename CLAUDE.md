@@ -203,6 +203,22 @@ not at compile time, so get them right the first time:
     could not restamp the row and so re-read as stale for ever. Treat `insertable = false`,
     `updatable = false` and a narrow `@Generated` event set as claims about the whole lifecycle of
     the column, and check them against every path that writes it, not just the one you are adding.
+    `@CreationTimestamp` is the same kind of claim and behaves the same way: it keeps the column
+    out of every UPDATE, so removing `updatable = false` beside it changes nothing. A column the
+    service restamps is stamped by the service, the way `closed_at`, `unsettled_at`, `settled_at`,
+    `discount_at` and `redeemed_at` already are. The other `@CreationTimestamp` columns were swept
+    and are genuinely write-once — `created_at`, `occurred_at`, `taken_at`, `received_at`,
+    `issued_at`, `opened_at` — and nothing restamps any of them. Do not re-audit them.
+  - **A test that asserts a write PERSISTED must cross a transaction boundary — a second request,
+    or a `flush()` and `clear()` before the read.** This is the other half of the rule above, and
+    without it the first half cannot be tested. Reading back through the same persistence context
+    returns the in-memory entity, which holds the value the mapping discarded, so the assertion
+    passes whether or not the column was written. That is not a weak test, it is one that
+    *structurally cannot fail*, which is worse than no test: it reports the bug as fixed.
+    `cash_count.counted_at` is the case that proves it — the acceptance test asserted the recount
+    cleared the stale flag, went green, and the same sequence against the deployed jar left the
+    business day permanently uncloseable, because there the close was a second request that read
+    the row from the database.
 - **Postgres enum types** — there are seven (`user_role`, `session_status`, `bill_status`,
   `bill_line_kind`, `payment_method`, `session_close_kind`, `stock_reason`). A plain
   `@Enumerated(EnumType.STRING)` maps to `varchar` and will not bind against a native enum column.

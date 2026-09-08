@@ -151,6 +151,9 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         cashCount.setFloatOverridden(overridden);
         cashCount.setCountedCash(cashCountRequestDTO.getCountedCash());
         cashCount.setCountedBy(branchContext.getCurrentUserId());
+        // Stamped here rather than by @CreationTimestamp: the recount restamps it, and an
+        // annotation that says "insert only" makes Hibernate drop the column from every UPDATE.
+        cashCount.setCountedAt(OffsetDateTime.now());
         cashCount.setNote(cashCountRequestDTO.getNote());
         CashCount saved = cashCountRepository.saveAndFlush(cashCount);
 
@@ -319,6 +322,11 @@ public class BusinessDayServiceImpl implements BusinessDayService {
          * counted_at, so a recount that left it at the original count would re-read as stale
          * the moment it finished -- and with the close refusing on stale, the night could never
          * be signed off at all. Restamping is also simply true: the drawer was counted now.
+         *
+         * This set was already here and did nothing: @CreationTimestamp on the field kept the
+         * column out of the UPDATE, so the new value lived in the entity for the rest of the
+         * request and never reached the row. Deployed, that made a stale day permanently
+         * uncloseable.
          */
         cashCount.setCountedAt(OffsetDateTime.now());
         if (cashCountRequestDTO.getNote() != null) {
