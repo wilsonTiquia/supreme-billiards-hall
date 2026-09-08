@@ -16,6 +16,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.OffsetDateTime;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -74,7 +75,7 @@ class CredentialsSecurityTest {
         owner.setPasswordHash(SENTINEL);
         appUserRepository.saveAndFlush(owner);
 
-        new AdminPasswordBootstrap(appUserRepository, passwordEncoder, "first-owner-pass")
+        new AdminPasswordBootstrap(appUserRepository, passwordEncoder, "first-owner-pass", "owner")
                 .run(null);
 
         AppUser afterFirst = appUserRepository.findById(owner.getId()).orElseThrow();
@@ -83,12 +84,76 @@ class CredentialsSecurityTest {
 
         // Run again with a different value: a real hash is now present, so it must be left
         // alone — a lingering env var cannot reset an established password.
-        new AdminPasswordBootstrap(appUserRepository, passwordEncoder, "some-other-pass")
+        new AdminPasswordBootstrap(appUserRepository, passwordEncoder, "some-other-pass", "owner")
                 .run(null);
 
         AppUser afterSecond = appUserRepository.findById(owner.getId()).orElseThrow();
         assertThat(passwordEncoder.matches("first-owner-pass", afterSecond.getPasswordHash())).isTrue();
         assertThat(passwordEncoder.matches("some-other-pass", afterSecond.getPasswordHash())).isFalse();
+    }
+
+    /*
+     * Break-glass rescues whichever administrator is named, not one hard-coded account.
+     *
+     * This is the trap the staff feature created and this closes. Admin > Staff can archive the
+     * owner once a second administrator exists, and with the username fixed at "owner" the
+     * recovery could reach exactly that one account -- so archiving it and then forgetting the
+     * survivor's password left no way back at all. Not fifteen minutes: permanent, with editing
+     * password hashes in psql as the only exit.
+     */
+    @Test
+    void theBootstrapRescuesWhicheverAdministratorIsNamed() {
+        UUID branchId = givenBranch();
+        String username = "second-owner-" + UUID.randomUUID();
+        AppUser secondAdmin = givenUser(branchId, username, SENTINEL, UserRole.ADMIN);
+
+        // The seeded owner is archived, which the app now permits: this is the state that used
+        // to be unrecoverable.
+        AppUser seeded = appUserRepository.findByUsernameIgnoreCaseAndArchivedAtIsNull("owner")
+                .orElseThrow(() -> new IllegalStateException("seed owner missing"));
+        seeded.setArchivedAt(OffsetDateTime.now());
+        appUserRepository.saveAndFlush(seeded);
+
+        new AdminPasswordBootstrap(appUserRepository, passwordEncoder, "rescued-pass", username)
+                .run(null);
+
+        AppUser rescued = appUserRepository.findById(secondAdmin.getId()).orElseThrow();
+        assertThat(rescued.getPasswordHash()).isNotEqualTo(SENTINEL);
+        assertThat(passwordEncoder.matches("rescued-pass", rescued.getPasswordHash())).isTrue();
+    }
+
+    // Unset means the seeded owner, so an existing deployment that configures nothing behaves
+    // exactly as it did before the username was configurable.
+    @Test
+    void anUnsetBootstrapUsernameStillMeansTheOwner() {
+        AppUser owner = appUserRepository.findByUsernameIgnoreCaseAndArchivedAtIsNull("owner")
+                .orElseThrow(() -> new IllegalStateException("seed owner missing"));
+        owner.setPasswordHash(SENTINEL);
+        appUserRepository.saveAndFlush(owner);
+
+        new AdminPasswordBootstrap(appUserRepository, passwordEncoder, "default-target-pass", "")
+                .run(null);
+
+        assertThat(passwordEncoder.matches("default-target-pass",
+                appUserRepository.findById(owner.getId()).orElseThrow().getPasswordHash())).isTrue();
+    }
+
+    /*
+     * Named at a counter account, it does nothing. The role is never touched, so this is not an
+     * escalation either way -- but handing out a password through a door labelled ADMIN would
+     * leave the operator wondering why the recovery had not worked.
+     */
+    @Test
+    void theBootstrapRefusesAnAccountThatIsNotAnAdministrator() {
+        UUID branchId = givenBranch();
+        String username = "just-staff-" + UUID.randomUUID();
+        AppUser employee = givenUser(branchId, username, SENTINEL, UserRole.EMPLOYEE);
+
+        new AdminPasswordBootstrap(appUserRepository, passwordEncoder, "should-not-apply", username)
+                .run(null);
+
+        assertThat(appUserRepository.findById(employee.getId()).orElseThrow().getPasswordHash())
+                .isEqualTo(SENTINEL);
     }
 
     @Test

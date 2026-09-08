@@ -90,16 +90,19 @@ Passwords must be at least 8 characters. There are no other composition rules.
 
 ---
 
-# Recovering a forgotten owner password (break-glass)
+# Recovering a forgotten administrator password (break-glass)
 
-There is **no in-app reset for the owner**, on purpose: no admin can reset another admin, so
-one admin cannot take over another. If the owner password is lost, recover it at the database.
-This needs direct database access **by design** — it is the one path that cannot be reached
-from the network, which is exactly why it is safe to keep the owner un-resettable online.
+There is **no in-app reset for an administrator**, on purpose: no admin can reset another admin,
+so one admin cannot take over another. If an administrator's password is lost, recover it at the
+database. This needs direct database access **by design** — it is the one path that cannot be
+reached from the network, which is exactly why it is safe to keep administrators un-resettable
+online.
 
-Run this on the database host. Substitute a real password for the placeholder.
+Run this on the database host. Substitute a real password for the placeholder, and the
+administrator's username for `owner` — the steps below use `owner` because that is the usual
+case and the default when `SUPREME_BOOTSTRAP_ADMIN_USERNAME` is unset.
 
-1. **Disable the owner login** by writing the sentinel back over its password hash:
+1. **Disable that administrator's login** by writing the sentinel back over its password hash:
 
    ```
    psql "$DB_URL" -c "UPDATE app_user SET password_hash = 'DISABLED-NO-LOGIN' WHERE username = 'owner';"
@@ -108,16 +111,22 @@ Run this on the database host. Substitute a real password for the placeholder.
    (If you connect some other way, run just the SQL: `UPDATE app_user SET password_hash =
    'DISABLED-NO-LOGIN' WHERE username = 'owner';`)
 
-2. **Set the bootstrap variable** to the new owner password, in the app's environment:
+2. **Set the bootstrap variable** to the new password, in the app's environment:
 
    ```
    export SUPREME_BOOTSTRAP_ADMIN_PASSWORD='a-new-strong-owner-password'
    ```
 
-3. **Restart the app.** On boot it sees the sentinel, encodes the variable with BCrypt, stores
-   it as the owner password, and logs at INFO that it did so (never the value).
+   If you are rescuing an administrator other than `owner`, name them too:
 
-4. **Log in as `owner`** with that password.
+   ```
+   export SUPREME_BOOTSTRAP_ADMIN_USERNAME='their-username'
+   ```
+
+3. **Restart the app.** On boot it sees the sentinel, encodes the variable with BCrypt, stores
+   it as that administrator's password, and logs at INFO that it did so (never the value).
+
+4. **Log in as that administrator** with that password.
 
 5. **Change it immediately** via `PUT /api/v1/auth/password`, then **unset
    `SUPREME_BOOTSTRAP_ADMIN_PASSWORD`** before the next restart so it cannot fire again.
@@ -125,28 +134,20 @@ Run this on the database host. Substitute a real password for the placeholder.
 Step 1 matters: the bootstrap only acts while the account carries the sentinel, so a real
 (forgotten) hash must be reset to the sentinel first, or nothing happens on restart.
 
-## This procedure only rescues `owner`
+## Lockout is not the same as a forgotten password
 
-**It is hardcoded.** `AdminPasswordBootstrap` looks up the username `owner` and no other, so the
-steps above do nothing for an administrator added through **Admin → Staff**. Two things follow.
-
-**A forgotten administrator password is not something the other administrator can fix.** No admin
-can reset another admin's password — that rule is deliberate, and it is why one admin cannot take
-over another's account. A second administrator covers **lockouts** (five bad passwords at the
-till), not **amnesia**. They are different failures with different answers:
+**No administrator can reset another administrator's password.** That rule is deliberate — it is
+what stops one admin taking over another's account — and it means a second administrator covers
+**lockouts**, not **amnesia**. They are different failures with different answers:
 
 | What happened | The way back |
 |---|---|
 | Somebody is locked out after bad passwords | Any other administrator: **Admin → Staff**, or `DELETE /api/v1/users/lockouts` |
-| A **non-`owner`** administrator forgot their password | Another administrator archives that account and adds a replacement. The username is freed by archiving, so the same one can be used again. |
-| **`owner`** forgot their password | The break-glass procedure above |
-| The **last** administrator forgot their password, and it is not `owner` | **Nothing in the app, and the procedure above will not help.** See below. |
+| An administrator forgot their password, and others remain | Another administrator archives that account and adds a replacement. Archiving frees the username, so the same one can be used again. |
+| The **last** administrator forgot their password | The break-glass procedure above, naming them in `SUPREME_BOOTSTRAP_ADMIN_USERNAME` |
 
-**Keep the `owner` account.** It is the only account the break-glass procedure can reach, so it is
-the hall's last way in. Archiving it is allowed once a second administrator exists — the
-last-administrator guard only counts how many remain — but doing so removes the only recoverable
-account. If `owner` is archived and the remaining administrator forgets their password, there is
-no route back in short of editing the database by hand.
-
-If the hall ever wants to retire `owner`, the bootstrap needs to take a username too (a
-`SUPREME_BOOTSTRAP_ADMIN_USERNAME` beside the password) before that is safe. It does not today.
+The last row used to read "nothing in the app, and the procedure will not help", because the
+bootstrap was hard-coded to `owner` and **Admin → Staff** can archive that account once a second
+administrator exists. Archiving the owner and then forgetting the survivor's password left no way
+back at all. The username is configurable now, so break-glass reaches whichever administrator is
+still there and that state no longer exists.

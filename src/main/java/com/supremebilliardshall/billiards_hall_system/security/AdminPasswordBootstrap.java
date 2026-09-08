@@ -1,6 +1,7 @@
 package com.supremebilliardshall.billiards_hall_system.security;
 
 import com.supremebilliardshall.billiards_hall_system.entity.AppUser;
+import com.supremebilliardshall.billiards_hall_system.entity.UserRole;
 import com.supremebilliardshall.billiards_hall_system.repository.AppUserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -29,19 +30,35 @@ public class AdminPasswordBootstrap implements ApplicationRunner {
     // password can authenticate against it.
     static final String DISABLED_SENTINEL = "DISABLED-NO-LOGIN";
 
-    // The seeded global admin. Absent means nothing to initialise.
-    private static final String BOOTSTRAP_USERNAME = "owner";
+    /*
+     * Which administrator to rescue. Defaults to the seeded owner, so a deployment that sets
+     * nothing behaves exactly as it did before this was configurable.
+     *
+     * It became configurable because Admin > Staff can archive the owner once a second admin
+     * exists. With the username fixed, the break-glass procedure could rescue exactly one
+     * account -- so archiving it and then forgetting the survivor's password left a state with
+     * no way back at all, short of editing password hashes by hand. That is permanent, not a
+     * fifteen-minute wait, and "keep the owner account" in HELP.md was a warning label on a
+     * button that still worked. A username here removes the trap rather than documenting it.
+     */
+    private static final String DEFAULT_BOOTSTRAP_USERNAME = "owner";
 
     private final AppUserRepository appUserRepository;
     private final PasswordEncoder passwordEncoder;
     private final String bootstrapPassword;
+    private final String bootstrapUsername;
 
     public AdminPasswordBootstrap(AppUserRepository appUserRepository,
                                   PasswordEncoder passwordEncoder,
-                                  @Value("${SUPREME_BOOTSTRAP_ADMIN_PASSWORD:}") String bootstrapPassword) {
+                                  @Value("${SUPREME_BOOTSTRAP_ADMIN_PASSWORD:}") String bootstrapPassword,
+                                  @Value("${SUPREME_BOOTSTRAP_ADMIN_USERNAME:" + DEFAULT_BOOTSTRAP_USERNAME + "}")
+                                  String bootstrapUsername) {
         this.appUserRepository = appUserRepository;
         this.passwordEncoder = passwordEncoder;
         this.bootstrapPassword = bootstrapPassword;
+        this.bootstrapUsername = (bootstrapUsername == null || bootstrapUsername.isBlank())
+                ? DEFAULT_BOOTSTRAP_USERNAME
+                : bootstrapUsername.trim();
     }
 
     @Override
@@ -54,11 +71,22 @@ public class AdminPasswordBootstrap implements ApplicationRunner {
         }
 
         AppUser owner = appUserRepository
-                .findByUsernameIgnoreCaseAndArchivedAtIsNull(BOOTSTRAP_USERNAME)
+                .findByUsernameIgnoreCaseAndArchivedAtIsNull(bootstrapUsername)
                 .orElse(null);
         if (owner == null) {
-            log.warn("SUPREME_BOOTSTRAP_ADMIN_PASSWORD is set but no '{}' user exists; nothing initialised.",
-                    BOOTSTRAP_USERNAME);
+            log.warn("SUPREME_BOOTSTRAP_ADMIN_PASSWORD is set but no live '{}' user exists; nothing initialised.",
+                    bootstrapUsername);
+            return;
+        }
+        /*
+         * Only ever an administrator. Pointing this at a counter account would not escalate
+         * anything -- the role is untouched -- but it would silently hand out a password
+         * through a door labelled ADMIN, and the operator would be left wondering why the
+         * recovery did not work.
+         */
+        if (owner.getRole() != UserRole.ADMIN) {
+            log.warn("SUPREME_BOOTSTRAP_ADMIN_PASSWORD names '{}', who is not an administrator; nothing initialised.",
+                    bootstrapUsername);
             return;
         }
 
@@ -67,7 +95,7 @@ public class AdminPasswordBootstrap implements ApplicationRunner {
         // next restart.
         if (!DISABLED_SENTINEL.equals(owner.getPasswordHash())) {
             log.info("SUPREME_BOOTSTRAP_ADMIN_PASSWORD is set but '{}' already has a password; leaving it unchanged.",
-                    BOOTSTRAP_USERNAME);
+                    bootstrapUsername);
             return;
         }
 
@@ -75,6 +103,6 @@ public class AdminPasswordBootstrap implements ApplicationRunner {
         appUserRepository.save(owner);
         // The value is never logged — only the fact that it happened.
         log.info("Initialised the admin password for '{}' from SUPREME_BOOTSTRAP_ADMIN_PASSWORD. "
-                + "Log in, change it immediately, then unset the variable.", BOOTSTRAP_USERNAME);
+                + "Log in, change it immediately, then unset the variable.", bootstrapUsername);
     }
 }
