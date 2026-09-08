@@ -88,4 +88,70 @@ class LoginAttemptServiceTest {
         service.recordFailure("victim-next", attacker);
         assertThat(service.isBlocked("victim-next", attacker)).isTrue();
     }
+
+    /*
+     * One machine is one address, however the URL was typed.
+     *
+     * localhost resolves to ::1 and 127.0.0.1 is its own literal, so keying on the raw string
+     * made them two machines -- and because the per-ACCOUNT key carries the address too, that
+     * sidestepped the account lock, not just the address one. Anyone locked out could type the
+     * other form of the same URL and walk straight in.
+     */
+    @Test
+    void everySpellingOfTheLoopbackAddressIsTheSameMachine() {
+        LoginAttemptService service = new LoginAttemptService();
+
+        for (int i = 0; i < 5; i++) {
+            service.recordFailure("counter", "localhost");
+        }
+
+        assertThat(service.isBlocked("counter", "localhost")).isTrue();
+        // The bypass this test exists for.
+        assertThat(service.isBlocked("counter", "127.0.0.1")).isTrue();
+        assertThat(service.isBlocked("counter", "::1")).isTrue();
+        assertThat(service.isBlocked("counter", "0:0:0:0:0:0:0:1")).isTrue();
+        assertThat(service.isBlocked("counter", "::ffff:127.0.0.1")).isTrue();
+    }
+
+    /*
+     * And the door is shut with somebody holding a key.
+     *
+     * This is why the staff feature had to land first. With the loopback forms folded together
+     * there is no second URL to escape through, so the ONLY way back into a till whose cashier
+     * has locked themselves out is an account that has not failed: an administrator, who then
+     * calls clearAll(). If this assertion ever goes red, closing the bypass has left the hall
+     * with no way in.
+     */
+    @Test
+    void anAdministratorCanStillGetInToUnlockSomebodyElse() {
+        LoginAttemptService service = new LoginAttemptService();
+        for (int i = 0; i < 5; i++) {
+            service.recordFailure("counter", "localhost");
+        }
+
+        // Locked, and now genuinely locked -- no other spelling of the address helps.
+        assertThat(service.isBlocked("counter", "127.0.0.1")).isTrue();
+
+        // The administrator has failed nothing, so the exemption lets them in from that same
+        // machine, and DELETE /users/lockouts is theirs to call.
+        assertThat(service.isBlocked("owner", "localhost")).isFalse();
+        assertThat(service.isBlocked("owner", "127.0.0.1")).isFalse();
+
+        service.clearAll();
+        assertThat(service.isBlocked("counter", "localhost")).isFalse();
+    }
+
+    // A real host on the LAN is not the till. Only the loopback forms are folded together;
+    // collapsing more would be the address throttle quietly ceasing to throttle addresses.
+    @Test
+    void twoDifferentMachinesAreStillTwoMachines() {
+        LoginAttemptService service = new LoginAttemptService();
+        for (int i = 0; i < 5; i++) {
+            service.recordFailure("counter", "192.168.1.40");
+        }
+
+        assertThat(service.isBlocked("counter", "192.168.1.40")).isTrue();
+        assertThat(service.isBlocked("counter", "192.168.1.41")).isFalse();
+        assertThat(service.isBlocked("counter", "localhost")).isFalse();
+    }
 }

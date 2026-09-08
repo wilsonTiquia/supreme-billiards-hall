@@ -4,6 +4,7 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 // In-process login throttling. The app is internet-reachable and there are only a couple of
@@ -50,6 +51,17 @@ public class LoginAttemptService {
     // memory-exhaustion vector. When the ceiling is passed, entries that are not currently
     // locked (the sub-threshold noise) are dropped; locked entries are kept until they expire.
     private static final int MAX_ENTRIES = 10_000;
+
+    // Every spelling of "this machine". IPv4-mapped IPv6 is included because a dual-stack
+    // connection to 127.0.0.1 can present as ::ffff:127.0.0.1 depending on how the socket
+    // was opened, and a form nobody thought of is a form that bypasses the throttle.
+    private static final String LOOPBACK = "loopback";
+    private static final Set<String> LOOPBACK_FORMS = Set.of(
+            "127.0.0.1",
+            "::1",
+            "0:0:0:0:0:0:0:1",
+            "::ffff:127.0.0.1",
+            "localhost");
 
     private final int maxEntries;
     private final ConcurrentHashMap<String, Attempt> attempts = new ConcurrentHashMap<>();
@@ -179,10 +191,40 @@ public class LoginAttemptService {
 
     private String userAddressKey(String username, String sourceAddress) {
         return "ua:" + (username == null ? "" : username.trim().toLowerCase())
-                + "|" + (sourceAddress == null ? "" : sourceAddress);
+                + "|" + normalizeAddress(sourceAddress);
     }
 
     private String addressKey(String sourceAddress) {
-        return "ip:" + (sourceAddress == null ? "" : sourceAddress);
+        return "ip:" + normalizeAddress(sourceAddress);
+    }
+
+    /*
+     * One machine is one address, however it wrote itself.
+     *
+     * The till reaches the app over the loopback interface, which has several spellings:
+     * http://localhost:8080 arrives as ::1, http://127.0.0.1:8080 arrives as 127.0.0.1, and
+     * "0:0:0:0:0:0:0:1" is the same address written out. Keyed literally, those were three
+     * different machines -- so a throttle that had locked one of them was sidestepped by
+     * typing a different form of the same URL, including the per-ACCOUNT lock, since the
+     * account key carries the address too.
+     *
+     * That escape was left open deliberately while it was the only way back into a till whose
+     * sole administrator had locked themselves out. It is closed now that Admin > Staff can
+     * create a second administrator: the exemption in isBlocked lets an account with no
+     * failures of its own sign in, and that account can clear the lockout. The door is shut
+     * with somebody holding a key.
+     *
+     * Only the loopback forms are folded together. Two real hosts on the LAN stay distinct,
+     * which is what the address throttle is for.
+     */
+    private static String normalizeAddress(String sourceAddress) {
+        if (sourceAddress == null || sourceAddress.isBlank()) {
+            return "";
+        }
+        String address = sourceAddress.trim();
+        if (LOOPBACK_FORMS.contains(address.toLowerCase())) {
+            return LOOPBACK;
+        }
+        return address;
     }
 }
