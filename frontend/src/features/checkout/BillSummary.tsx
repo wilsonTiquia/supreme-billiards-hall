@@ -1,6 +1,7 @@
 import type { Bill } from '@/api/types';
 import { splitBillLines } from '@/lib/billLines';
 import { formatMoney } from '@/lib/money';
+import { formatMinutes } from '@/lib/datetime';
 
 /**
  * The receipt-style read of the bill. Identical items read as one line; voided lines stay,
@@ -95,6 +96,26 @@ export function BillSummary({ bill }: { bill: Bill }) {
             </dt>
             <dd className="tabular text-body text-danger">
               −{formatMoney(bill.discountAmount)}
+            </dd>
+          </div>
+        ) : null}
+        {/* Beneath the discount and above the total, in the order the subtraction happens.
+            The minutes are stated as well as the pesos, because a voucher is a quantity of
+            TIME and "2 hours" is what the customer won — the pesos are only what those hours
+            were worth on this table. */}
+        {bill.voucherAmount > 0 ? (
+          <div className="mt-1 flex justify-between gap-3">
+            <dt className="text-label uppercase text-text-dim">
+              Voucher
+              <span className="block normal-case text-label text-text-dim">
+                {bill.voucherCode}
+                {bill.voucherMinutesCovered != null
+                  ? ` · ${formatMinutes(bill.voucherMinutesCovered)} covered`
+                  : ''}
+              </span>
+            </dt>
+            <dd className="tabular text-body text-danger">
+              −{formatMoney(bill.voucherAmount)}
             </dd>
           </div>
         ) : null}

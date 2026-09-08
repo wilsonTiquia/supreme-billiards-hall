@@ -40,6 +40,10 @@ export const queryKeys = {
   expenseCategories: ['expenseCategories'] as const,
   expenses: (date?: BusinessDate) => ['expenses', date ?? 'current'] as const,
 
+  voucherBatches: ['voucherBatches'] as const,
+  vouchers: (batchId?: UUID, status?: string) =>
+    ['vouchers', batchId ?? 'all', status ?? 'all'] as const,
+
   lowStock: ['stock', 'low'] as const,
   tables: ['tables'] as const,
   cashCount: (date: BusinessDate) => ['businessDay', date, 'cashCount'] as const,

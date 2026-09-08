@@ -68,4 +68,20 @@ public class LossesDTO {
      */
     private Integer discountBills;
     private BigDecimal discountAmount;
+
+    /*
+     * Free table time given away as a prize and redeemed at the counter.
+     *
+     * The third bill-level giveaway, and it overlaps neither of the others: a time reduction
+     * rewrites the TIME lines first, the voucher then covers a measured slice of what is left,
+     * and the discount is agreed on the remainder. A bill carrying all three appears in all
+     * three figures correctly.
+     *
+     * Like the discount, this is a figure that explains gross rather than one subtracted from
+     * it. A winner who played three hours on a two-hour voucher put 240 pesos in the drawer,
+     * and a gross reporting 720 would leave the cash count short by 480 with nothing accounting
+     * for the difference.
+     */
+    private Integer voucherCount;
+    private BigDecimal voucherAmount;
 }

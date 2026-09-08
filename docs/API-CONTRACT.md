@@ -479,7 +479,8 @@ dashboard. Open the stored snapshot with `GET /bills/{id}/receipt`.
 { "id", "status", "customerTypeId", "customerTypeName", "openedAt", "closedAt",
   "businessDate", "version",
   "subtotalTime", "subtotalItems",
-  "discountAmount", "discountReason", "discountByUsername", "discountAt", "totalAmount",
+  "discountAmount", "discountReason", "discountByUsername", "discountAt",
+  "voucherAmount", "voucherCode", "voucherMinutes", "voucherMinutesCovered", "totalAmount",
   "lines": [ { "id", "lineKind", "seq", "productId", "sessionId", "description",
                "unitPrice", "quantity", "billedMinutes", "lineTotal",
                "voidedAt", "voidReason" } ],
@@ -489,10 +490,16 @@ dashboard. Open the stored snapshot with `GET /bills/{id}/receipt`.
 An ADMIN additionally receives `totalCost` and `grossProfit` at the top level, and `unitCost` and
 `lineCost` on each line. An EMPLOYEE receives neither key.
 
-`totalAmount` is `subtotalTime + subtotalItems − discountAmount`. **The discount fields are on the
-base shape, not the admin one** — a discount is not a cost or a profit figure, and the counter who
-typed it has to be able to read it back. `discountAmount` is `0.00` and the other three are `null`
-when nothing was given away. See `POST /bills/{id}/discount` below.
+`totalAmount` is `subtotalTime + subtotalItems − discountAmount − voucherAmount`. **The discount
+and voucher fields are on the base shape, not the admin one** — neither is a cost or a profit
+figure, and the counter who entered them has to be able to read them back. `discountAmount` and
+`voucherAmount` are `0.00` and the other fields `null` when nothing was given away. See
+`POST /bills/{id}/discount` and `POST /bills/{id}/voucher` below.
+
+`voucherCode` is the **display form** — `SB-7K4-M2Q`. Returning it here is safe where the admin
+code list is not: this code has already been spent, on this bill, by the person reading the screen.
+`voucherMinutes` is what the code was worth and `voucherMinutesCovered` is what it reached; the
+difference is what the customer forfeited.
 
 **Lines are returned one row per `bill_line`, and always will be.** Four of the same beer are
 four rows. The UI groups identical non-voided lines for display — "4 × San Miguel Pale Pilsen
@@ -632,6 +639,92 @@ gets 409 `STALE_BILL_VERSION` rather than charging the old amount.
 **DELETE `/bills/{id}/discount`** — clears it and restores the full amount. All four columns are
 nulled together. No discount to clear → 409; bill not `OPEN` → 409. Audited as
 `BILL_DISCOUNT_CLEARED`, carrying the cleared discount's own reason.
+
+**POST `/bills/{id}/voucher`** → `{ "code" }` — spends a giveaway voucher against this bill.
+**Any role**: making a batch is the owner's job, spending one is the cashier's. Returns
+
+```json
+{ "bill": <Bill>, "code", "voucherMinutes", "minutesCovered", "minutesForfeited", "voucherAmount" }
+```
+
+A voucher is **TIME, not money**. "2 hours" covers up to two hours of this bill's table time at
+whatever rate that time was actually billed at, so the same code is worth ₱480 on a ₱240/hour table
+and ₱300 on a ₱150/hour one. Play longer and the customer pays the difference; **play less and the
+rest is forfeited** — no change, no residual balance, the code is spent. `minutesForfeited` is the
+field that says so, and the screen must say it at the moment of redemption. The cashier is the one
+who has to tell the customer.
+
+- `code` is sent **as typed**. The server uppercases it, strips spaces and dashes and adds the `SB`
+  prefix if it was left off, so `sb 7k4-m2q` and `SB7K4M2Q` both find `SB-7K4-M2Q`.
+- **Six refusals, each with its own message.** Render the server's `message`; "invalid code" for all
+  six is useless to a cashier holding up a queue.
+  - No such code in this branch → **404**. A code from another branch is simply not found.
+  - Already redeemed → 409, naming the date and the receipt it was used on.
+  - Expired → 409, naming the date. Judged against the **business** date, so a code expiring on the
+    31st still works at 2am on the 1st.
+  - Bill not `OPEN` → 409.
+  - Any session on the bill priced at a **promo, friend rate or flat fee** → 409, naming which and
+    which table. One pricing story per session, the same rule the flat rate already follows.
+  - No table time on the bill yet → 409. Close the session first; the code is not spent.
+- A bill already discounted so far that the voucher would take it below zero → 409, naming the
+  order that works: voucher first, then agree the discount on what is left.
+- Audited as `VOUCHER_REDEEMED`. Bumps `bill.version`.
+
+**Single use is enforced by the database, not by a pre-check.** Redemption is a conditional
+`UPDATE ... WHERE redeemed_at IS NULL`, and zero rows affected *is* the already-redeemed refusal —
+two tills racing one code is exactly what a read-then-write loses.
+
+**DELETE `/bills/{id}/voucher`** — un-redeems it, for a code entered against the wrong bill. Returns
+the same shape, the code to unredeemed and the bill to its full amount. No voucher on the bill →
+409; bill not `OPEN` → 409. Audited as `VOUCHER_RELEASED`.
+
+---
+
+## 7a. Voucher batches — ADMIN only
+
+| Method | Path | Who |
+|---|---|---|
+| POST | `/api/v1/voucher-batches` | **ADMIN** |
+| GET | `/api/v1/voucher-batches` | **ADMIN** |
+| GET | `/api/v1/vouchers?batchId=&status=` | **ADMIN** |
+
+**ADMIN is a security boundary here, not a layout choice: whoever can read a list of unredeemed
+codes can redeem them.** The counter never sees these routes; redeeming needs a code the customer
+already holds.
+
+**POST `/voucher-batches`** → `{ "hours", "quantity", "expiresOn", "note"? }`. Generates the whole
+batch in one transaction and returns it **with the codes**, which is the only response that ever
+carries a list of live codes — the owner needs them to copy or print.
+
+- **`hours`**, because that is how the prize was advertised. The server converts to minutes and
+  stores minutes; a fractional minute is refused (409) rather than rounded.
+- `quantity` 1–500. Above → 400. `expiresOn` must be in the future → 400.
+- Audited as `VOUCHER_BATCH_CREATED`. **The codes are not in the audit row** — an audit log is never
+  pruned, and live codes in it make every future reader of that screen able to spend them.
+
+```json
+{ "id", "minutes", "hoursLabel", "quantity", "expiresOn", "note",
+  "createdByUsername", "createdAt",
+  "issued", "redeemed", "expired", "outstanding",
+  "codes": [ <Voucher>, ... ] }
+```
+
+**GET `/voucher-batches`** returns the same shape with **`codes: null`** — a screen rendering every
+code of every batch leaks the whole giveaway to anyone looking over a shoulder. The four counts are
+exclusive and sum to `issued`; `outstanding` is the one that is still a liability.
+
+**GET `/vouchers`** — the individual codes. Both filters optional; `status` is `OUTSTANDING`,
+`REDEEMED` or `EXPIRED`.
+
+```json
+{ "id", "batchId", "code", "minutes", "expiresOn", "status",
+  "redeemedAt", "redeemedByUsername", "redeemedBillId", "redeemedReceiptNo" }
+```
+
+`code` is always the display form. `status` is **resolved against the current business date, never
+stored**: a code expiring tonight is `OUTSTANDING` until the night ends at 05:00, which is while the
+customer is still playing. A code redeemed before its expiry that has since passed it reads
+`REDEEMED`, not `EXPIRED` — it was spent while it was good.
 
 ---
 
@@ -825,7 +918,11 @@ optional and defaults to the night currently running, same as `/reports/daily`.
                                 "actorUsername", "reason", "openedAt" } ] },
   "discounts":   { "discountBills", "discountAmount",
                    "lines": [ { "billId", "receiptNo", "subtotal", "discountAmount",
-                                "chargedAmount", "reason", "actorUsername", "discountAt" } ] } }
+                                "chargedAmount", "reason", "actorUsername", "discountAt" } ] },
+  "vouchers":    { "voucherCount", "voucherAmount",
+                   "lines": [ { "billId", "receiptNo", "code", "batchNote", "voucherMinutes",
+                                "minutesCovered", "minutesForfeited", "voucherAmount",
+                                "poolTableName", "actorUsername", "redeemedAt" } ] } }
 ```
 
 Each list is newest first. **Each section repeats its own tile's figure under the same field

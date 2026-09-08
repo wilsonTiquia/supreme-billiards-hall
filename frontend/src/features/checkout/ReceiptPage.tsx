@@ -189,30 +189,52 @@ export function ReceiptPage() {
               Shown as the subtraction rather than as a lone figure — what it came to, what
               came off, and the total below — because the 54 pesos the customer was given is
               the part of the receipt they will look for. */}
+          {/* The "Bill" line appears once, whichever reductions follow it. A chit can carry a
+              discount, a voucher, or both, and repeating the subtotal above each one would
+              turn a receipt into a worksheet. */}
+          {money(payload, 'discountAmount') !== null || money(payload, 'voucherAmount') !== null ? (
+            <div className="flex justify-between gap-3">
+              <dt className="text-label uppercase text-text-dim">Bill</dt>
+              <dd className="tabular text-body text-text-dim">
+                {formatMoney(
+                  (money(payload, 'subtotalTime') ?? 0) + (money(payload, 'subtotalItems') ?? 0),
+                )}
+              </dd>
+            </div>
+          ) : null}
           {money(payload, 'discountAmount') !== null ? (
-            <>
-              <div className="flex justify-between gap-3">
-                <dt className="text-label uppercase text-text-dim">Bill</dt>
-                <dd className="tabular text-body text-text-dim">
-                  {formatMoney(
-                    (money(payload, 'subtotalTime') ?? 0) + (money(payload, 'subtotalItems') ?? 0),
-                  )}
-                </dd>
-              </div>
-              <div className="mb-2 flex justify-between gap-3">
-                <dt className="text-label uppercase text-text-dim">
-                  Discount
-                  {text(payload, 'discountReason') ? (
-                    <span className="block normal-case text-label text-text-dim">
-                      {text(payload, 'discountReason')}
-                    </span>
-                  ) : null}
-                </dt>
-                <dd className="tabular text-body text-danger">
-                  −{formatMoney(money(payload, 'discountAmount'))}
-                </dd>
-              </div>
-            </>
+            <div className="mb-2 flex justify-between gap-3">
+              <dt className="text-label uppercase text-text-dim">
+                Discount
+                {text(payload, 'discountReason') ? (
+                  <span className="block normal-case text-label text-text-dim">
+                    {text(payload, 'discountReason')}
+                  </span>
+                ) : null}
+              </dt>
+              <dd className="tabular text-body text-danger">
+                −{formatMoney(money(payload, 'discountAmount'))}
+              </dd>
+            </div>
+          ) : null}
+          {/* The prize, named on the document the winner takes away. The code is printed
+              because it is theirs and because it is what makes the chit checkable against the
+              giveaway later; the hours are printed because hours are what was advertised. */}
+          {money(payload, 'voucherAmount') !== null ? (
+            <div className="mb-2 flex justify-between gap-3">
+              <dt className="text-label uppercase text-text-dim">
+                Voucher
+                <span className="block normal-case text-label text-text-dim">
+                  {text(payload, 'voucherCode') ?? 'code'}
+                  {text(payload, 'voucherHoursCovered')
+                    ? ` · ${text(payload, 'voucherHoursCovered')} h of table time`
+                    : ''}
+                </span>
+              </dt>
+              <dd className="tabular text-body text-danger">
+                −{formatMoney(money(payload, 'voucherAmount'))}
+              </dd>
+            </div>
           ) : null}
           <div className="flex items-baseline justify-between gap-3">
             <dt className="text-heading text-text">Total</dt>

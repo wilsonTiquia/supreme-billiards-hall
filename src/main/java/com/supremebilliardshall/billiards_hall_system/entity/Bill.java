@@ -120,6 +120,32 @@ public class Bill implements BranchScoped {
     @Column(name = "discount_at")
     private OffsetDateTime discountAt;
 
+    /*
+     * Table time covered by a giveaway voucher, in pesos. The third subtraction on a bill, and
+     * independent of the two above: a session's billed_minutes_override changes what the TIME
+     * lines cost, a discount reaches the whole payable, and this covers a measured quantity of
+     * time at the rate that time was actually billed at.
+     *
+     * Computed at redemption and stored, never re-derived. The bill's lines are what it was
+     * computed from, and once they are frozen at checkout the walk that produced this figure
+     * cannot be repeated -- nor should it be, for the same reason bill_line snapshots its price.
+     *
+     * Defaulted in the field, like discountAmount and for the same reason: the column is NOT
+     * NULL with a database default, but Hibernate writes every mapped column on insert, so an
+     * unset field goes down as an explicit null and the insert fails.
+     */
+    @Column(name = "voucher_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal voucherAmount = BigDecimal.ZERO;
+
+    @Column(name = "voucher_id")
+    private UUID voucherId;
+
+    // Minutes the voucher actually covered, at most voucher.minutes. The difference between the
+    // two is what the customer forfeited, which the receipt states and the owner's losses
+    // drill-down reports -- and which nothing could reconstruct once the lines are frozen.
+    @Column(name = "voucher_minutes_covered")
+    private Integer voucherMinutesCovered;
+
     // Optimistic lock. Hibernate owns this column; never set it by hand.
     @Version
     @Column(name = "version", nullable = false)

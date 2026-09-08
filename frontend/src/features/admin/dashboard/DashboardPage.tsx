@@ -497,6 +497,17 @@ export function DashboardPage() {
                   } · exact`}
                   onOpen={() => setOpenLoss('discounts')}
                 />
+                {/* Prize table time. Like the discount it reaches the whole bill rather than a
+                    session's pricing, and like the discount it EXPLAINS gross rather than being
+                    subtracted from it — the drawer holds what was actually collected. */}
+                <LossFigure
+                  label="Vouchers"
+                  amount={formatMoney(data.losses.voucherAmount)}
+                  note={`${data.losses.voucherCount} ${
+                    data.losses.voucherCount === 1 ? 'voucher' : 'vouchers'
+                  } · exact`}
+                  onOpen={() => setOpenLoss('vouchers')}
+                />
                 <LossFigure
                   label="Voids"
                   amount={formatMoney(data.losses.voidAmount)}

@@ -49,6 +49,8 @@ public class CheckoutServiceImpl implements CheckoutService {
     private final CustomerTypeRepository customerTypeRepository;
     private final ProductRepository productRepository;
     private final AppUserRepository appUserRepository;
+    // Read-only, to name the voucher on the receipt. Redemption lives in VoucherService.
+    private final VoucherRepository voucherRepository;
     private final BillService billService;
     private final SessionNoteService sessionNoteService;
     private final AuditService auditService;
@@ -63,6 +65,7 @@ public class CheckoutServiceImpl implements CheckoutService {
                                CustomerTypeRepository customerTypeRepository,
                                ProductRepository productRepository,
                                AppUserRepository appUserRepository,
+                               VoucherRepository voucherRepository,
                                BillService billService,
                                SessionNoteService sessionNoteService,
                                AuditService auditService,
@@ -76,6 +79,7 @@ public class CheckoutServiceImpl implements CheckoutService {
         this.customerTypeRepository = customerTypeRepository;
         this.productRepository = productRepository;
         this.appUserRepository = appUserRepository;
+        this.voucherRepository = voucherRepository;
         this.billService = billService;
         this.sessionNoteService = sessionNoteService;
         this.auditService = auditService;
@@ -396,22 +400,33 @@ public class CheckoutServiceImpl implements CheckoutService {
         BigDecimal subtotalTime = sumLive(lines, BillLineKind.TIME, false);
         BigDecimal subtotalItems = sumLive(lines, BillLineKind.PRODUCT, false);
         /*
-         * The discount is taken off HERE and nowhere else, so every downstream reader -- the
-         * payment check, the receipt, the dashboard's gross -- sees one total.
+         * Both reductions are taken off HERE and nowhere else, so every downstream reader --
+         * the payment check, the receipt, the dashboard's gross -- sees one total.
          *
-         * A fixed amount, applied to whatever the bill has come to by now. A line added after
-         * the discount raises the subtotal and this figure with it; the discount does not
-         * follow it up. Not clamped here either: applyDiscount refused a charge above the
-         * subtotal at the time, and lines only ever get added, so the subtotal at checkout is
-         * at least what it was then.
+         * Fixed amounts, applied to whatever the bill has come to by now. A line added after
+         * either one raises the subtotal and this figure with it; neither follows it up. Not
+         * clamped here: applyDiscount and redeem each refused to overshoot the subtotal at the
+         * time, and lines only ever get added, so the subtotal at checkout is at least what it
+         * was then.
          */
         BigDecimal discountAmount = bill.getDiscountAmount();
-        BigDecimal totalAmount = subtotalTime.add(subtotalItems).subtract(discountAmount);
+        BigDecimal voucherAmount = bill.getVoucherAmount();
+        BigDecimal totalAmount = BillTotals.payable(subtotalTime, subtotalItems,
+                discountAmount, voucherAmount);
         BigDecimal totalCost = sumLive(lines, null, true);
 
-        // The discounted figure, deliberately: a bill discounted down to nothing is a bill
-        // nobody can settle, which is why applyDiscount refuses to produce one in the first
-        // place. This is the backstop for the same state arrived at another way.
+        /*
+         * The reduced figure, deliberately: a bill brought down to nothing is a bill nobody can
+         * settle -- payment_amount_chk requires more than zero -- which is why applyDiscount
+         * refuses to produce one in the first place. This is the backstop for the same state
+         * arrived at another way.
+         *
+         * A VOUCHER CAN REACH IT LEGITIMATELY, and this refusal is what stops such a bill:
+         * a prize winner who plays ninety minutes on a two-hour voucher and buys nothing owes
+         * nothing, and there is no route in this system to close a bill without a payment. That
+         * is a real gap rather than a rule -- see the same acknowledgement on getUnsettledBills
+         * -- and it wants its own decision rather than being papered over here.
+         */
         if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BusinessRuleException("There is nothing to charge on this bill.");
         }
@@ -569,6 +584,21 @@ public class CheckoutServiceImpl implements CheckoutService {
             payload.put("discountAmount", bill.getDiscountAmount());
             payload.put("discountReason", bill.getDiscountReason());
         }
+        /*
+         * The voucher line, on the same terms as the discount above: written only when there
+         * was one, so an ordinary chit reads exactly as it always has.
+         *
+         * The code is printed because it is the customer's own -- they read it out at the
+         * counter -- and because it is what makes the chit checkable against the giveaway if
+         * anybody ever asks. The hours are stated as HOURS here and not minutes: the prize was
+         * advertised in hours, and this is the one document the winner takes away.
+         */
+        if (bill.getVoucherAmount().signum() > 0) {
+            payload.put("voucherCode", voucherCodeFor(bill.getVoucherId()));
+            payload.put("voucherMinutesCovered", bill.getVoucherMinutesCovered());
+            payload.put("voucherHoursCovered", hoursCovered(bill.getVoucherMinutesCovered()));
+            payload.put("voucherAmount", bill.getVoucherAmount());
+        }
         payload.put("totalAmount", bill.getTotalAmount());
         if (payment != null) {
             payload.put("method", payment.getMethod().name());
@@ -600,6 +630,27 @@ public class CheckoutServiceImpl implements CheckoutService {
             return null;
         }
         return appUserRepository.findById(userId).map(AppUser::getUsername).orElse("someone");
+    }
+
+    private String voucherCodeFor(UUID voucherId) {
+        if (voucherId == null) {
+            return null;
+        }
+        return voucherRepository.findById(voucherId)
+                .map(voucher -> VoucherCodes.display(voucher.getCode()))
+                .orElse(null);
+    }
+
+    // "1.5" for 90 minutes, "2" for 120. Trailing zeros dropped, because a receipt reading
+    // "2.0 hours" is a receipt written by a program rather than by the hall.
+    private String hoursCovered(Integer minutes) {
+        if (minutes == null) {
+            return null;
+        }
+        return BigDecimal.valueOf(minutes)
+                .divide(BigDecimal.valueOf(60), 2, java.math.RoundingMode.HALF_UP)
+                .stripTrailingZeros()
+                .toPlainString();
     }
 
     private Long receiptNoFor(UUID billId) {

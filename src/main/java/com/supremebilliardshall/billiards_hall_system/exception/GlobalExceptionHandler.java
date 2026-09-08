@@ -117,7 +117,10 @@ public class GlobalExceptionHandler {
             Map.entry("payment_one_per_bill_key", "That bill has already been paid"),
             Map.entry("payment_idempotency_key", "That checkout has already been recorded"),
             Map.entry("cash_count_day_key", "The drawer has already been counted for that business day"),
-            Map.entry("receipt_bill_key", "That bill already has a receipt")
+            Map.entry("receipt_bill_key", "That bill already has a receipt"),
+            // Reachable only by two batches generating the same code at the same instant, which
+            // VoucherServiceImpl retries past. This is the message if the retries are exhausted.
+            Map.entry("voucher_code_key", "That voucher code already exists")
     );
 
     @ExceptionHandler(DataIntegrityViolationException.class)

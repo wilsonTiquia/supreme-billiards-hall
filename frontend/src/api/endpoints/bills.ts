@@ -17,6 +17,7 @@ import type {
   UnpaidBill,
   UnsettledBill,
   VoidBillLineRequest,
+  VoucherRedemption,
 } from '../types';
 
 /**
@@ -88,6 +89,26 @@ export function discountBill(
 /** Puts the bill back to its full amount. Audited like the discount itself. */
 export function clearBillDiscount(billId: string): Promise<Bill> {
   return request<Bill>(`/bills/${billId}/discount`, { method: 'DELETE' });
+}
+
+/**
+ * Spends a giveaway voucher against this bill.
+ *
+ * The code is sent as typed — the server normalises case, spaces and dashes, so "sb 7k4-m2q"
+ * and "SB7K4M2Q" both work. Every refusal comes back as its own 409 message; there is no code
+ * to branch on and none is needed, because each message says a different thing to the cashier.
+ */
+export function redeemVoucher(billId: string, code: string): Promise<VoucherRedemption> {
+  return request<VoucherRedemption>(`/bills/${billId}/voucher`, {
+    method: 'POST',
+    body: { code },
+  });
+}
+
+/** Puts the code back, unredeemed, for one entered against the wrong bill. Audited like the
+ *  redemption itself. */
+export function releaseVoucher(billId: string): Promise<VoucherRedemption> {
+  return request<VoucherRedemption>(`/bills/${billId}/voucher`, { method: 'DELETE' });
 }
 
 /** The reason is required and non-blank, or the server returns 400. */

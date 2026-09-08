@@ -12,6 +12,7 @@ import com.supremebilliardshall.billiards_hall_system.repository.BranchRepositor
 import com.supremebilliardshall.billiards_hall_system.repository.CustomerTypeRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.PoolTableRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.TableSessionRepository;
+import com.supremebilliardshall.billiards_hall_system.repository.VoucherRepository;
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
 import com.supremebilliardshall.billiards_hall_system.service.AuditService;
 import com.supremebilliardshall.billiards_hall_system.service.BillService;
@@ -48,6 +49,9 @@ public class BillServiceImpl implements BillService {
     private final CustomerTypeRepository customerTypeRepository;
     private final TableSessionRepository tableSessionRepository;
     private final PoolTableRepository poolTableRepository;
+    // Read-only, and for one thing: naming the voucher already spent on a bill. Redeeming and
+    // releasing live in VoucherService, which owns that state.
+    private final VoucherRepository voucherRepository;
     private final StockService stockService;
     private final SessionService sessionService;
     private final SessionNoteService sessionNoteService;
@@ -61,6 +65,7 @@ public class BillServiceImpl implements BillService {
                            CustomerTypeRepository customerTypeRepository,
                            TableSessionRepository tableSessionRepository,
                            PoolTableRepository poolTableRepository,
+                           VoucherRepository voucherRepository,
                            StockService stockService,
                            SessionService sessionService,
                            SessionNoteService sessionNoteService,
@@ -73,6 +78,7 @@ public class BillServiceImpl implements BillService {
         this.customerTypeRepository = customerTypeRepository;
         this.tableSessionRepository = tableSessionRepository;
         this.poolTableRepository = poolTableRepository;
+        this.voucherRepository = voucherRepository;
         this.stockService = stockService;
         this.sessionService = sessionService;
         this.sessionNoteService = sessionNoteService;
@@ -240,12 +246,23 @@ public class BillServiceImpl implements BillService {
         requireOpen(bill);
 
         List<BillLine> lines = billLineRepository.findByBillId(bill.getId());
-        // The LIVE subtotal, summed from the lines. bill.subtotal_time and subtotal_items are
-        // still zero at this point -- nothing writes them until checkout finalises the bill --
-        // so reading them off the row would compare the charge against 0.00 and reject
-        // everything. Same reason V19's check constraint is conditioned on the bill being
-        // finalised: this is the only place the figure exists yet.
-        BigDecimal subtotal = sumLive(lines, BillLineKind.TIME).add(sumLive(lines, BillLineKind.PRODUCT));
+        /*
+         * The LIVE subtotal, summed from the lines and LESS ANY VOUCHER ALREADY ON THE BILL.
+         *
+         * bill.subtotal_time and subtotal_items are still zero at this point -- nothing writes
+         * them until checkout finalises the bill -- so reading them off the row would compare
+         * the charge against 0.00 and reject everything. Same reason V19's check constraint is
+         * conditioned on the bill being finalised: this is the only place the figure exists yet.
+         *
+         * The voucher is subtracted because the counter types the FINAL charge, whatever else
+         * is already on the bill. A 654-peso bill carrying a 480-peso voucher is a 174-peso
+         * bill as far as this conversation goes, and "make it 150" has to mean 150 in the
+         * drawer rather than 150 before a giveaway the customer has already been granted.
+         * Without this the two would compose into a negative total.
+         */
+        BigDecimal subtotal = sumLive(lines, BillLineKind.TIME)
+                .add(sumLive(lines, BillLineKind.PRODUCT))
+                .subtract(bill.getVoucherAmount());
         BigDecimal charge = billDiscountRequestDTO.getChargeAmount();
 
         if (charge.compareTo(subtotal) > 0) {
@@ -320,12 +337,12 @@ public class BillServiceImpl implements BillService {
     // than the multi-table aggregate that would replace them.
     private UnsettledBillResponseDTO toUnsettledResponseDto(Bill bill) {
         List<BillLine> lines = billLineRepository.findByBillId(bill.getId());
-        // Discounted, like every other quotation of this bill. A bill can be discounted and
-        // then forgotten on the floor, and a strip quoting the full amount would send staff
-        // back to the customer with a figure that was already agreed away.
-        BigDecimal totalAmount = sumLive(lines, BillLineKind.TIME)
-                .add(sumLive(lines, BillLineKind.PRODUCT))
-                .subtract(bill.getDiscountAmount());
+        // Discounted and vouchered, like every other quotation of this bill. A bill can carry
+        // both and then be forgotten on the floor, and a strip quoting the full amount would
+        // send staff back to the customer with a figure that was already agreed away.
+        BigDecimal totalAmount = BillTotals.payable(
+                sumLive(lines, BillLineKind.TIME), sumLive(lines, BillLineKind.PRODUCT),
+                bill.getDiscountAmount(), bill.getVoucherAmount());
 
         List<TableSession> sessions = tableSessionRepository.findByBillId(bill.getId());
 
@@ -406,10 +423,12 @@ public class BillServiceImpl implements BillService {
 
         BigDecimal subtotalTime = sumLive(lines, BillLineKind.TIME);
         BigDecimal subtotalItems = sumLive(lines, BillLineKind.PRODUCT);
-        // Fixed, so it does not move when a line is added: the total rises and the discount
-        // stays where it was put.
+        // Both fixed, so neither moves when a line is added: the total rises and the two
+        // reductions stay where they were put.
         BigDecimal discountAmount = bill.getDiscountAmount();
-        BigDecimal totalAmount = subtotalTime.add(subtotalItems).subtract(discountAmount);
+        BigDecimal voucherAmount = bill.getVoucherAmount();
+        BigDecimal totalAmount = BillTotals.payable(subtotalTime, subtotalItems,
+                discountAmount, voucherAmount);
 
         BillResponseDTO responseDto = branchContext.isAdmin()
                 ? new BillAdminResponseDTO()
@@ -429,6 +448,20 @@ public class BillServiceImpl implements BillService {
         responseDto.setDiscountReason(bill.getDiscountReason());
         responseDto.setDiscountByUsername(usernameOf(bill.getDiscountBy()));
         responseDto.setDiscountAt(bill.getDiscountAt());
+        responseDto.setVoucherAmount(voucherAmount);
+        responseDto.setVoucherMinutesCovered(bill.getVoucherMinutesCovered());
+        // The DISPLAY form of the code, and its face value beside what it actually reached --
+        // "90 of 120 min" is what tells the customer they forfeited half an hour.
+        //
+        // Returning a code here is safe where returning the admin code list is not: this one
+        // has already been spent, on this bill, by the person reading the screen, and the
+        // receipt has to name it anyway.
+        if (bill.getVoucherId() != null) {
+            voucherRepository.findById(bill.getVoucherId()).ifPresent(voucher -> {
+                responseDto.setVoucherCode(VoucherCodes.display(voucher.getCode()));
+                responseDto.setVoucherMinutes(voucher.getMinutes());
+            });
+        }
         responseDto.setTotalAmount(totalAmount);
         responseDto.setLines(lines.stream().map(this::toResponseDto).toList());
         responseDto.setSessions(sessionService.getSummariesForBill(bill.getId()));

@@ -1,16 +1,23 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { clearBillDiscount, discountBill, fetchCheckout, payBill } from '@/api/endpoints/bills';
+import {
+  clearBillDiscount,
+  discountBill,
+  fetchCheckout,
+  payBill,
+  redeemVoucher,
+  releaseVoucher,
+} from '@/api/endpoints/bills';
 import { overrideBilledMinutes } from '@/api/endpoints/sessions';
 import { Field } from '@/components/Field';
 import { queryKeys } from '@/api/queryKeys';
 import { ErrorCode, isApiError, messageOf } from '@/api/errors';
-import type { PaymentRequest } from '@/api/types';
+import type { PaymentRequest, VoucherRedemption } from '@/api/types';
 import { newIdempotencyKey } from '@/lib/idempotency';
 import { useScreenTheme } from '@/app/useTheme';
 import { formatMoney } from '@/lib/money';
-import { formatBusinessDate } from '@/lib/datetime';
+import { formatBusinessDate, formatMinutes } from '@/lib/datetime';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Banner } from '@/components/Banner';
@@ -43,6 +50,15 @@ export function CheckoutPage() {
   const [chargeAmount, setChargeAmount] = useState('');
   const [discountReason, setDiscountReason] = useState('');
   const [discountError, setDiscountError] = useState<string | null>(null);
+  const [redeeming, setRedeeming] = useState(false);
+  const [voucherCode, setVoucherCode] = useState('');
+  const [voucherError, setVoucherError] = useState<string | null>(null);
+  /* What the server said the redemption did, held only until the operator moves on. This is
+     where the forfeited minutes get said out loud — the customer with a two-hour code who
+     played ninety minutes has thirty minutes taken off them, and the cashier is the one who
+     has to tell them so. It is not on the bill anywhere afterwards, by design: it is news, not
+     state. */
+  const [redemption, setRedemption] = useState<VoucherRedemption | null>(null);
   const [leavingUnpaid, setLeavingUnpaid] = useState(false);
 
   const checkout = useQuery({
@@ -190,6 +206,35 @@ export function CheckoutPage() {
     onError: (caught) => setDiscountError(messageOf(caught)),
   });
 
+  /* Free table time, won as a prize and produced at the counter when it is time to pay.
+     A third control beside the two above, and it reaches something neither of them does: a
+     measured quantity of TIME, covered at the rate that time was actually billed at.
+
+     Every refusal renders the server's own message. There are six of them and they say
+     different things — expired, already used, wrong pricing, wrong status, no time on the bill,
+     no such code — and "invalid code" for all six is useless to a cashier holding up a queue. */
+  const applyVoucher = useMutation({
+    mutationFn: (code: string) => redeemVoucher(billId, code),
+    onSuccess: (result) => {
+      setVoucherError(null);
+      setRedeeming(false);
+      setVoucherCode('');
+      setRedemption(result);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.checkout(billId) });
+    },
+    onError: (caught) => setVoucherError(messageOf(caught)),
+  });
+
+  const removeVoucher = useMutation({
+    mutationFn: () => releaseVoucher(billId),
+    onSuccess: () => {
+      setVoucherError(null);
+      setRedemption(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.checkout(billId) });
+    },
+    onError: (caught) => setVoucherError(messageOf(caught)),
+  });
+
   if (checkout.isPending) {
     return (
       <div className="flex justify-center py-16">
@@ -213,11 +258,15 @@ export function CheckoutPage() {
   /* ── Taking payment ──────────────────────────────────────────────────────── */
   const blocked = !checkout.data.canCheckout;
 
-  /* The bill BEFORE any discount — what the discount is taken off, and the ceiling on what can
-     be charged. Both halves come from the server; adding them is not pricing, it is restating
-     the figure the server already split in two. The stored discount and the total shown after
-     saving are the server's own, never these. */
-  const subtotal = bill.subtotalTime + bill.subtotalItems;
+  /* The bill BEFORE any discount but AFTER any voucher — what the discount is taken off, and
+     the ceiling on what can be charged. All three figures come from the server; adding and
+     subtracting them is not pricing, it is restating what the server already split apart. The
+     stored discount and the total shown after saving are the server's own, never these.
+
+     The voucher is subtracted because the counter types the FINAL charge, whatever else is on
+     the bill. A 654 bill carrying a 480 voucher is a 174 bill as far as "make it 150" goes,
+     and the server bounds it exactly this way. */
+  const subtotal = bill.subtotalTime + bill.subtotalItems - bill.voucherAmount;
   const typed = chargeAmount.trim() === '' ? null : Number(chargeAmount);
   const preview =
     typed === null || Number.isNaN(typed) || typed < 0 || typed > subtotal
@@ -404,6 +453,112 @@ export function CheckoutPage() {
             )}
             {!discounting && discountError ? (
               <Banner tone="danger">{discountError}</Banner>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Free table time won as a prize, produced at the counter when it is time to pay.
+            A third control, beside the two above, because it does a third thing: it covers a
+            measured quantity of TIME at the rate that time was billed at, and reaches nothing
+            else on the bill. */}
+        {!blocked ? (
+          <div className="mt-6 border-t border-border pt-4">
+            {redeeming ? (
+              <form
+                className="flex flex-col gap-4"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (voucherCode.trim() === '') return;
+                  applyVoucher.mutate(voucherCode.trim());
+                }}
+              >
+                <Field
+                  label="Voucher code"
+                  value={voucherCode}
+                  data-autofocus
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="SB-7K4-M2Q"
+                  className="uppercase tracking-widest"
+                  hint="Read it off the customer's screen. Spaces and dashes do not matter, and neither does case."
+                  /* Uppercased as typed, because that is what the customer is looking at. The
+                     server normalises anyway — this is so the two agree on screen while the
+                     cashier checks character by character in a dark room. */
+                  onChange={(event) => setVoucherCode(event.target.value.toUpperCase())}
+                />
+                {voucherError ? <Banner tone="danger">{voucherError}</Banner> : null}
+                <div className="flex justify-end gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      setRedeeming(false);
+                      setVoucherError(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type="submit"
+                    pending={applyVoucher.isPending}
+                    disabled={voucherCode.trim() === ''}
+                  >
+                    Apply voucher
+                  </Button>
+                </div>
+              </form>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-label uppercase text-text-dim">
+                  {bill.voucherAmount > 0
+                    ? `${formatMoney(bill.voucherAmount)} covered · ${bill.voucherCode ?? 'voucher'}`
+                    : 'Voucher'}
+                </span>
+                <div className="flex gap-3">
+                  {bill.voucherAmount > 0 ? (
+                    <Button
+                      variant="secondary"
+                      pending={removeVoucher.isPending}
+                      onClick={() => {
+                        setVoucherError(null);
+                        removeVoucher.mutate();
+                      }}
+                    >
+                      Remove voucher
+                    </Button>
+                  ) : (
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setVoucherError(null);
+                        setVoucherCode('');
+                        setRedeeming(true);
+                      }}
+                    >
+                      Apply voucher
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* THE THING THE CASHIER HAS TO SAY OUT LOUD, at the moment it becomes true.
+                Unused minutes are forfeited — no change, no residual balance, the code is
+                spent — and the customer finding that out later, from a receipt, is how an
+                argument starts at the counter of a hall this size. Every figure here is the
+                server's; the browser computes none of it. */}
+            {!redeeming && redemption ? (
+              <Banner tone={redemption.minutesForfeited > 0 ? 'warning' : 'info'}>
+                {redemption.code} covered {formatMinutes(redemption.minutesCovered)} of table time
+                — {formatMoney(redemption.voucherAmount)} off.
+                {redemption.minutesForfeited > 0
+                  ? ` The remaining ${redemption.minutesForfeited} min of the voucher are forfeited: there is no change and no balance left on it. Tell the customer the code is now spent.`
+                  : ' The code is now spent.'}
+              </Banner>
+            ) : null}
+
+            {!redeeming && voucherError ? (
+              <Banner tone="danger">{voucherError}</Banner>
             ) : null}
           </div>
         ) : null}

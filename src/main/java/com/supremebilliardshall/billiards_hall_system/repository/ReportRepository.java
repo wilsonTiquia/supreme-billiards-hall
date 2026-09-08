@@ -275,6 +275,32 @@ public class ReportRepository {
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d
                 AND b.discount_amount > 0
             ),
+            vouchers AS (
+              /*
+               * Free table time given away as a prize -- a social-media giveaway, a tournament
+               * placing -- and redeemed at the counter against the winner's bill.
+               *
+               * A THIRD row in this band, beside the discount and the time reduction, and it
+               * overlaps neither. A time reduction rewrites the TIME lines before either of the
+               * other two is computed; the voucher then covers a measured slice of what is left
+               * and the discount is agreed on the remainder. Each figure is read off a
+               * different column over an amount the others never touch, so a bill carrying all
+               * three appears in all three rows correctly and they sum to what was given away.
+               *
+               * Dated by the BILL's business_date, like the discount, rather than by
+               * voucher.redeemed_at: the giveaway belongs to the night that was played.
+               *
+               * Gross is the post-voucher figure, for the discount's reason: gross has to
+               * reconcile to the drawer. A winner who played three hours on a two-hour voucher
+               * puts 240 pesos in the till, and a gross of 720 would leave the cash count 480
+               * short every time with nothing accounting for it. This band is that accounting.
+               */
+              SELECT count(*)::int AS "voucherCount",
+                     coalesce(sum(b.voucher_amount), 0) AS "voucherAmount"
+              FROM bill b, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date = p.d
+                AND b.voucher_amount > 0
+            ),
             comps AS (
               SELECT coalesce(sum(-sm.quantity_delta), 0) AS "compQuantity",
                      coalesce(sum(-sm.quantity_delta * pr.avg_cost), 0) AS "compEstimatedCost"
@@ -339,12 +365,12 @@ public class ReportRepository {
               'tableUtilisation',   coalesce((SELECT jsonb_agg(to_jsonb(t)) FROM table_util t), '[]'::jsonb),
               'topItems',           coalesce((SELECT jsonb_agg(to_jsonb(i)) FROM top_items i), '[]'::jsonb),
               'paymentMix',         coalesce((SELECT jsonb_agg(to_jsonb(m)) FROM payment_mix m), '[]'::jsonb),
-              -- `disc` and not `d`: params.d is a DATE column in the outer scope, and an
-              -- unqualified `d` in to_jsonb() binds to that column rather than to the table
+              -- `disc` and `vch`, never `d`: params.d is a DATE column in the outer scope, and
+              -- an unqualified `d` in to_jsonb() binds to that column rather than to the table
               -- alias -- which merges a json string into the object and turns the whole of
               -- `losses` into an array.
-              'losses',             (SELECT to_jsonb(v) || to_jsonb(o) || to_jsonb(c) || to_jsonb(r) || to_jsonb(f) || to_jsonb(disc)
-                                     FROM voids v, overrides o, comps c, time_reductions r, flats f, discounts disc),
+              'losses',             (SELECT to_jsonb(v) || to_jsonb(o) || to_jsonb(c) || to_jsonb(r) || to_jsonb(f) || to_jsonb(disc) || to_jsonb(vch)
+                                     FROM voids v, overrides o, comps c, time_reductions r, flats f, discounts disc, vouchers vch),
               'expenses',           jsonb_build_object(
                                       'total',         coalesce((SELECT x.amount FROM expenses x WHERE x.business_date = p.d), 0),
                                       -- Zero rather than null, so the client can always subtract.
@@ -463,6 +489,44 @@ public class ReportRepository {
               WHERE b.branch_id = p.branch_id AND b.business_date = p.d
                 AND b.discount_amount > 0
             ),
+            voucher_lines AS (
+              -- The same predicate as the `vouchers` CTE above, to the character: same branch,
+              -- same bill business_date, same voucher_amount > 0. The tile and this list are the
+              -- same rows counted twice, and if they ever disagreed the owner would have no way
+              -- to tell which one to believe.
+              --
+              -- The table name comes from the bill's EARLIEST session rather than from a join,
+              -- because this row is per bill and a merged bill has several. The lateral takes
+              -- one and says which; a join would multiply the row and double the amount.
+              SELECT b.id                               AS "billId",
+                     b.receipt_no                       AS "receiptNo",
+                     vo.code                            AS code,
+                     vb.note                            AS "batchNote",
+                     vo.minutes                         AS "voucherMinutes",
+                     b.voucher_minutes_covered          AS "minutesCovered",
+                     -- What the winner did not get to use. The code is spent either way: no
+                     -- change, no residual balance.
+                     GREATEST(vo.minutes - coalesce(b.voucher_minutes_covered, 0), 0)
+                                                        AS "minutesForfeited",
+                     b.voucher_amount                   AS "voucherAmount",
+                     tbl.name                           AS "poolTableName",
+                     u.username                         AS "actorUsername",
+                     vo.redeemed_at                     AS "redeemedAt"
+              FROM bill b
+              JOIN voucher vo       ON vo.id = b.voucher_id
+              JOIN voucher_batch vb ON vb.id = vo.batch_id
+              LEFT JOIN app_user u  ON u.id = vo.redeemed_by
+              LEFT JOIN LATERAL (
+                SELECT t2.name
+                FROM table_session ts2
+                JOIN pool_table t2 ON t2.id = ts2.pool_table_id
+                WHERE ts2.bill_id = b.id
+                ORDER BY ts2.opened_at
+                LIMIT 1
+              ) tbl ON true, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date = p.d
+                AND b.voucher_amount > 0
+            ),
             time_reduction_lines AS (
               SELECT t.name                              AS "poolTableName",
                      ts.billed_minutes                   AS "actualMinutes",
@@ -503,6 +567,12 @@ public class ReportRepository {
                 'discountAmount', coalesce((SELECT sum(dl."discountAmount")   FROM discount_lines dl), 0),
                 'lines', coalesce((SELECT jsonb_agg(to_jsonb(dl) ORDER BY dl."discountAt" DESC)
                                    FROM discount_lines dl), '[]'::jsonb)),
+              -- `vl` rather than `v`, which void_lines already holds, and never `d`.
+              'vouchers', jsonb_build_object(
+                'voucherCount',  coalesce((SELECT count(*)::int             FROM voucher_lines vl), 0),
+                'voucherAmount', coalesce((SELECT sum(vl."voucherAmount")   FROM voucher_lines vl), 0),
+                'lines', coalesce((SELECT jsonb_agg(to_jsonb(vl) ORDER BY vl."redeemedAt" DESC)
+                                   FROM voucher_lines vl), '[]'::jsonb)),
               'timeReductions', jsonb_build_object(
                 'reducedSessions',  coalesce((SELECT count(*)::int            FROM time_reduction_lines r), 0),
                 'forgoneRevenue',   coalesce((SELECT sum(r."forgoneRevenue")  FROM time_reduction_lines r), 0),

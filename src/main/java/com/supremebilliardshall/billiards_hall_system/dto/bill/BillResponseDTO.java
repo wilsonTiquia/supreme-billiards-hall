@@ -44,7 +44,21 @@ public class BillResponseDTO {
     private String discountByUsername;
     private OffsetDateTime discountAt;
 
-    // subtotalTime + subtotalItems - discountAmount. What is actually being charged.
+    /*
+     * The voucher, on the base type for the same reason the discount is: it is what the
+     * customer is being charged, and the counter has to read it back.
+     *
+     * `voucherCode` is the DISPLAY form, SB-7K4-M2Q. That is safe to return here where the
+     * whole code list is not -- this one has already been spent, on this bill, in front of the
+     * person reading it, and the receipt has to name it anyway.
+     */
+    private BigDecimal voucherAmount;
+    private String voucherCode;
+    private Integer voucherMinutes;
+    private Integer voucherMinutesCovered;
+
+    // subtotalTime + subtotalItems - discountAmount - voucherAmount. What is actually being
+    // charged. Both reductions are fixed amounts; adding a line raises this and leaves them.
     private BigDecimal totalAmount;
 
     private List<? extends BillLineResponseDTO> lines;

@@ -18,6 +18,7 @@ import { ProductsPage } from '@/features/admin/catalog/ProductsPage';
 import { CategoriesPage } from '@/features/admin/catalog/CategoriesPage';
 import { TablesPage } from '@/features/admin/catalog/TablesPage';
 import { CustomerTypesPage } from '@/features/admin/catalog/CustomerTypesPage';
+import { VouchersPage } from '@/features/admin/vouchers/VouchersPage';
 import { ExpenseCategoriesPage } from '@/features/admin/catalog/ExpenseCategoriesPage';
 import { StockPage } from '@/features/admin/stock/StockPage';
 import { SalesPage } from '@/features/admin/sales/SalesPage';
@@ -55,6 +56,7 @@ export function AppRoutes() {
               <Route path="admin/tables" element={<TablesPage />} />
               <Route path="admin/customer-types" element={<CustomerTypesPage />} />
               <Route path="admin/expense-categories" element={<ExpenseCategoriesPage />} />
+              <Route path="admin/vouchers" element={<VouchersPage />} />
               <Route path="admin/settings" element={<SettingsPage />} />
               <Route path="admin/staff" element={<StaffPage />} />
               <Route path="admin/stock" element={<StockPage />} />

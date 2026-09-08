@@ -7,7 +7,7 @@ import type { Losses, LossesDetail as LossesDetailData } from '@/api/types';
 import { Modal } from '@/components/Modal';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
-import { formatDateTime } from '@/lib/datetime';
+import { formatDateTime, formatMinutes } from '@/lib/datetime';
 import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
 
 export type LossKind =
@@ -17,7 +17,8 @@ export type LossKind =
   | 'flatRates'
   | 'comps'
   | 'timeReductions'
-  | 'discounts';
+  | 'discounts'
+  | 'vouchers';
 
 const TITLES: Record<LossKind, string> = {
   voids: 'Voided lines',
@@ -29,6 +30,7 @@ const TITLES: Record<LossKind, string> = {
   comps: 'Given away',
   timeReductions: 'Time not charged',
   discounts: 'Discounts',
+  vouchers: 'Vouchers',
 };
 
 /** A figure that must equal its tile. When it does not, say so rather than showing both quietly. */
@@ -102,6 +104,8 @@ export function LossesDetail({
         <TimeReductions data={detail.data} summary={summary} />
       ) : kind === 'discounts' ? (
         <Discounts data={detail.data} summary={summary} />
+      ) : kind === 'vouchers' ? (
+        <Vouchers data={detail.data} summary={summary} />
       ) : kind === 'flatRates' ? (
         <FlatRates data={detail.data} summary={summary} />
       ) : kind === 'promos' ? (
@@ -251,6 +255,66 @@ function Discounts({ data, summary }: { data: LossesDetailData; summary: Losses 
               <p className="mt-1 text-body text-text">{line.reason ?? '— no reason recorded —'}</p>
               <p className="text-label uppercase text-text-dim">
                 {line.actorUsername ?? 'unknown'} · {formatDateTime(line.discountAt)}
+                {' · '}
+                <Link to={`/receipt/${line.billId}`} className="text-info underline">
+                  receipt #{line.receiptNo}
+                </Link>
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Free table time won as a prize and redeemed at the counter.
+ *
+ * The only giveaway on this screen where what the hall gave up and what the customer received
+ * are different numbers. A two-hour code spent on a ninety-minute session costs the hall ninety
+ * minutes of table time; the other thirty are forfeited and cost nothing. Both are shown,
+ * because the owner sizing the next giveaway needs to know how much of it went unused — fifty
+ * two-hour codes is not fifty times two hours of lost revenue, and budgeting it as though it
+ * were is how a promotion gets cancelled for the wrong reason.
+ */
+function Vouchers({ data, summary }: { data: LossesDetailData; summary: Losses }) {
+  const { lines, voucherCount, voucherAmount } = data.vouchers;
+  return (
+    <div className="flex flex-col gap-4">
+      <SectionTotal
+        label={`${voucherCount} ${voucherCount === 1 ? 'voucher' : 'vouchers'} redeemed`}
+        detail={voucherAmount}
+        summary={summary.voucherAmount}
+        format={formatMoney}
+      />
+      {lines.length === 0 ? (
+        <Empty what="vouchers" />
+      ) : (
+        <ul className="divide-y divide-border border-t border-border">
+          {lines.map((line, index) => (
+            <li key={index} className="py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-body text-text">
+                  {line.code}
+                  {line.poolTableName ? ` · ${line.poolTableName}` : ''}
+                </span>
+                <span className="tabular text-body text-danger">
+                  {formatMoney(line.voucherAmount)}
+                </span>
+              </div>
+              <p className="mt-1 text-body text-text">
+                {formatMinutes(line.minutesCovered)} covered of{' '}
+                {formatMinutes(line.voucherMinutes)}
+                {line.minutesForfeited > 0
+                  ? ` · ${line.minutesForfeited} min forfeited`
+                  : ' · used in full'}
+              </p>
+              <p className="text-body text-text-dim">
+                {line.batchNote ?? '— no batch note —'}
+              </p>
+              <p className="text-label uppercase text-text-dim">
+                {line.actorUsername ?? 'unknown'} · {formatDateTime(line.redeemedAt)}
                 {' · '}
                 <Link to={`/receipt/${line.billId}`} className="text-info underline">
                   receipt #{line.receiptNo}

@@ -59,6 +59,7 @@ const ADMIN: NavGroup[] = [
       { to: '/admin/tables', label: 'Tables', short: 'Tb' },
       { to: '/admin/customer-types', label: 'Customer types', short: 'CT' },
       { to: '/admin/expense-categories', label: 'Expense categories', short: 'EC' },
+      { to: '/admin/vouchers', label: 'Vouchers', short: 'Vo' },
       { to: '/admin/staff', label: 'Staff', short: 'Sf' },
       { to: '/admin/settings', label: 'Settings', short: 'Se' },
     ],

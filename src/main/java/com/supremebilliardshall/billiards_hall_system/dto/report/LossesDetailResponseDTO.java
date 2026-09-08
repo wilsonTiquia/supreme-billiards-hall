@@ -30,6 +30,7 @@ public class LossesDetailResponseDTO {
     private TimeReductionSection timeReductions;
     private FlatRateSection flatRates;
     private DiscountSection discounts;
+    private VoucherSection vouchers;
 
     @Data
     @NoArgsConstructor
@@ -74,6 +75,15 @@ public class LossesDetailResponseDTO {
         private Integer discountBills;
         private BigDecimal discountAmount;
         private List<DiscountLossLineDTO> lines;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class VoucherSection {
+        private Integer voucherCount;
+        private BigDecimal voucherAmount;
+        private List<VoucherLossLineDTO> lines;
     }
 
     @Data

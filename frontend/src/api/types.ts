@@ -462,7 +462,24 @@ export interface Bill {
   discountReason: string | null;
   discountByUsername: string | null;
   discountAt: IsoInstant | null;
-  /** subtotalTime + subtotalItems - discountAmount. What is actually being charged. */
+  /**
+   * Free table time given away as a prize and redeemed at the counter.
+   *
+   * The second reduction, and independent of the discount: this one covers a measured quantity
+   * of TIME at the rate that time was billed at, and reaches nothing else. `voucherMinutes` is
+   * what the code was worth and `voucherMinutesCovered` is what it reached — the difference is
+   * what the customer forfeited, because unused minutes are not refunded.
+   *
+   * `voucherCode` is the display form, SB-7K4-M2Q. Zero and nulls when no voucher was used.
+   */
+  voucherAmount: Money;
+  voucherCode: string | null;
+  voucherMinutes: number | null;
+  voucherMinutesCovered: number | null;
+  /**
+   * subtotalTime + subtotalItems - discountAmount - voucherAmount. What is actually being
+   * charged. Both reductions are fixed amounts; adding a line raises this and leaves them.
+   */
   totalAmount: Money;
   lines: BillLine[];
   sessions: TableSessionSummary[];
@@ -975,6 +992,14 @@ export interface Losses {
    */
   discountBills: number;
   discountAmount: Money;
+  /**
+   * Free table time redeemed against a bill. The third bill-level giveaway, overlapping
+   * neither of the others, and — like the discount — a figure that EXPLAINS gross rather than
+   * one subtracted from it. A winner who played three hours on a two-hour voucher put 240 in
+   * the drawer; gross says 240, and this says where the other 480 went.
+   */
+  voucherCount: number;
+  voucherAmount: Money;
 }
 
 /* ── Losses drill-down (ADMIN) ─────────────────────────────────────────────────────
@@ -1013,6 +1038,23 @@ export interface DiscountLossLine {
   reason: string | null;
   actorUsername: string | null;
   discountAt: IsoInstant;
+}
+
+export interface VoucherLossLine {
+  billId: UUID;
+  receiptNo: number;
+  /** Display form, SB-7K4-M2Q. */
+  code: string;
+  /** What the giveaway was — the only thing telling one batch's redemptions from another's. */
+  batchNote: string | null;
+  /** What the code was worth, what it reached, and what the customer lost. */
+  voucherMinutes: number;
+  minutesCovered: number;
+  minutesForfeited: number;
+  voucherAmount: Money;
+  poolTableName: string | null;
+  actorUsername: string | null;
+  redeemedAt: IsoInstant;
 }
 
 export interface FlatRateLossLine {
@@ -1079,6 +1121,75 @@ export interface LossesDetail {
     discountAmount: Money;
     lines: DiscountLossLine[];
   };
+  vouchers: {
+    voucherCount: number;
+    voucherAmount: Money;
+    lines: VoucherLossLine[];
+  };
+}
+
+/* ── Vouchers ──────────────────────────────────────────────────────────────────────
+   Free table time, generated in batches by the owner and spent at the counter. The code list is
+   ADMIN only: whoever can read an unredeemed code can redeem it. */
+
+export type VoucherStatus = 'OUTSTANDING' | 'REDEEMED' | 'EXPIRED';
+
+export interface Voucher {
+  id: UUID;
+  batchId: UUID;
+  /** Display form, SB-7K4-M2Q. The stored form has no separators and is never sent. */
+  code: string;
+  minutes: number;
+  expiresOn: BusinessDate;
+  /**
+   * Resolved against the current BUSINESS date, not stored: a code expiring tonight is
+   * outstanding until the night ends at 05:00, which is when the customer is still playing.
+   */
+  status: VoucherStatus;
+  redeemedAt: IsoInstant | null;
+  redeemedByUsername: string | null;
+  redeemedBillId: UUID | null;
+  redeemedReceiptNo: number | null;
+}
+
+export interface VoucherBatch {
+  id: UUID;
+  /** Minutes is what is stored; `hoursLabel` is how the hall says it — "2 hours", "90 min". */
+  minutes: number;
+  hoursLabel: string;
+  quantity: number;
+  expiresOn: BusinessDate;
+  note: string | null;
+  createdByUsername: string | null;
+  createdAt: IsoInstant;
+  /** Exclusive, and they sum to `issued`. `outstanding` is what could still walk in. */
+  issued: number;
+  redeemed: number;
+  expired: number;
+  outstanding: number;
+  /** Only on the response to CREATING a batch, so the owner can print them. Null on the list. */
+  codes: Voucher[] | null;
+}
+
+export interface VoucherBatchRequest {
+  /** HOURS — the server converts to minutes and refuses a fractional minute. */
+  hours: number;
+  quantity: number;
+  expiresOn: BusinessDate;
+  note?: string;
+}
+
+/**
+ * What just happened at the counter, with the fact the cashier has to say out loud:
+ * `minutesForfeited`. No change, no residual balance, the code is spent.
+ */
+export interface VoucherRedemption {
+  bill: Bill;
+  code: string;
+  voucherMinutes: number;
+  minutesCovered: number;
+  minutesForfeited: number;
+  voucherAmount: Money;
 }
 
 export interface ReportLowStock {

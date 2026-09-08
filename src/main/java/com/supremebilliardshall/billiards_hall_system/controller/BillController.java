@@ -6,9 +6,12 @@ import com.supremebilliardshall.billiards_hall_system.dto.bill.*;
 import com.supremebilliardshall.billiards_hall_system.dto.payment.PaymentRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.payment.PaymentResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.session.SessionNoteResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.voucher.RedeemVoucherRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.voucher.VoucherRedemptionResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.service.BillService;
 import com.supremebilliardshall.billiards_hall_system.service.CheckoutService;
 import com.supremebilliardshall.billiards_hall_system.service.SessionNoteService;
+import com.supremebilliardshall.billiards_hall_system.service.VoucherService;
 import jakarta.validation.Valid;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -28,13 +31,16 @@ public class BillController {
     private final BillService billService;
     private final CheckoutService checkoutService;
     private final SessionNoteService sessionNoteService;
+    private final VoucherService voucherService;
 
     public BillController(BillService billService,
                           CheckoutService checkoutService,
-                          SessionNoteService sessionNoteService) {
+                          SessionNoteService sessionNoteService,
+                          VoucherService voucherService) {
         this.billService = billService;
         this.checkoutService = checkoutService;
         this.sessionNoteService = sessionNoteService;
+        this.voucherService = voucherService;
     }
 
     // One business day's settled sales, newest first. ADMIN, because browsing the night's
@@ -133,6 +139,37 @@ public class BillController {
                 ok(APIResponse.success(
                         bill,
                         "Discount cleared successfully"));
+    }
+
+    /*
+     * Spending a giveaway voucher, beside the discount rather than under the admin routes that
+     * create them. Making a batch is the owner's job; spending one is the cashier's, at the
+     * counter, with the customer's phone in front of them — so this is one of the few voucher
+     * routes that is not ADMIN.
+     *
+     * That split is the security boundary: whoever can READ an unredeemed code can spend it, so
+     * the code list stays admin-only while redemption, which needs a code somebody already
+     * holds, does not.
+     */
+    @PostMapping("/{id}/voucher")
+    public ResponseEntity<APIResponse<VoucherRedemptionResponseDTO>> redeemVoucher(@PathVariable UUID id,
+                                                                                   @Valid @RequestBody RedeemVoucherRequestDTO redeemVoucherRequestDTO) {
+        VoucherRedemptionResponseDTO redemption = voucherService.redeem(id, redeemVoucherRequestDTO);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        redemption,
+                        "Voucher redeemed successfully"));
+    }
+
+    // For a code entered against the wrong bill. Puts it back in the pot, unredeemed, and the
+    // bill back to its full amount. Audited both ways.
+    @DeleteMapping("/{id}/voucher")
+    public ResponseEntity<APIResponse<VoucherRedemptionResponseDTO>> releaseVoucher(@PathVariable UUID id) {
+        VoucherRedemptionResponseDTO redemption = voucherService.release(id);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        redemption,
+                        "Voucher released successfully"));
     }
 
     // Preview only: reading this writes nothing.

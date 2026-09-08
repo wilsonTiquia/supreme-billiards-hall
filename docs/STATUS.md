@@ -77,6 +77,12 @@ Tailscale access specifically to check takings from home.
 - **Any employee can set any friend rate, discount any time, give away any stock** — no limits, no
   approvals, all logged
 - **A stock correction cannot be undone** — post another; the ledger is append-only
+- **A bill of ₱0.00 cannot be settled.** `payment_amount_chk` requires more than zero and there is
+  no route that closes a bill without a payment, so a bill reduced to nothing sits on the floor.
+  Reachable three ways: a zero friend rate, a zero flat rate, and — now the common one — **a
+  voucher that covers the whole of a bill with nothing else on it**, which is exactly the prize
+  winner who plays ninety minutes on a two-hour code and buys no drinks. Checkout refuses it with
+  "There is nothing to charge on this bill." **This needs a decision before the giveaway runs**
 - **No PDF export**
 - **`.golive` must never be deleted.** It is the only thing stopping `reset-for-testing.sh` from
   wiping a trading database
