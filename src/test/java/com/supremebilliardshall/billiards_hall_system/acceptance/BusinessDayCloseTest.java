@@ -10,16 +10,22 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.OffsetDateTime;
 import java.util.UUID;
+import java.util.function.Supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -46,6 +52,12 @@ class BusinessDayCloseTest {
     @Autowired
     private CashCountRepository cashCountRepository;
 
+    @Autowired
+    private BillRepository billRepository;
+
+    @Autowired
+    private PaymentRepository paymentRepository;
+
     private UUID branchId;
     private UUID employeeId;
     private UUID adminId;
@@ -66,6 +78,18 @@ class BusinessDayCloseTest {
         adminId = createUser("close-admin-", UserRole.ADMIN);
 
         businessDate = branchRepository.currentBusinessDate();
+
+        /*
+         * The takings the count is about, as real payment rows.
+         *
+         * They used to be implied by setting cashSales on the row by hand while the ledger held
+         * nothing. That was fine while a correction only moved counted_cash, but PUT now
+         * recomputes both sides of the subtraction, and a frozen figure with no payments behind
+         * it would recompute to 0.00 and change what this test is measuring. The assertion
+         * below is unchanged; the fixture is simply no longer lying about where 460.00 came
+         * from.
+         */
+        cashSale(new BigDecimal("460.00"));
 
         // The drawer is counted, so the only thing left is the close itself.
         CashCount cashCount = new CashCount();
@@ -130,6 +154,101 @@ class BusinessDayCloseTest {
                         .contains("already the counted figure"));
     }
 
+    /*
+     * The night the QA run found, in pesos.
+     *
+     * The drawer is counted at 460.00 while a table is still running; that table then finishes
+     * and 3,241.00 in cash lands on the same business day. Every figure on the count row is now
+     * describing a drawer that has moved.
+     *
+     * Before the fix this reported variance 0.00 with stale false, the day closed over it, and
+     * neither PUT (day closed) nor recount (nothing traded since the close) could reach it
+     * again. The assertions below are the three ways out: it is visible, the close refuses, and
+     * the recount corrects it.
+     */
+    @Test
+    void aDrawerCountedBeforeTheLastTakingsIsVisibleRefusesTheCloseAndCanBeRecounted() throws Exception {
+        cashSale(new BigDecimal("3241.00"));
+
+        JsonNode count = body(mockMvc.perform(get("/api/v1/business-day/" + businessDate + "/cash-count")
+                .with(user(employee()))).andExpect(status().isOk())).get("data");
+
+        // Visible: the frozen figures still read the old night, and the row says so.
+        assertThat(count.get("stale").asBoolean()).isTrue();
+        assertThat(money(count, "cashSinceCount")).isEqualByComparingTo("3241.00");
+        assertThat(money(count, "cashSales")).isEqualByComparingTo("460.00");
+        assertThat(money(count, "expectedCash")).isEqualByComparingTo("460.00");
+
+        // Refused, naming the amount rather than the word "stale".
+        mockMvc.perform(post("/api/v1/business-day/" + businessDate + "/close").with(user(employee())))
+                .andExpect(status().isConflict())
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .contains("3241.00")
+                        .contains("has been taken")
+                        .contains("Recount the drawer before closing"));
+
+        /*
+         * Corrected. The drawer really holds 455.00 + 3,241.00, and counting that is the whole
+         * night: cash_sales recomputes to 3,701.00 and the variance comes back to 0.00 against
+         * a figure that is now true, rather than 0.00 against one that was not.
+         */
+        JsonNode recounted = body(mockMvc.perform(post("/api/v1/business-day/" + businessDate + "/recount")
+                .with(user(employee()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"countedCash\":3696.00}"))
+                .andExpect(status().isOk())).get("data");
+
+        assertThat(money(recounted, "cashSales")).isEqualByComparingTo("3701.00");
+        assertThat(money(recounted, "expectedCash")).isEqualByComparingTo("3701.00");
+        assertThat(money(recounted, "variance")).isEqualByComparingTo("-5.00");
+        assertThat(recounted.get("stale").asBoolean()).isFalse();
+
+        // And the night can now be signed off, on figures that describe the drawer.
+        mockMvc.perform(post("/api/v1/business-day/" + businessDate + "/close").with(user(employee())))
+                .andExpect(status().isOk());
+    }
+
+    // A digital payment cannot move the drawer, so it must not block the close. A blocker that
+    // fires on money the count never claimed to hold is the kind people learn to ignore.
+    @Test
+    void aDigitalSaleAfterTheCountDoesNotBlockTheClose() throws Exception {
+        sale(new BigDecimal("500.00"), PaymentMethod.GCASH);
+
+        mockMvc.perform(post("/api/v1/business-day/" + businessDate + "/close").with(user(employee())))
+                .andExpect(status().isOk());
+    }
+
+    /*
+     * A correction moves both operands or it is not a correction.
+     *
+     * PUT used to write counted_cash alone, so on a night whose takings had grown, correcting
+     * the count to what the drawer actually held produced a variance equal to the money the
+     * frozen cash_sales had never seen -- a phantom discrepancy that looked authoritative.
+     */
+    @Test
+    void correctingTheCountRecomputesTheTakingsTooRatherThanOneSideOfTheSubtraction() throws Exception {
+        cashSale(new BigDecimal("3241.00"));
+
+        JsonNode corrected = body(mockMvc.perform(correction(admin(), "3701.00"))
+                .andExpect(status().isOk())).get("data");
+
+        assertThat(money(corrected, "cashSales")).isEqualByComparingTo("3701.00");
+        assertThat(money(corrected, "variance")).isEqualByComparingTo("0.00");
+    }
+
+    // Nothing has moved, so there is nothing to recount. The gate is the staleness of the
+    // figures, not whether the day happens to be closed.
+    @Test
+    void aCountThatStillDescribesTheDrawerCannotBeRecounted() throws Exception {
+        mockMvc.perform(post("/api/v1/business-day/" + businessDate + "/recount")
+                .with(user(employee()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"countedCash\":455.00}"))
+                .andExpect(status().isConflict())
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .contains("still stands"));
+    }
+
     private org.springframework.test.web.servlet.RequestBuilder correction(AppUserDetails as, String counted) {
         return put("/api/v1/business-day/" + businessDate + "/cash-count")
                 .with(user(as))
@@ -155,6 +274,75 @@ class BusinessDayCloseTest {
     private AppUserDetails employee() {
         return new AppUserDetails(employeeId, branchId, "close-employee",
                 "unused", "Close Tester", UserRole.EMPLOYEE, true);
+    }
+
+    private BigDecimal money(JsonNode node, String field) {
+        return new BigDecimal(node.get(field).asText());
+    }
+
+    private void cashSale(BigDecimal amount) {
+        sale(amount, PaymentMethod.CASH);
+    }
+
+    /*
+     * One finished sale on tonight's business date, settled.
+     *
+     * taken_at is pushed forward deliberately: staleness is "money moved after counted_at", and
+     * @CreationTimestamp stamps the count row from the same JVM clock, so a payment written in
+     * the same millisecond would be ambiguous. Half a minute is unambiguous and cannot cross
+     * the 10:00 business-day roll from any time a test realistically runs.
+     */
+    private void sale(BigDecimal amount, PaymentMethod method) {
+        // Allocated and advanced, the way finalise does it: receipt_no is unique, and more than
+        // one sale per test would otherwise collide on the branch's unchanged next number.
+        Branch owning = branchRepository.findById(branchId).orElseThrow();
+        long receiptNo = owning.getNextReceiptNo();
+        owning.setNextReceiptNo(receiptNo + 1);
+        branchRepository.saveAndFlush(owning);
+
+        Bill bill = new Bill();
+        bill.setBranchId(branchId);
+        bill.setStatus(BillStatus.CLOSED);
+        bill.setReceiptNo(receiptNo);
+        bill.setOpenedBy(employeeId);
+        bill.setOpenedAt(OffsetDateTime.now());
+        bill.setClosedBy(employeeId);
+        bill.setClosedAt(OffsetDateTime.now());
+        bill.setSubtotalTime(BigDecimal.ZERO);
+        bill.setSubtotalItems(amount);
+        bill.setTotalAmount(amount);
+        bill.setTotalCost(BigDecimal.ZERO);
+        bill.setVersion(0);
+        UUID billId = asUser(() -> billRepository.saveAndFlush(bill)).getId();
+
+        Payment payment = new Payment();
+        payment.setBranchId(branchId);
+        payment.setBillId(billId);
+        payment.setMethod(method);
+        payment.setAmount(amount);
+        if (method == PaymentMethod.CASH) {
+            payment.setTendered(amount);
+            payment.setChangeGiven(BigDecimal.ZERO);
+        } else {
+            payment.setReferenceNo("REF-" + UUID.randomUUID());
+        }
+        payment.setIdempotencyKey(UUID.randomUUID().toString());
+        payment.setTakenBy(employeeId);
+        payment.setTakenAt(OffsetDateTime.now().plusSeconds(30));
+        asUser(() -> paymentRepository.saveAndFlush(payment));
+    }
+
+    private <T> T asUser(Supplier<T> work) {
+        SecurityContext previous = SecurityContextHolder.getContext();
+        try {
+            SecurityContext context = SecurityContextHolder.createEmptyContext();
+            context.setAuthentication(new UsernamePasswordAuthenticationToken(
+                    employee(), "unused", java.util.List.of()));
+            SecurityContextHolder.setContext(context);
+            return work.get();
+        } finally {
+            SecurityContextHolder.setContext(previous);
+        }
     }
 
     private AppUserDetails admin() {

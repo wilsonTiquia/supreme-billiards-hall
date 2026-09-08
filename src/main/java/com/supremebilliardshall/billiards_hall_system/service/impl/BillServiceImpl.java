@@ -284,19 +284,27 @@ public class BillServiceImpl implements BillService {
                     + " would be more than that, which is a surcharge rather than a discount.");
         }
         /*
-         * A bill charged at nothing cannot be settled: payment requires at least 0.01, so it
-         * would sit in the floor strip for ever with no route out of it.
+         * Charging the full amount is not a discount, and this is where that is refused.
          *
-         * The refusal names the route that EXISTS rather than the one that would be
-         * convenient. There is no void-a-bill endpoint -- BillController voids a line, and a
-         * TIME line cannot be voided on its own -- so a bill carrying a session cannot be
-         * zeroed by any path in this system. Pointing staff at a door that is not there is
-         * worse than a blunt no.
+         * The comment that stood here since this guard was written described a bill charged at
+         * NOTHING -- and so did the message, which told the cashier the bill would come to 0.00.
+         * It was wrong on the day it was written and stayed wrong: chargeAmount is what is being
+         * CHARGED, so charge == subtotal is the FULL amount and a discount of zero. Anyone who
+         * read the field as "the amount to knock off" and typed the whole figure was told
+         * something untrue about the money in front of them.
+         *
+         * The scenario it described is also unreachable by construction:
+         * BillDiscountRequestDTO.chargeAmount carries @DecimalMin("0.01"), so a charge of zero
+         * is refused by validation before this guard is ever consulted. This branch has only
+         * ever been able to fire on a zero discount.
+         *
+         * Refused rather than accepted as a no-op: recording it would write a discount of 0.00
+         * with a reason, an audit row and a line in the losses drill-down -- noise in the two
+         * screens the owner reads AS controls, which is worse than a refusal.
          */
         if (charge.compareTo(subtotal) == 0) {
-            throw new BusinessRuleException("That would charge nothing at all, and a bill of "
-                    + "0.00 can never be settled. A free game is set as a zero friend or flat "
-                    + "rate when the table is opened, not as a discount at checkout.");
+            throw new BusinessRuleException("That is the full amount, so there is no discount "
+                    + "to record.");
         }
 
         BigDecimal discount = subtotal.subtract(charge);

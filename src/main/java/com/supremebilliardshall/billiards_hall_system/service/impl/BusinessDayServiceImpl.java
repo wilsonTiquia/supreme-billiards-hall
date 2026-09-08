@@ -30,6 +30,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.UUID;
 import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
@@ -111,6 +112,16 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         if (cashCountRepository.findByBusinessDate(businessDate).isPresent()) {
             throw new BusinessRuleException("The drawer has already been counted for " + businessDate + ".");
         }
+
+        /*
+         * Symmetric with the close, and for the same reason: counting money while money is
+         * still coming in freezes cashSales at a figure guaranteed to move. This is defence in
+         * depth rather than the fix -- a quick sale, a settled debt or a cash expense lands in
+         * the same window with no session open anywhere, which is why staleness is tracked
+         * from counted_at regardless. It removes the case that costs the most, because a table
+         * still running is thousands of pesos of table time rather than one beer.
+         */
+        requireNoOpenSessions(businessDate, "count the drawer for");
 
         // Frozen at the moment of counting, and always the server's figure: a variance the
         // client could influence would not be a control at all.
@@ -203,9 +214,21 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         Map<String, Object> before = new LinkedHashMap<>();
         before.put("countedCash", previousCounted);
         before.put("openingFloat", previousFloat);
+        before.put("cashSales", cashCount.getCashSales());
         before.put("cashExpenses", cashCount.getCashExpenses());
         before.put("variance", cashCount.getVariance());
 
+        /*
+         * Both sides of the subtraction, or neither.
+         *
+         * This used to move counted_cash alone. On a night where the takings had grown since
+         * the count that turned a real discrepancy into a phantom one: correcting the count to
+         * what the drawer actually held produced a variance equal to the money the frozen
+         * cash_sales had never seen. A correction that fixes one operand and leaves the other
+         * stale is worse than no correction, because it looks authoritative.
+         */
+        cashCount.setCashSales(paymentRepository.sumCashForBusinessDate(businessDate));
+        cashCount.setCashExpenses(expenseRepository.sumPaidFromDrawer(businessDate));
         cashCount.setCountedCash(cashCountUpdateRequestDTO.getCountedCash());
         cashCount.setOpeningFloat(correctedFloat);
         cashCount.setFloatOverridden(correctedFloat.compareTo(standardCashFloat()) != 0);
@@ -219,6 +242,7 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         Map<String, Object> after = new LinkedHashMap<>();
         after.put("countedCash", saved.getCountedCash());
         after.put("openingFloat", saved.getOpeningFloat());
+        after.put("cashSales", saved.getCashSales());
         after.put("cashExpenses", saved.getCashExpenses());
         after.put("variance", saved.getVariance());
 
@@ -231,15 +255,25 @@ public class BusinessDayServiceImpl implements BusinessDayService {
     }
 
     /*
-     * Counting a night again after it was closed and then traded on.
+     * Counting a night again when the drawer has moved under the count.
      *
      * Not admin-only, deliberately. The shift that closed up at 03:00 and then served a
      * straggler has to be able to finish the night themselves; making them wake the owner to
      * reconcile a beer would mean the drawer simply never gets recounted.
      *
-     * The original count is not destroyed — it goes to the audit log with both figures — and
-     * the day reopens so the ordinary close runs again and records who signed it off the
-     * second time.
+     * It used to require the day to be CLOSED and something to have traded AFTER that close.
+     * Both are gone, and that pair is the reason a night could become unreconcilable: a drawer
+     * counted while a table was still running froze cash_sales too low, and by the time anyone
+     * noticed, the day was closed with nothing traded since -- so this route refused, and
+     * updateCashCount refuses once the day is closed. There was no way back through any route.
+     *
+     * The gate is now the one predicate the whole fix rests on: the count is stale, meaning the
+     * frozen figures no longer describe the drawer. Stale means wrong, and wrong should be
+     * reopenable; a correct count is left alone because the predicate is false. Reopening a
+     * closed day is deliberate -- the ordinary close then runs again and records who signed it
+     * off the second time.
+     *
+     * The original count is not destroyed: it goes to the audit log with both figures.
      */
     @Override
     @Transactional
@@ -249,22 +283,16 @@ public class BusinessDayServiceImpl implements BusinessDayService {
                 .orElseThrow(() -> new BusinessRuleException(
                         "The drawer has not been counted for " + businessDate + " yet."));
 
-        if (cashCount.getClosedAt() == null) {
-            throw new BusinessRuleException(businessDate + " is not closed. Correct the count "
-                    + "instead of recounting it.");
+        CashCountResponseDTO current = toResponseDto(cashCount);
+        if (!current.isStale()) {
+            throw new BusinessRuleException("Nothing has moved in the drawer on " + businessDate
+                    + " since it was counted, so the count still stands.");
         }
 
-        PaymentRepository.AfterCloseProjection after = paymentRepository.findActivityAfter(
-                cashCount.getBranchId(), businessDate, cashCount.getClosedAt());
-        // A payout after the close moves the drawer exactly as a sale does, so it is equally a
-        // reason to count again. Without this the night that was closed and then paid the water
-        // man would have no way back.
-        ExpenseRepository.AfterCloseProjection afterExpenses = expenseRepository.findCashExpensesAfter(
-                cashCount.getBranchId(), businessDate, cashCount.getClosedAt());
-        if (after.getSales() == 0 && afterExpenses.getExpenses() == 0) {
-            throw new BusinessRuleException("Nothing has been sold or paid out on " + businessDate
-                    + " since it was closed, so the count still stands.");
-        }
+        PaymentRepository.AfterCloseProjection since = paymentRepository.findActivityAfter(
+                cashCount.getBranchId(), businessDate, cashCount.getCountedAt());
+        ExpenseRepository.AfterCloseProjection sinceExpenses = expenseRepository.findCashExpensesAfter(
+                cashCount.getBranchId(), businessDate, cashCount.getCountedAt());
 
         Map<String, Object> before = new LinkedHashMap<>();
         before.put("cashSales", cashCount.getCashSales());
@@ -272,12 +300,12 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         before.put("cashExpenses", cashCount.getCashExpenses());
         before.put("countedCash", cashCount.getCountedCash());
         before.put("variance", cashCount.getVariance());
-        before.put("closedAt", cashCount.getClosedAt().toString());
+        before.put("countedAt", cashCount.getCountedAt().toString());
+        before.put("closedAt", cashCount.getClosedAt() == null ? null : cashCount.getClosedAt().toString());
         before.put("closedBy", usernameOf(cashCount.getClosedBy()));
-        before.put("salesAfterClose", after.getSales());
-        before.put("amountAfterClose", after.getAmount());
-        before.put("expensesAfterClose", afterExpenses.getExpenses());
-        before.put("cashExpensesAfterClose", afterExpenses.getAmount());
+        before.put("salesSinceCount", since.getSales());
+        before.put("cashSinceCount", since.getCash());
+        before.put("cashExpensesSinceCount", sinceExpenses.getAmount());
 
         // Recomputed from the payments as they stand now, exactly as the first count was.
         // Only the takings are re-read. The float went into the drawer once, at open, and a
@@ -286,6 +314,13 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         cashCount.setCashExpenses(expenseRepository.sumPaidFromDrawer(businessDate));
         cashCount.setCountedCash(cashCountRequestDTO.getCountedCash());
         cashCount.setCountedBy(branchContext.getCurrentUserId());
+        /*
+         * Moved forward, and load-bearing rather than cosmetic: staleness is measured from
+         * counted_at, so a recount that left it at the original count would re-read as stale
+         * the moment it finished -- and with the close refusing on stale, the night could never
+         * be signed off at all. Restamping is also simply true: the drawer was counted now.
+         */
+        cashCount.setCountedAt(OffsetDateTime.now());
         if (cashCountRequestDTO.getNote() != null) {
             cashCount.setNote(cashCountRequestDTO.getNote());
         }
@@ -319,16 +354,9 @@ public class BusinessDayServiceImpl implements BusinessDayService {
     @Override
     @Transactional
     public BusinessDayResponseDTO closeBusinessDay(LocalDate businessDate) {
-        BusinessDayResponseDTO day = getOpenSessions(businessDate);
-        if (!day.isCanClose()) {
-            // Names the tables, not the customer types: "still open on [Regular, Regular]"
-            // tells the closer nothing about where to walk.
-            throw new BusinessRuleException("Cannot close " + businessDate + ": "
-                    + day.getOpenSessions().size() + " session(s) still open on "
-                    + String.join(", ", day.getOpenSessions().stream()
-                        .map(TableSessionSummaryDTO::getPoolTableName)
-                        .toList()) + ". Close them first.");
-        }
+        // Names the tables, not the customer types: "still open on [Regular, Regular]" tells
+        // the closer nothing about where to walk.
+        BusinessDayResponseDTO day = requireNoOpenSessions(businessDate, "close");
         // The drawer count is the one control carried over from the paper process, so a day
         // does not close without it. That is also why the count row carries the close: it is
         // the only row guaranteed to exist for a closed day.
@@ -339,6 +367,25 @@ public class BusinessDayServiceImpl implements BusinessDayService {
         if (cashCount.getClosedAt() != null) {
             throw new BusinessRuleException(businessDate + " was already closed at "
                     + cashCount.getClosedAt() + " by " + usernameOf(cashCount.getClosedBy()) + ".");
+        }
+
+        /*
+         * A signed-off variance has to mean something.
+         *
+         * Refused rather than warned: a warning is a thing people click past at 3am, which is
+         * exactly when they meet it. The close is what turns a count into the night's record,
+         * so it is the last place the figures can still be wrong for free.
+         *
+         * The refusal names the amount and the time counted, never "the count is stale" -- the
+         * closer needs to know what moved, not that something did. Recount stays available in
+         * this state, so there is always a way forward.
+         */
+        CashCountResponseDTO current = toResponseDto(cashCount);
+        if (current.isStale()) {
+            throw new BusinessRuleException("Cannot close " + businessDate + ": "
+                    + describeDrawerMovement(current)
+                    + " since the drawer was counted at " + countedAtLabel(cashCount)
+                    + ". Recount the drawer before closing.");
         }
 
         cashCount.setClosedAt(OffsetDateTime.now());
@@ -391,10 +438,11 @@ public class BusinessDayServiceImpl implements BusinessDayService {
                 cashCount.getNote(),
                 cashCount.getClosedAt(),
                 cashCount.getClosedBy() == null ? null : usernameOf(cashCount.getClosedBy()),
-                0, BigDecimal.ZERO, BigDecimal.ZERO, 0, BigDecimal.ZERO);
+                0, BigDecimal.ZERO, BigDecimal.ZERO, 0, BigDecimal.ZERO,
+                BigDecimal.ZERO, BigDecimal.ZERO, null);
 
-        // Only meaningful once the day is signed off: before that, everything is "after the
-        // last thing that happened" and nothing is superseded.
+        // What the end-of-day panel displays: trading that landed after the night was signed
+        // off. Only meaningful once it has been.
         if (cashCount.getClosedAt() != null) {
             PaymentRepository.AfterCloseProjection after = paymentRepository.findActivityAfter(
                     cashCount.getBranchId(), cashCount.getBusinessDate(), cashCount.getClosedAt());
@@ -407,7 +455,66 @@ public class BusinessDayServiceImpl implements BusinessDayService {
             dto.setExpensesAfterClose(afterExpenses.getExpenses());
             dto.setCashExpensesAfterClose(afterExpenses.getAmount());
         }
+
+        /*
+         * What staleness is judged on, and unconditional: counted_at is always set, so unlike
+         * the block above this has no state in which it goes quiet. The window it covers starts
+         * earlier, so it is a superset of the after-close figures -- nothing that used to be
+         * visible stops being visible.
+         */
+        PaymentRepository.AfterCloseProjection since = paymentRepository.findActivityAfter(
+                cashCount.getBranchId(), cashCount.getBusinessDate(), cashCount.getCountedAt());
+        ExpenseRepository.AfterCloseProjection sinceExpenses = expenseRepository.findCashExpensesAfter(
+                cashCount.getBranchId(), cashCount.getBusinessDate(), cashCount.getCountedAt());
+        dto.setCashSinceCount(since.getCash());
+        dto.setCashExpensesSinceCount(sinceExpenses.getAmount());
+        dto.setStaleSince(cashCount.getCountedAt());
         return dto;
+    }
+
+    /*
+     * Which way the drawer moved, in words, for a refusal the closer can act on.
+     *
+     * Both halves are stated when both happened: "1,200.00 has been taken and 850.00 paid out"
+     * is two different errands, and collapsing them to a net figure would hide one of them.
+     */
+    private String describeDrawerMovement(CashCountResponseDTO count) {
+        BigDecimal taken = count.getCashSinceCount();
+        BigDecimal paidOut = count.getCashExpensesSinceCount();
+        boolean hasTaken = taken != null && taken.compareTo(BigDecimal.ZERO) > 0;
+        boolean hasPaidOut = paidOut != null && paidOut.compareTo(BigDecimal.ZERO) > 0;
+
+        if (hasTaken && hasPaidOut) {
+            return taken.toPlainString() + " has been taken and "
+                    + paidOut.toPlainString() + " paid out of the drawer";
+        }
+        if (hasPaidOut) {
+            return paidOut.toPlainString() + " has been paid out of the drawer";
+        }
+        return taken.toPlainString() + " has been taken";
+    }
+
+    // The wall-clock time the counter would recognise, in the hall's own zone rather than UTC.
+    private String countedAtLabel(CashCount cashCount) {
+        return cashCount.getCountedAt().atZoneSameInstant(MANILA)
+                .format(DateTimeFormatter.ofPattern("HH:mm"));
+    }
+
+    /*
+     * Shared by the close and the count. The same list, phrased for whichever one refused --
+     * "Cannot close 2026-09-08: ..." and "Cannot count the drawer for 2026-09-08: ..." read
+     * the same way and name the same tables, so staff meet one rule rather than two.
+     */
+    private BusinessDayResponseDTO requireNoOpenSessions(LocalDate businessDate, String action) {
+        BusinessDayResponseDTO day = getOpenSessions(businessDate);
+        if (!day.isCanClose()) {
+            throw new BusinessRuleException("Cannot " + action + " " + businessDate + ": "
+                    + day.getOpenSessions().size() + " session(s) still open on "
+                    + String.join(", ", day.getOpenSessions().stream()
+                        .map(TableSessionSummaryDTO::getPoolTableName)
+                        .toList()) + ". Close them first.");
+        }
+        return day;
     }
 
     /*

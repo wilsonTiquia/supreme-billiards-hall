@@ -65,7 +65,40 @@ public class CashCountResponseDTO {
     private int expensesAfterClose;
     private BigDecimal cashExpensesAfterClose;
 
+    /*
+     * The same question asked from counted_at rather than closed_at, and the one staleness is
+     * actually judged on.
+     *
+     * The fields above answer "what happened after the night was signed off", which is what the
+     * end-of-day panel displays. They cannot answer "is this variance still true", because the
+     * window between counting the drawer and closing the day is not covered by them at all --
+     * and that window is where a drawer counted while a table was still running gets its
+     * takings. A night counted at 02:14 and closed at 02:20 with 3,241.00 taken in between read
+     * salesAfterClose 0 and variance 0.00 while the drawer was 3,241.00 over.
+     *
+     * counted_at is always set; closed_at may not be. Measuring from the earlier of the two
+     * makes this window a superset of the after-close one, so nothing that was visible before
+     * stops being visible.
+     */
+    private BigDecimal cashSinceCount;
+    private BigDecimal cashExpensesSinceCount;
+    // For the message. "250.00 has been taken since you counted at 02:14" is thirty seconds of
+    // work; "the count is stale" is a mystery at the end of a long shift.
+    private OffsetDateTime staleSince;
+
+    /*
+     * Wrong, not merely old.
+     *
+     * Only CASH moves the drawer, so only cash decides this: variance is
+     * counted - (cashSales + float - cashExpenses), and a GCash sale taken after the count
+     * changes none of those three. Blocking a close over a digital payment that cannot affect
+     * the drawer would be a false alarm at 3am, which is how blockers get ignored.
+     */
     public boolean isStale() {
-        return closedAt != null && (salesAfterClose > 0 || expensesAfterClose > 0);
+        return isPositive(cashSinceCount) || isPositive(cashExpensesSinceCount);
+    }
+
+    private static boolean isPositive(BigDecimal value) {
+        return value != null && value.compareTo(BigDecimal.ZERO) > 0;
     }
 }

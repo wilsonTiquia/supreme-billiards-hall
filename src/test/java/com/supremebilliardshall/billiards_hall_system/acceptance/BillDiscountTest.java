@@ -224,15 +224,30 @@ class BillDiscountTest {
     }
 
     /*
-     * A bill charged at nothing could never be settled — payment requires at least 0.01 — so it
-     * would sit on the floor for ever with no route out of it. Refused, and the message points
-     * at the route that exists: a free game is a zero rate set when the table is opened.
+     * chargeAmount is what is being CHARGED, so charging the full 654.00 is a discount of
+     * ZERO — not a bill of nothing.
+     *
+     * This test asserted the right status under the wrong name: it read as "a bill cannot be
+     * discounted to nothing", which is what the message used to claim and what the guard's
+     * comment described. That scenario cannot arise at all — @DecimalMin("0.01") on
+     * chargeAmount refuses a charge of zero before this guard is reached — so the only thing
+     * this branch has ever caught is the no-op.
+     *
+     * Refused rather than accepted, because recording it would put a 0.00 giveaway in the
+     * losses drill-down and the audit feed, which are screens the owner reads as controls.
      */
     @Test
-    void aBillCannotBeDiscountedToNothing() throws Exception {
+    void chargingTheFullAmountIsRefusedAsANoOpRatherThanRecordedAsAZeroDiscount() throws Exception {
         UUID billId = givenBillOf654();
         discount(billId, "654.00", "Free game for the owner's cousin")
-                .andExpect(status().isConflict());
+                .andExpect(status().isConflict())
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .contains("That is the full amount, so there is no discount to record")
+                        // The old wording told the cashier the bill would come to nothing.
+                        .doesNotContain("charge nothing at all"));
+
+        assertThat(asUser(() -> billRepository.findById(billId).orElseThrow()).getDiscountAmount())
+                .isEqualByComparingTo("0.00");
     }
 
     // The fixed-amount rule, which is the thing that surprises people: the discount is pesos,

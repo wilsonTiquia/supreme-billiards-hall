@@ -6,8 +6,11 @@ import com.supremebilliardshall.billiards_hall_system.dto.payment.PaymentRespons
 import com.supremebilliardshall.billiards_hall_system.dto.quicksale.QuickSaleRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.entity.*;
 import com.supremebilliardshall.billiards_hall_system.repository.*;
+import com.supremebilliardshall.billiards_hall_system.exception.BusinessRuleException;
 import com.supremebilliardshall.billiards_hall_system.security.AppUserDetails;
 import com.supremebilliardshall.billiards_hall_system.service.CheckoutService;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +18,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -54,6 +58,18 @@ class ReceiptNumberConcurrencyTest {
 
     @Autowired
     private CustomerTypeRepository customerTypeRepository;
+
+    @Autowired
+    private BillRepository billRepository;
+
+    @Autowired
+    private BillLineRepository billLineRepository;
+
+    // A native count rather than a repository method: "exactly one payment row" is the
+    // assertion, and adding countByBillId to production code only a test would call is the
+    // wrong direction.
+    @PersistenceContext
+    private EntityManager entityManager;
 
     @Autowired
     private PlatformTransactionManager transactionManager;
@@ -148,6 +164,141 @@ class ReceiptNumberConcurrencyTest {
         Long nextReceiptNo = asUser(() -> transactionTemplate.execute(status ->
                 branchRepository.findById(branchId).orElseThrow().getNextReceiptNo()));
         assertThat(nextReceiptNo).isEqualTo(CONCURRENT_CHECKOUTS + 1L);
+    }
+
+    /*
+     * Two tabs on ONE bill. Exactly one takes the money; the other must be told why.
+     *
+     * The money was never at risk -- one payment row was written either way -- but the loser
+     * used to get a bare HTTP 500 with no message, on the one screen where "did that go
+     * through?" has to be answerable. Both tabs read version 0 and both passed the version
+     * check, because neither had written yet; the collision landed at the flush, where
+     * bill.business_date being @Generated(INSERT, UPDATE) turned a zero-row update into
+     * "The database returned no natively generated values" rather than an optimistic-lock
+     * failure the handler maps.
+     *
+     * The bill row lock is what makes the loser re-read the bumped version and fail the
+     * ordinary check instead.
+     */
+    @Test
+    void twoTabsCheckingOutOneBillLeaveExactlyOneWinnerAndACleanRefusal() throws Exception {
+        UUID billId = asUser(() -> transactionTemplate.execute(status -> openBill()));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch startTogether = new CountDownLatch(1);
+
+        List<Future<Object>> futures = new ArrayList<>();
+        for (int i = 0; i < 2; i++) {
+            String idempotencyKey = "one-bill-race-" + i + "-" + UUID.randomUUID();
+            futures.add(executor.submit(() -> {
+                startTogether.await();
+                try {
+                    return asUser(() -> transactionTemplate.execute(status ->
+                            checkoutService.pay(billId, payment(idempotencyKey))));
+                } catch (Exception ex) {
+                    return ex;
+                }
+            }));
+        }
+        startTogether.countDown();
+
+        List<Object> outcomes = new ArrayList<>();
+        for (Future<Object> future : futures) {
+            outcomes.add(future.get(30, TimeUnit.SECONDS));
+        }
+        executor.shutdown();
+
+        List<Object> paid = outcomes.stream().filter(PaymentResponseDTO.class::isInstance).toList();
+        List<Object> refused = outcomes.stream().filter(Exception.class::isInstance).toList();
+
+        assertThat(paid).hasSize(1);
+        assertThat(refused).hasSize(1);
+
+        /*
+         * The refusal is a mapped domain exception carrying a message the counter can act on.
+         *
+         * It is "Bill is already CLOSED", not STALE_BILL_VERSION, and that is the lock working
+         * rather than a gap: the loser now blocks until the winner COMMITS, so when it re-reads
+         * the bill the sale is finished, and checkoutBlockers answers before the version check
+         * is reached. "Somebody already took this payment" is the more useful sentence of the
+         * two. STALE_BILL_VERSION still fires where it is the true answer -- another tab
+         * discounting or redeeming a voucher bumps the version without closing the bill -- and
+         * CheckoutAcceptanceTest.aStaleBillVersionIsRejected covers it.
+         */
+        List<Throwable> chain = causalChain((Exception) refused.get(0));
+        assertThat(chain).anyMatch(BusinessRuleException.class::isInstance);
+        assertThat(chain.stream().filter(BusinessRuleException.class::isInstance).findFirst().orElseThrow())
+                .hasMessageContaining("Bill is already CLOSED");
+
+        /*
+         * The actual regression guard. The bug was not that the loser failed -- it always did,
+         * and one payment row was always written -- but that it failed as an UNMAPPED
+         * JpaSystemException ("The database returned no natively generated values"), which the
+         * handler has no branch for and which reached the cashier as a bare 500 with no
+         * message, on the one screen where "did that go through?" must be answerable.
+         */
+        assertThat(chain).noneMatch(JpaSystemException.class::isInstance);
+        assertThat(chain).noneMatch(t -> t.getMessage() != null
+                && t.getMessage().contains("no natively generated values"));
+
+        // And the money moved exactly once.
+        Number payments = asUser(() -> transactionTemplate.execute(status ->
+                (Number) entityManager
+                        .createNativeQuery("select count(*) from payment where bill_id = :billId")
+                        .setParameter("billId", billId)
+                        .getSingleResult()));
+        assertThat(payments.longValue()).isEqualTo(1L);
+    }
+
+    // Spring wraps service exceptions on the way out of the transaction template, so the
+    // interesting one is somewhere in the chain rather than always at the top or the bottom.
+    private List<Throwable> causalChain(Throwable thrown) {
+        List<Throwable> chain = new ArrayList<>();
+        Throwable current = thrown;
+        while (current != null && !chain.contains(current)) {
+            chain.add(current);
+            current = current.getCause();
+        }
+        return chain;
+    }
+
+    // An ordinary counter bill: OPEN, one product line, no session on it.
+    private UUID openBill() {
+        Bill bill = new Bill();
+        bill.setBranchId(branchId);
+        bill.setStatus(BillStatus.OPEN);
+        bill.setCustomerTypeId(customerTypeId);
+        bill.setOpenedBy(userId);
+        bill.setSubtotalTime(BigDecimal.ZERO);
+        bill.setSubtotalItems(BigDecimal.ZERO);
+        bill.setTotalAmount(BigDecimal.ZERO);
+        bill.setTotalCost(BigDecimal.ZERO);
+        bill.setVersion(0);
+        UUID billId = billRepository.saveAndFlush(bill).getId();
+
+        BillLine line = new BillLine();
+        line.setBranchId(branchId);
+        line.setBillId(billId);
+        line.setLineKind(BillLineKind.PRODUCT);
+        line.setSeq(1);
+        line.setProductId(productIds.get(0));
+        line.setDescription("Contended Softdrink");
+        line.setQuantity(BigDecimal.ONE);
+        line.setUnitPrice(new BigDecimal("50.00"));
+        line.setUnitCost(new BigDecimal("30.0000"));
+        line.setCreatedBy(userId);
+        billLineRepository.saveAndFlush(line);
+        return billId;
+    }
+
+    private PaymentRequestDTO payment(String idempotencyKey) {
+        PaymentRequestDTO payment = new PaymentRequestDTO();
+        payment.setMethod(PaymentMethod.CASH);
+        payment.setAmount(new BigDecimal("50.00"));
+        payment.setTendered(new BigDecimal("100.00"));
+        payment.setIdempotencyKey(idempotencyKey);
+        payment.setBillVersion(0);
+        return payment;
     }
 
     private QuickSaleRequestDTO quickSale(String idempotencyKey, UUID productId) {

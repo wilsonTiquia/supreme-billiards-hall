@@ -80,10 +80,25 @@ public class CashCount implements BranchScoped {
     @Column(name = "variance", insertable = false, updatable = false, precision = 12, scale = 2)
     private BigDecimal variance;
 
-    @Column(name = "counted_by", nullable = false, updatable = false)
+    /*
+     * Who counted the drawer, and when. Writable on update because a recount IS a new count:
+     * it re-reads the takings and takes a fresh figure, so leaving these at the first count
+     * would have the row claim the new variance was measured at a time it was not.
+     *
+     * They were updatable = false, which silently swallowed the setCountedBy already in
+     * recountAfterClose -- a recounted night kept naming whoever counted it first. That went
+     * unnoticed while recounting was rare; it stops being rare now that a stale count can be
+     * recounted before the day is closed.
+     *
+     * The previous pair is not lost: CASH_COUNT_SUPERSEDED carries countedAt and the original
+     * figures, which is this project's rule for anything a correction overwrites.
+     *
+     * @CreationTimestamp still stamps the insert; only an explicit set moves it after that.
+     */
+    @Column(name = "counted_by", nullable = false)
     private UUID countedBy;
 
-    @Column(name = "counted_at", nullable = false, updatable = false)
+    @Column(name = "counted_at", nullable = false)
     @CreationTimestamp
     private OffsetDateTime countedAt;
 

@@ -194,6 +194,15 @@ not at compile time, so get them right the first time:
     reader arrived in a later request and got a fresh row. Both are fixed. The rest were swept and
     are genuinely insert-only: `expense`, `payment` and `stock_movement` are all `business_date` on
     rows nothing updates. Do not re-audit them; do check any NEW generated column against this.
+  - **Any mapping annotation that tells JPA a write does not happen will discard that write in
+    silence, and the gap only surfaces when two operations meet on one row.** There is no error,
+    no log line and no failing test until something reads the value in the same transaction that
+    wrote it, or a second write depends on the first — which is why all three of these were found
+    in use rather than in review: `@Generated(INSERT)` alone on `bill.business_date` and on
+    `bill_line.line_total`, then `updatable = false` on `cash_count.counted_at`, where a recount
+    could not restamp the row and so re-read as stale for ever. Treat `insertable = false`,
+    `updatable = false` and a narrow `@Generated` event set as claims about the whole lifecycle of
+    the column, and check them against every path that writes it, not just the one you are adding.
 - **Postgres enum types** — there are seven (`user_role`, `session_status`, `bill_status`,
   `bill_line_kind`, `payment_method`, `session_close_kind`, `stock_reason`). A plain
   `@Enumerated(EnumType.STRING)` maps to `varchar` and will not bind against a native enum column.

@@ -3,8 +3,10 @@ package com.supremebilliardshall.billiards_hall_system.repository;
 import com.supremebilliardshall.billiards_hall_system.entity.Bill;
 import com.supremebilliardshall.billiards_hall_system.entity.BillStatus;
 import com.supremebilliardshall.billiards_hall_system.entity.SessionStatus;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -13,9 +15,38 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 public interface BillRepository extends BranchScopedRepository<Bill> {
+
+    /*
+     * SELECT ... FOR UPDATE, for the mutating checkout paths.
+     *
+     * Two tabs finalising one bill both read version 0 and both pass the version check, because
+     * neither has written yet. The collision surfaced at the flush instead -- and because
+     * bill.business_date is @Generated(INSERT, UPDATE), the loser's zero-row UPDATE made
+     * Hibernate's re-read of the generated column come back empty, throwing
+     * "The database returned no natively generated values" rather than the optimistic-lock
+     * failure the handler maps. The cashier got a bare 500 with no message.
+     *
+     * Taking the row lock first serialises the two, so the loser re-reads the bumped version
+     * and the ordinary version check refuses it cleanly. The lock makes the check CORRECT
+     * rather than making its crash presentable, which is why this is here and not a string
+     * match in the exception handler.
+     *
+     * LOCK ORDER IS LOAD-BEARING: bill first, then branch (finalise takes the branch row lock
+     * to allocate the receipt number). Every mutating path takes them in that order. A new
+     * entry point that takes them the other way round deadlocks against these.
+     *
+     * The branch predicate is repeated here rather than inherited: the overrides on
+     * BranchScopedRepository cover findById and friends, not queries declared down here, so a
+     * bare "where b.id = :id" would be the one route in the checkout that reads across
+     * branches.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select b from Bill b where b.id = :id and b.branchId = :#{@branchContext.currentBranchId}")
+    Optional<Bill> findByIdForUpdate(@Param("id") UUID id);
 
     // Bills that are still open with nothing running on them: every session has closed, so
     // the floor shows the table free and no longer points anywhere at this bill.

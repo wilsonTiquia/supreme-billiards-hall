@@ -626,9 +626,11 @@ the TIME lines first, so the subtotal a discount is computed against is already 
   control. Detection, not prevention: the same posture the friend rate takes.
 - `chargeAmount` below `0.01` → 400.
 - `chargeAmount` **above** the subtotal → 409. That is a surcharge, not a discount.
-- `chargeAmount` **equal to** the subtotal → 409. A bill of `0.00` could never be settled, so it
-  would sit on the floor for ever. A free game is a zero friend or flat rate set when the table is
-  **opened**, not a discount at checkout. (Comping a whole bill at checkout has no route today.)
+- `chargeAmount` **equal to** the subtotal → 409 *"That is the full amount, so there is no discount
+  to record."* This is a **zero discount**, not a zero bill — charging the whole subtotal is a
+  no-op, and recording it would put a ₱0.00 giveaway in the losses drill-down and the audit feed.
+  A free game is a zero friend or flat rate set when the table is **opened**, not a discount at
+  checkout. (Comping a whole bill at checkout has no route today.)
 - Bill not `OPEN` → 409.
 - Audited as `BILL_DISCOUNTED` with before/after snapshots and the reason.
 

@@ -98,7 +98,7 @@ public class CheckoutServiceImpl implements CheckoutService {
     @Override
     @Transactional
     public PaymentResponseDTO pay(UUID billId, PaymentRequestDTO paymentRequestDTO) {
-        Bill bill = requireBill(billId);
+        Bill bill = requireBillForUpdate(billId);
 
         // Idempotency first, before any state check: a retry of a request that already
         // succeeded must return the original payment, not complain that the bill is closed.
@@ -126,7 +126,7 @@ public class CheckoutServiceImpl implements CheckoutService {
     @Override
     @Transactional
     public UnpaidBillResponseDTO leaveUnpaid(UUID billId, LeaveUnpaidRequestDTO leaveUnpaidRequestDTO) {
-        Bill bill = requireBill(billId);
+        Bill bill = requireBillForUpdate(billId);
 
         // Only a live bill can become a debt. checkoutBlockers admits UNSETTLED because that is
         // payable; here it is the one status that must be refused, and saying so plainly beats
@@ -250,7 +250,7 @@ public class CheckoutServiceImpl implements CheckoutService {
     @Override
     @Transactional
     public ReceiptResponseDTO settleWithoutPayment(UUID billId) {
-        Bill bill = requireBill(billId);
+        Bill bill = requireBillForUpdate(billId);
 
         List<String> blockers = checkoutBlockers(bill);
         if (!blockers.isEmpty()) {
@@ -758,6 +758,21 @@ public class CheckoutServiceImpl implements CheckoutService {
 
     private Bill requireBill(UUID id) {
         return billRepository.findById(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Bill", id));
+    }
+
+    /*
+     * The same lookup, holding the row lock, for the paths that go on to write.
+     *
+     * Kept separate from requireBill rather than folded into it: previewCheckout is
+     * @Transactional(readOnly = true) and runs on every keystroke of the checkout screen, so
+     * locking there would serialise readers against the till taking money.
+     *
+     * See BillRepository.findByIdForUpdate for why the lock exists and why the bill must be
+     * locked before the branch.
+     */
+    private Bill requireBillForUpdate(UUID id) {
+        return billRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Bill", id));
     }
 }
