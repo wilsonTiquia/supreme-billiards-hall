@@ -3,6 +3,8 @@ package com.supremebilliardshall.billiards_hall_system.service;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ChangePasswordRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.CurrentUserResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.auth.ResetPasswordRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.user.CreateUserRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.user.UpdateUserRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.user.UserResponseDTO;
 
 import java.util.List;
@@ -25,4 +27,12 @@ public interface AuthService {
 
     // The staff of the caller's current branch, for the Admin > Staff screen.
     List<UserResponseDTO> listBranchUsers();
+
+    // Adding, editing and retiring the people who can sign in. ADMIN only, enforced at the
+    // controller; the invariants that keep an admin reachable live in the implementation.
+    UserResponseDTO createUser(CreateUserRequestDTO request);
+
+    UserResponseDTO updateUser(UUID userId, UpdateUserRequestDTO request);
+
+    UserResponseDTO archiveUser(UUID userId);
 }

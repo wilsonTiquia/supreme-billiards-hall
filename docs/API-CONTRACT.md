@@ -1212,6 +1212,64 @@ Actions currently written: `PRODUCT_UPDATED`, `POOL_TABLE_RATE_CHANGED`, `SESSIO
 
 ---
 
+## 12a. Staff — ADMIN only
+
+| Method | Path | Who |
+|---|---|---|
+| GET | `/api/v1/users` | **ADMIN** |
+| POST | `/api/v1/users` | **ADMIN** |
+| PUT | `/api/v1/users/{id}` | **ADMIN** |
+| DELETE | `/api/v1/users/{id}` | **ADMIN** |
+| PUT | `/api/v1/users/{id}/password` | **ADMIN** |
+| DELETE | `/api/v1/users/lockouts` | **ADMIN** |
+
+`{ "id", "username", "fullName", "role", "active", "mustChangePassword" }` on every response.
+
+**GET** returns **this branch's staff plus every global admin**. A global admin has no branch and
+is therefore staff of every branch rather than of none; with more than one branch they appear on
+each branch's list, which is the answer rather than a leak. Without them no admin would be listed
+at all — the seeded owner is global — and Edit, Archive and the last-admin warning would be dead
+for exactly the accounts this screen exists to manage.
+
+**POST** → `{ "username", "fullName", "role", "temporaryPassword" }`. `username` is letters,
+numbers, dots, dashes and underscores, ≤ 50 chars; `temporaryPassword` is ≥ 8 chars, the same
+rule `PUT /{id}/password` uses. The server always sets `mustChangePassword: true`, so the value
+the admin reads out stops working the moment it is used — see the gate in §2.
+
+- A **new EMPLOYEE is given the current branch; a new ADMIN is global** (`branch_id` null),
+  following `app_user_branch_required_for_employee` and the seeded pair.
+- A username already in live use → **409** naming the fix. Archived rows do not collide:
+  `app_user_username_key` is partial on `archived_at IS NULL`, so archiving frees the name.
+
+**PUT `/{id}`** → `{ "fullName", "role", "isActive" }`. No username (it is what someone types
+every night) and no password (that is its own route, which ends their sessions). A user who is
+demoted or deactivated has their sessions invalidated, so the change takes effect at once rather
+than whenever they next log out.
+
+**DELETE `/{id}`** **archives** — never deletes, because `audit_log`, `bill_line.created_by` and
+every payment they took point at the row for ever. Sessions are invalidated. The username becomes
+reusable.
+
+**Three refusals, all 409**, and the UI should disable rather than let the user meet them:
+
+- Archiving or deactivating **yourself**.
+- Demoting **yourself** from ADMIN.
+- Archiving, demoting or deactivating the **last active administrator**, counted system-wide
+  because an admin may be global. This is the one invariant in this schema the database cannot
+  enforce: a `CHECK` constraint sees a single row and cannot say "at least one row must survive".
+  It matters because `DELETE /users/lockouts` is ADMIN-only, so a hall with no administrator has
+  no way to clear a login lockout and only the break-glass procedure in `HELP.md` to get back in.
+
+**`PUT /{id}/password` refuses an ADMIN target** — no admin resets another admin. A forgotten
+administrator password is break-glass, not something the other administrator can fix; a second
+admin covers **lockouts**, not amnesia.
+
+Audited as `USER_CREATED`, `USER_UPDATED`, `USER_ARCHIVED`, and `USER_ROLE_CHANGED` as its own
+action — promoting somebody is the most consequential act in this system and should not be a
+field inside a diff. No password or hash ever reaches an audit snapshot.
+
+---
+
 ## 13. What is NOT built
 
 Do not code against these; they do not exist:

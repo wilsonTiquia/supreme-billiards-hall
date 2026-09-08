@@ -124,3 +124,29 @@ Run this on the database host. Substitute a real password for the placeholder.
 
 Step 1 matters: the bootstrap only acts while the account carries the sentinel, so a real
 (forgotten) hash must be reset to the sentinel first, or nothing happens on restart.
+
+## This procedure only rescues `owner`
+
+**It is hardcoded.** `AdminPasswordBootstrap` looks up the username `owner` and no other, so the
+steps above do nothing for an administrator added through **Admin → Staff**. Two things follow.
+
+**A forgotten administrator password is not something the other administrator can fix.** No admin
+can reset another admin's password — that rule is deliberate, and it is why one admin cannot take
+over another's account. A second administrator covers **lockouts** (five bad passwords at the
+till), not **amnesia**. They are different failures with different answers:
+
+| What happened | The way back |
+|---|---|
+| Somebody is locked out after bad passwords | Any other administrator: **Admin → Staff**, or `DELETE /api/v1/users/lockouts` |
+| A **non-`owner`** administrator forgot their password | Another administrator archives that account and adds a replacement. The username is freed by archiving, so the same one can be used again. |
+| **`owner`** forgot their password | The break-glass procedure above |
+| The **last** administrator forgot their password, and it is not `owner` | **Nothing in the app, and the procedure above will not help.** See below. |
+
+**Keep the `owner` account.** It is the only account the break-glass procedure can reach, so it is
+the hall's last way in. Archiving it is allowed once a second administrator exists — the
+last-administrator guard only counts how many remain — but doing so removes the only recoverable
+account. If `owner` is archived and the remaining administrator forgets their password, there is
+no route back in short of editing the database by hand.
+
+If the hall ever wants to retire `owner`, the bootstrap needs to take a username too (a
+`SUPREME_BOOTSTRAP_ADMIN_USERNAME` beside the password) before that is safe. It does not today.

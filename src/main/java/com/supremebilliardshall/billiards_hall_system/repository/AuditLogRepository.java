@@ -68,6 +68,10 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
                               rate_table.name,
                               sess_table.name,
                               bl.description,
+                              -- Who the staff row is about. Named, because "Role changed" with
+                              -- an empty subject is the one line in this log that has to say
+                              -- WHOSE role, and the username is what the owner knows them by.
+                              au.username,
                               to_char(cc.business_date, 'FMDay DD Mon YYYY'))              AS entity_label,
                      -- The customer type the session was opened on, so a rate override can be
                      -- named after it: "Happy Hour rate", not "Friend rate given" for every
@@ -102,6 +106,9 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
               LEFT JOIN customer_type   sess_ct ON sess_ct.id = ts.customer_type_id
               LEFT JOIN bill_line       bl ON a.entity_table = 'bill_line'        AND bl.id = a.entity_id
               LEFT JOIN cash_count      cc ON a.entity_table = 'cash_count'       AND cc.id = a.entity_id
+              -- Archived users included on purpose: the log outlives the account, and a row
+              -- reading "Staff member archived ·" with no name would be worse than useless.
+              LEFT JOIN app_user        au ON a.entity_table = 'app_user'         AND au.id = a.entity_id
               WHERE a.branch_id = cast(:branchId as uuid)
 
               UNION ALL

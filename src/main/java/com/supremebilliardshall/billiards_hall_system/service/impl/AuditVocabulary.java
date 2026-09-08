@@ -56,13 +56,22 @@ final class AuditVocabulary {
             Map.entry("SETTING_CHANGED", "Setting changed"),
             Map.entry("STOCK_DELIVERY", "Delivery received"),
             Map.entry("STOCK_CORRECTION", "Stock corrected"),
-            Map.entry("STOCK_STAFF_COMP", "Given away"));
+            Map.entry("STOCK_STAFF_COMP", "Given away"),
+            Map.entry("USER_CREATED", "Staff member added"),
+            Map.entry("USER_UPDATED", "Staff member edited"),
+            Map.entry("USER_ARCHIVED", "Staff member archived"),
+            // Its own action rather than part of USER_UPDATED. Making somebody an administrator
+            // hands them the dashboard, the settings, every giveaway control and the power to
+            // create more administrators; it is the most consequential single act in this
+            // system and it should read as its own line, not as a field in a diff.
+            Map.entry("USER_ROLE_CHANGED", "Role changed"));
 
     // What kind of thing the row is about, for the column that sits beside the subject.
     private static final Map<String, String> ENTITIES = Map.ofEntries(
             Map.entry("product", "Product"),
             Map.entry("product_category", "Category"),
             Map.entry("customer_type", "Customer type"),
+            Map.entry("app_user", "Staff"),
             Map.entry("expense", "Expense"),
             Map.entry("expense_category", "Expense category"),
             Map.entry("pool_table", "Table"),

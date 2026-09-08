@@ -83,6 +83,23 @@ export interface ResetPasswordRequest {
 }
 
 /** A row in Admin → Staff. No password material ever crosses the wire. */
+/** Adding somebody who can sign in. The password is temporary by construction — the server
+ *  sets must_change_password, so it stops working the moment they use it. */
+export interface CreateUserRequest {
+  username: string;
+  fullName: string;
+  role: Role;
+  temporaryPassword: string;
+}
+
+/** Editing somebody who already exists. No username and no password: a username is what a
+ *  person types every night, and a password change is its own route that ends their sessions. */
+export interface UpdateUserRequest {
+  fullName: string;
+  role: Role;
+  isActive: boolean;
+}
+
 export interface StaffUser {
   id: UUID;
   username: string;
