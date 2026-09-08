@@ -18,12 +18,16 @@ export const queryKeys = {
 
   sessions: ['sessions'] as const,
   session: (id: UUID) => ['sessions', id] as const,
+  sessionNotes: (id: UUID) => ['sessions', id, 'notes'] as const,
 
   bills: ['bills'] as const,
   unsettledBills: ['bills', 'unsettled'] as const,
+  // A different list from the one above: debts, not bills nobody checked out.
+  unpaidBills: ['bills', 'unpaid'] as const,
   settledBills: (date: BusinessDate, page: number) =>
     ['bills', 'settled', date, page] as const,
   bill: (id: UUID) => ['bills', id] as const,
+  billNotes: (id: UUID) => ['bills', id, 'notes'] as const,
   checkout: (id: UUID) => ['bills', id, 'checkout'] as const,
   receipt: (id: UUID) => ['bills', id, 'receipt'] as const,
 
@@ -32,6 +36,13 @@ export const queryKeys = {
   businessDayCurrent: ['businessDay', 'current'] as const,
   uncountedDays: ['businessDay', 'uncounted'] as const,
   businessDayOpenSessions: (date: BusinessDate) => ['businessDay', date, 'openSessions'] as const,
+
+  expenseCategories: ['expenseCategories'] as const,
+  expenses: (date?: BusinessDate) => ['expenses', date ?? 'current'] as const,
+
+  voucherBatches: ['voucherBatches'] as const,
+  vouchers: (batchId?: UUID, status?: string) =>
+    ['vouchers', batchId ?? 'all', status ?? 'all'] as const,
 
   lowStock: ['stock', 'low'] as const,
   tables: ['tables'] as const,

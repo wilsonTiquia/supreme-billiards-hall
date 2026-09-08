@@ -10,6 +10,7 @@ import { Button } from '@/components/Button';
 import { Select } from '@/components/Select';
 import { Spinner } from '@/components/Spinner';
 import { formatDateTime } from '@/lib/datetime';
+import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
 
 const SIZE = 25;
 
@@ -23,10 +24,14 @@ const SIZE = 25;
  * rather than an empty table.
  */
 function Changes({ entry }: { entry: AuditFeedEntry }) {
-  const keys = Array.from(
-    new Set([...Object.keys(entry.before ?? {}), ...Object.keys(entry.after ?? {})]),
-  );
-  if (keys.length === 0) return null;
+  const before = entry.before ?? {};
+  const after = entry.after ?? {};
+  const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)]));
+
+  const rate = rateRow(before, after);
+  // The rate pair is rendered as one row or not at all, so neither key reaches the generic list.
+  const rest = rate ? keys.filter((key) => key !== 'ratePerMinute' && key !== 'ratePerHour') : keys;
+  if (!rate && rest.length === 0) return null;
 
   return (
     <table className="mt-3 w-full text-left">
@@ -38,20 +43,81 @@ function Changes({ entry }: { entry: AuditFeedEntry }) {
         </tr>
       </thead>
       <tbody>
-        {keys.map((key) => (
+        {rate ? (
+          <tr>
+            <td className="py-1 pr-4 text-label text-text-dim">Rate</td>
+            <td className="tabular py-1 pr-4 text-label text-text-dim">{rate.before}</td>
+            <td className="tabular py-1 text-label text-text">{rate.after}</td>
+          </tr>
+        ) : null}
+        {rest.map((key) => (
           <tr key={key}>
             <td className="py-1 pr-4 text-label text-text-dim">{humanise(key)}</td>
-            <td className="tabular py-1 pr-4 text-label text-text-dim">
-              {format((entry.before ?? {})[key])}
-            </td>
-            <td className="tabular py-1 text-label text-text">
-              {format((entry.after ?? {})[key])}
-            </td>
+            <td className="tabular py-1 pr-4 text-label text-text-dim">{format(before[key], key)}</td>
+            <td className="tabular py-1 text-label text-text">{format(after[key], key)}</td>
           </tr>
         ))}
       </tbody>
     </table>
   );
+}
+
+/**
+ * The one rate row, in the unit it was set in.
+ *
+ * A rate reaches the log as a pair — the derived per-minute figure that bills, and the hourly
+ * figure the admin typed, which is null when they typed per minute. Showing both puts the same
+ * rate on screen twice in two units, and the reader has to work out that they are one number.
+ *
+ * Driven off the keys rather than off the action, so an action added later that snapshots a
+ * rate gets this for free — the same reason `format` is key-driven.
+ *
+ * Each SIDE picks its own unit. A table moved from hourly to per-minute has an hourly figure on
+ * the before side only, and reads "PHP 240.00 / hour -> PHP 5.00 / min" — the mode change is
+ * real information. Forcing the after side into hours would mean multiplying up a figure nobody
+ * typed, which is the arithmetic this codebase refuses everywhere else.
+ *
+ * Returns null when neither side carries a rate at all, including rows written before the
+ * hourly mode existed, which carry no `ratePerHour` key whatsoever.
+ */
+function rateRow(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): { before: string; after: string } | null {
+  const has = (side: Record<string, unknown>) =>
+    typeof side.ratePerHour === 'number' || typeof side.ratePerMinute === 'number';
+  if (!has(before) && !has(after)) return null;
+
+  const side = (values: Record<string, unknown>) =>
+    typeof values.ratePerHour === 'number'
+      ? formatHourlyRate(values.ratePerHour)
+      : typeof values.ratePerMinute === 'number'
+        ? formatRate(values.ratePerMinute)
+        : '—';
+
+  return { before: side(before), after: side(after) };
+}
+
+/**
+ * Whether the kind of thing still has to be said out loud beside its name.
+ *
+ * Three correct decisions collide here: the vocabulary calls a `pool_table`, a
+ * `pool_table_rate` and a `table_session` all "Table", the feed resolves the subject to the pool
+ * table's own name, and that name is usually "Table 2" — so the row read "Table Table 2".
+ *
+ * Suppressed here rather than by dropping those keys from the vocabulary, because a table named
+ * "Corner" or "VIP Room" still needs the word and the entity label is what supplies it.
+ *
+ * The match has to end on a word boundary. A plain prefix test would strip the label from a
+ * table named "Tablecloth", leaving "· Tablecloth" with nothing saying it is a table at all.
+ */
+function needsEntityLabel(entry: AuditFeedEntry): boolean {
+  const label = entry.entityLabel?.trim();
+  const subject = entry.subject?.trim();
+  if (!label || !subject) return Boolean(label);
+  if (!subject.toLowerCase().startsWith(label.toLowerCase())) return true;
+  const next = subject.charAt(label.length);
+  return next !== '' && /[a-z0-9]/i.test(next);
 }
 
 /** camelCase field name to something readable: `openingFloat` becomes `Opening float`. */
@@ -62,9 +128,34 @@ function humanise(key: string): string {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function format(value: unknown): string {
+/**
+ * Which keys are money, and in what unit. First match wins.
+ *
+ * Key-driven rather than action-driven, for the reason the doc comment on `Changes` gives: a
+ * renderer that knew each action's shape would silently print raw numbers for whatever a later
+ * action adds. A key called `ratePerHour` is a rate per hour whoever wrote it.
+ *
+ * The two rate patterns sit ahead of the general one because the plain money formatter would
+ * turn 4 into "PHP 4.00" and drop the unit, which is the difference between a rate and a price.
+ */
+const MONEY_KEYS: [RegExp, (value: number) => string][] = [
+  [/ratePerHour$/i, formatHourlyRate],
+  [/ratePerMinute$/i, formatRate],
+  [/rate|amount|price|total|float|cash/i, formatMoney],
+];
+
+function format(value: unknown, key?: string): string {
   if (value === null || value === undefined) return '—';
   if (typeof value === 'object') return JSON.stringify(value);
+
+  // Only numbers are formatted as money. `/rate/i` also matches `rateOverrideReason`, and a
+  // money formatter handed a sentence prints "PHP NaN". Everything else falls through to the
+  // behaviour below, unchanged.
+  if (typeof value === 'number' && key) {
+    const money = MONEY_KEYS.find(([pattern]) => pattern.test(key));
+    if (money) return money[1](value);
+  }
+
   const text = String(value);
   /*
    * Rows written before the payloads recorded names instead of ids still hold the odd UUID.
@@ -179,7 +270,7 @@ export function AuditPage() {
                       {entry.subject ? (
                         <span className="text-body text-text-dim">
                           {' · '}
-                          {entry.entityLabel}{' '}
+                          {needsEntityLabel(entry) ? `${entry.entityLabel} ` : ''}
                           <span className="text-text">{entry.subject}</span>
                         </span>
                       ) : null}

@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -85,6 +86,53 @@ class PasswordChangeGateTest {
                 .orElseThrow().getMustChangePassword()).isFalse();
     }
 
+    // The gate used to decide from request.getRequestURI(), which is the RAW request target,
+    // while Tomcat and Spring both route on the decoded path. /%61pi/v1/tables therefore
+    // reached the controller as /api/v1/tables while the gate saw no API call at all and let
+    // it through. Every shape below is one way of writing an API path that a hand-rolled
+    // string comparison reads differently from the router.
+    @Test
+    void theGateCannotBeBypassedByRewritingThePath() throws Exception {
+        String username = givenFlaggedUser("start-pass");
+        MockHttpSession session = loginSession(username, "start-pass");
+
+        // The control: the plain path is refused, so the shapes below are compared against
+        // a gate that is definitely working.
+        assertGated("/api/v1/tables", session);
+
+        // The bypass this test exists for — an ordinary letter, percent-encoded.
+        assertGated("/%61pi/v1/tables", session);
+        assertGated("/api/v%31/tables", session);
+
+        // Encoding inside the path must not turn one endpoint into another.
+        assertGated("/api/v1/table%73", session);
+
+        // Trailing slash: still the API, still refused.
+        assertGated("/api/v1/tables/", session);
+
+        // Shapes the framework refuses before the gate has to have an opinion: double
+        // slashes, dot segments, traversal and case variation all fail to match the route,
+        // so no controller is reached. Which layer says no is not the point — the point is
+        // that no API payload comes back.
+        assertNoApiPayload("//api/v1/tables", session);
+        assertNoApiPayload("/api//v1/tables", session);
+        assertNoApiPayload("/api/./v1/tables", session);
+        assertNoApiPayload("/api/v1/../v1/tables", session);
+        assertNoApiPayload("/API/v1/tables", session);
+    }
+
+    // A gated user may not write anywhere outside the three escape routes, including at
+    // paths that are not the API at all — the allowlist names its methods rather than
+    // trusting "anything that is not /api/v1".
+    @Test
+    void aFlaggedUserCannotWriteOutsideTheApi() throws Exception {
+        String username = givenFlaggedUser("start-pass");
+        MockHttpSession session = loginSession(username, "start-pass");
+
+        mockMvc.perform(post("/anything").session(session))
+                .andExpect(status().isForbidden());
+    }
+
     @Test
     void aFlaggedUserMayStillLogOut() throws Exception {
         String username = givenFlaggedUser("start-pass");
@@ -97,6 +145,43 @@ class PasswordChangeGateTest {
 
         mockMvc.perform(post("/api/v1/auth/logout").session(session))
                 .andExpect(status().isOk());
+    }
+
+    // Refused by the gate itself, with the marker the SPA routes on.
+    private void assertGated(String rawTarget, MockHttpSession session) throws Exception {
+        String body = mockMvc.perform(get(URI.create(rawTarget)).session(session))
+                .andExpect(status().isForbidden())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(body)
+                .as("%s must be refused by the password-change gate", rawTarget)
+                .contains("PASSWORD_CHANGE_REQUIRED");
+    }
+
+    // Refused by something — the gate, the firewall, or the router. The security claim is
+    // only that the API did not answer, so that is what is asserted.
+    private void assertNoApiPayload(String rawTarget, MockHttpSession session) throws Exception {
+        String body;
+        try {
+            body = mockMvc.perform(get(URI.create(rawTarget)).session(session))
+                    .andReturn().getResponse().getContentAsString();
+        } catch (Exception rejectedOutright) {
+            // Spring Security's HttpFirewall rejects some of these before any handler runs.
+            return;
+        }
+        assertThat(body)
+                .as("%s must not reach the API", rawTarget)
+                .doesNotContain("\"success\":true");
+    }
+
+    private MockHttpSession loginSession(String username, String password) throws Exception {
+        MvcResult login = mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody(username, password)))
+                .andExpect(status().isOk())
+                .andReturn();
+        MockHttpSession session = (MockHttpSession) login.getRequest().getSession(false);
+        assertThat(session).isNotNull();
+        return session;
     }
 
     private String loginBody(String username, String password) {

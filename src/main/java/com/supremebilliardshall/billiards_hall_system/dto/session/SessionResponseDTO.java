@@ -1,5 +1,6 @@
 package com.supremebilliardshall.billiards_hall_system.dto.session;
 
+import com.supremebilliardshall.billiards_hall_system.entity.RateOverrideKind;
 import com.supremebilliardshall.billiards_hall_system.entity.SessionCloseKind;
 import com.supremebilliardshall.billiards_hall_system.entity.SessionStatus;
 import lombok.AllArgsConstructor;
@@ -31,6 +32,21 @@ public class SessionResponseDTO {
     // revenue is arithmetic rather than guesswork.
     private BigDecimal standardRatePerMinute;
     private BigDecimal rateOverridePerMinute;
+    // The same pair as typed, when either was entered hourly. Null otherwise — a per-minute
+    // table and a per-minute friend rate carry no hourly figure, and inventing one would put a
+    // number on the screen nobody entered. Display only; the money comes from the pair above.
+    private BigDecimal standardRatePerHour;
+    private BigDecimal rateOverridePerHour;
+    // Which kind of override is in effect. The banner names a friend rate after the customer
+    // type it was given on — "Happy Hour rate" — and that rule is wrong for a promo, which runs
+    // on any customer type and would otherwise read "Regular rate in effect". Null when there
+    // is no override.
+    private RateOverrideKind rateOverrideKind;
+    // The fixed charge for the whole session, when it was opened on tournament pricing. Null on
+    // a metered session. When set, timeAmount equals it from the first second and never moves —
+    // the clock keeps running, the charge does not.
+    private BigDecimal flatAmount;
+    private String flatRateReason;
 
     // While the session is live these are recomputed server-side on every read; at close they
     // are the values stored on table_session. The client never sends either one.

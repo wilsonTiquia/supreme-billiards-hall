@@ -186,6 +186,87 @@ gross ₱630.00, cost ₱157.50, profit ₱472.50 — the same figures the live 
 
 ---
 
+## Never run the test suite against the trading database
+
+`./mvnw test` writes real rows into whatever database it is pointed at, and **`@Transactional`
+does not take them all back**. This is not a theory: a throwaway database used during the
+September audit was left holding orphan `concurrency-tester-*` and `receipt-tester-*` users
+after one clean, all-green run. The concurrency tests commit on purpose — that is the only way
+to test a race — so nothing rolls those back.
+
+The till's own database happens to be clean of them today, but only because it was rebuilt
+from the migrations at 03:21 on 4 September and no suite has been pointed at it since. That is
+luck and timing, not protection.
+
+`./mvnw package` runs the tests too, so building by hand is not a read-only act.
+`scripts/rebuild.sh` is safe — it passes `-DskipTests` — but only that script is; typing the
+Maven command yourself is what catches you out.
+
+**Point it at a throwaway database, every time.** The datasource is read from the environment
+(see the `${DB_*}` placeholders in `application.properties`), so the override is one line:
+
+```
+createdb -h localhost -U supreme supreme_scratch
+
+DB_URL='jdbc:postgresql://localhost:5432/supreme_scratch' \
+DB_USERNAME=supreme DB_PASSWORD=supreme \
+  ./mvnw test
+
+dropdb -h localhost -U supreme supreme_scratch
+```
+
+Flyway builds the schema in the empty database on the first run, so there is nothing to set up
+first. Use the same override for `package`.
+
+Without the override the suite connects to `jdbc:postgresql://localhost:5432/supreme` — the
+till's own database. Before Saturday that means test rows mixed into the data you are checking
+the catalogue against. **After go-live it means invented sales in the takings**, which is why
+`docs/GO-LIVE.md` step 1 is "finish all testing" and why it comes before the reset.
+
+---
+
+## Never start the app from the IDE against the trading database
+
+The section above is one direction of the same hazard; this is the other. **Booting the
+application applies every pending migration.** Flyway runs at startup, before anything else
+happens, and it does not ask. So starting the app is a schema change to whatever database it is
+pointed at — not a read, not a dry run.
+
+IntelliJ's Run button and the live POS read the same `application.properties`, which means they
+point at the same database. Pressing Run migrates production.
+
+That is not hypothetical. At **00:50 on 8 September** `V15__expense.sql` landed on the till's own
+database this way: a rebuild-and-restart applied it before anyone had decided it should go on.
+It was harmless only because `cash_count` was empty at that moment, so dropping and recreating
+the generated `variance` column rewrote no reconciliation. **A single counted night present
+would have been recomputed under a formula the running jar did not yet know about** — the
+drawer's arithmetic changing underneath a jar still doing the old sum.
+
+**`scripts/rebuild.sh` is the only way to put new code on 8080.** It stops the service before
+touching the jar, skips the tests, and waits for the port to answer again.
+
+Anything you run yourself — the IDE, `mvn spring-boot:run`, `java -jar` — needs the datasource
+pointed somewhere else first, the same override the test suite uses:
+
+```
+createdb -h localhost -U supreme supreme_scratch
+
+DB_URL='jdbc:postgresql://localhost:5432/supreme_scratch' \
+DB_USERNAME=supreme DB_PASSWORD=supreme \
+  ./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=8081
+
+dropdb -h localhost -U supreme supreme_scratch
+```
+
+In IntelliJ the same three variables go in the run configuration's **Environment variables**
+field. Set them once, on the configuration you actually use, or the next Run is another
+unplanned migration.
+
+The port override matters as much as the database one: two JVMs cannot both hold 8080, and the
+one that loses is the till.
+
+---
+
 ## Starting the database over
 
 There are two scripts that erase the database, and the difference between them matters.
@@ -203,12 +284,11 @@ There are two scripts that erase the database, and the difference between them m
 ~/SupremeBilliards/scripts/reset-for-testing.sh
 ```
 
-Wipes the database, rebuilds it from the migrations, and puts the temporary logins back:
-
-```
-owner   / TEMPORARY-owner-1
-counter / TEMPORARY-counter-1
-```
+Wipes the database, rebuilds it from the migrations, and puts the two temporary logins back —
+`owner` (ADMIN) and `counter` (EMPLOYEE). The passwords it writes are in the script itself,
+which lives only on the POS machine. They are deliberately not repeated here: this file is
+tracked, so anything written in it is published to everyone with repo access and is wrong the
+moment `reset-for-golive.sh` rotates it.
 
 One keypress to confirm, no password prompts. That is deliberate — you will run it many times
 in an evening, and anything slower just means you stop using it and test on dirty data instead.

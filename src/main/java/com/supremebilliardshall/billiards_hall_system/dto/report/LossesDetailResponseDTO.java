@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.List;
 
-// What is behind the dashboard's three loss figures.
+// What is behind the dashboard's loss figures.
 //
 // Each section repeats its own total using the SAME field name the tile uses, computed from the
 // same rows the list below it shows. If a section total and its tile ever disagree, that is a
@@ -21,8 +21,16 @@ public class LossesDetailResponseDTO {
     private LocalDate businessDate;
     private CompSection comps;
     private VoidSection voids;
+    // The same shape twice, because they are the same kind of giveaway told apart by its kind.
+    // Both keep the scoped field names an override section has always had: inside `promos`,
+    // "forgoneRevenue" can only mean the promos' own. It is the tile figures on LossesDTO that
+    // had to say which they meant, having nothing to scope them.
+    private RateOverrideSection promos;
     private RateOverrideSection friendRates;
     private TimeReductionSection timeReductions;
+    private FlatRateSection flatRates;
+    private DiscountSection discounts;
+    private VoucherSection vouchers;
 
     @Data
     @NoArgsConstructor
@@ -58,5 +66,32 @@ public class LossesDetailResponseDTO {
         private Integer overrideSessions;
         private BigDecimal forgoneRevenue;
         private List<RateOverrideLossLineDTO> lines;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class DiscountSection {
+        private Integer discountBills;
+        private BigDecimal discountAmount;
+        private List<DiscountLossLineDTO> lines;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class VoucherSection {
+        private Integer voucherCount;
+        private BigDecimal voucherAmount;
+        private List<VoucherLossLineDTO> lines;
+    }
+
+    @Data
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FlatRateSection {
+        private Integer flatSessions;
+        private BigDecimal flatForgone;
+        private List<FlatRateLossLineDTO> lines;
     }
 }

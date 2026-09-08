@@ -202,17 +202,39 @@ class UnsettledBillsTest {
                 .isBefore(branchRepository.currentBusinessDate());
     }
 
-    // A table opened and closed with no time on it totals 0.00, and payment validation
-    // requires at least 0.01 — so such a bill can never be settled. Listing it would put a
-    // permanent entry in the floor strip that no one can ever clear.
+    /*
+     * A table opened and closed with no time on it totals 0.00, and IS listed.
+     *
+     * THIS TEST ASSERTED THE OPPOSITE UNTIL THE NO-CHARGE ROUTE EXISTED, and its reason was
+     * sound at the time: payment validation requires at least 0.01, so such a bill could never
+     * be settled, and listing it would have put a permanent entry in the floor strip that
+     * nobody could clear. Teaching staff to ignore this strip is the one thing it cannot
+     * afford.
+     *
+     * POST /bills/{id}/no-charge cleared it. A bill that comes to nothing now closes, so the
+     * row is actionable rather than permanent -- and hiding it became the worse of the two
+     * failures the day a voucher could cover a whole bill: the winner's table reads free, the
+     * bill is still OPEN, and nothing anywhere prompts anyone to finish it. The sale would
+     * never reach a report.
+     */
     @Test
-    void aBillWithNothingToCollectIsNotListed() throws Exception {
+    void aBillWithNothingToCollectIsListedSoItCanBeFinished() throws Exception {
         JsonNode session = body(openSession().andExpect(status().isOk())).get("data");
         UUID sessionId = UUID.fromString(session.get("id").asText());
+        UUID billId = UUID.fromString(session.get("billId").asText());
 
         mockMvc.perform(post("/api/v1/sessions/" + sessionId + "/close").with(user(principal())))
                 .andExpect(status().isOk());
 
+        JsonNode listed = unsettled();
+        assertThat(listed).hasSize(1);
+        assertThat(listed.get(0).get("id").asText()).isEqualTo(billId.toString());
+        assertThat(new java.math.BigDecimal(listed.get(0).get("totalAmount").asText()))
+                .isEqualByComparingTo("0.00");
+
+        // And it can actually be cleared, which is what makes listing it right.
+        mockMvc.perform(post("/api/v1/bills/" + billId + "/no-charge").with(user(principal())))
+                .andExpect(status().isOk());
         assertThat(unsettled()).isEmpty();
     }
 

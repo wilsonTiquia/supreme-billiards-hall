@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchSettledBills } from '@/api/endpoints/bills';
 import { fetchCurrentBusinessDay } from '@/api/endpoints/businessDay';
 import { queryKeys } from '@/api/queryKeys';
+import type { BillSummary } from '@/api/types';
 import { messageOf } from '@/api/errors';
 import { AdminPage } from '../AdminPage';
 import { Card } from '@/components/Card';
@@ -13,6 +14,11 @@ import { formatBusinessDate, formatTime } from '@/lib/datetime';
 import { formatMoney } from '@/lib/money';
 
 const METHOD_LABEL = { CASH: 'Cash', GCASH: 'GCash', MAYA: 'Maya' } as const;
+
+/** No method means no payment row: the bill came to nothing and was closed without one. */
+function methodLabel(method: BillSummary['method']): string {
+  return method ? METHOD_LABEL[method] : 'Nothing to pay';
+}
 
 /**
  * A night's takings, receipt by receipt. The owner's way to answer "what was receipt 47?"
@@ -100,7 +106,7 @@ export function SalesPage() {
                   </div>
                   <p className="mt-1 text-body text-text-dim">
                     {formatTime(bill.closedAt)} · {bill.quickSale ? 'Quick sale' : 'Table'} ·{' '}
-                    {METHOD_LABEL[bill.method]}
+                    {methodLabel(bill.method)}
                   </p>
                   <p className="text-body text-text-dim">
                     Taken by {bill.takenByUsername ?? '—'}
@@ -143,7 +149,7 @@ export function SalesPage() {
                   <td className="py-4 pr-4 text-body text-text-dim">
                     {bill.quickSale ? 'Quick sale' : 'Table'}
                   </td>
-                  <td className="py-4 pr-4 text-body text-text-dim">{METHOD_LABEL[bill.method]}</td>
+                  <td className="py-4 pr-4 text-body text-text-dim">{methodLabel(bill.method)}</td>
                   <td className="py-4 pr-4 text-body text-text-dim">{bill.takenByUsername ?? '—'}</td>
                   <td className="tabular py-4 pl-4 text-right text-amount text-amount">
                     {formatMoney(bill.totalAmount)}

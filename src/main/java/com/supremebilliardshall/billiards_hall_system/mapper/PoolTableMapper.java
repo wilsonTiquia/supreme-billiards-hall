@@ -10,9 +10,11 @@ import org.mapstruct.MappingTarget;
 @Mapper(componentModel = "spring")
 public interface PoolTableMapper {
 
-    // ratePerMinute lives on pool_table_rate and session on table_session, so the service
-    // sets both after mapping.
+    // Every rate figure lives on pool_table_rate and session on table_session, so the service
+    // sets them all after mapping.
     @Mapping(target = "ratePerMinute", ignore = true)
+    @Mapping(target = "ratePerHour", ignore = true)
+    @Mapping(target = "effectiveRatePerHour", ignore = true)
     @Mapping(target = "session", ignore = true)
     PoolTableResponseDTO toResponseDto(PoolTable poolTable);
 

@@ -7,16 +7,30 @@ import type { Losses, LossesDetail as LossesDetailData } from '@/api/types';
 import { Modal } from '@/components/Modal';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
-import { formatDateTime } from '@/lib/datetime';
-import { formatMoney, formatRate } from '@/lib/money';
+import { formatDateTime, formatMinutes } from '@/lib/datetime';
+import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
 
-export type LossKind = 'voids' | 'friendRates' | 'comps' | 'timeReductions';
+export type LossKind =
+  | 'voids'
+  | 'promos'
+  | 'friendRates'
+  | 'flatRates'
+  | 'comps'
+  | 'timeReductions'
+  | 'discounts'
+  | 'vouchers';
 
 const TITLES: Record<LossKind, string> = {
   voids: 'Voided lines',
-  friendRates: 'Friend rates given',
+  promos: 'Promos',
+  // No longer "Rate overrides": a promo is one of those too, and the two are now separate
+  // sections. A title that could name either would be the same lump under a new name.
+  friendRates: 'Friend rates',
+  flatRates: 'Flat rates',
   comps: 'Given away',
   timeReductions: 'Time not charged',
+  discounts: 'Discounts',
+  vouchers: 'Vouchers',
 };
 
 /** A figure that must equal its tile. When it does not, say so rather than showing both quietly. */
@@ -88,8 +102,26 @@ export function LossesDetail({
         <Voids data={detail.data} summary={summary} />
       ) : kind === 'timeReductions' ? (
         <TimeReductions data={detail.data} summary={summary} />
+      ) : kind === 'discounts' ? (
+        <Discounts data={detail.data} summary={summary} />
+      ) : kind === 'vouchers' ? (
+        <Vouchers data={detail.data} summary={summary} />
+      ) : kind === 'flatRates' ? (
+        <FlatRates data={detail.data} summary={summary} />
+      ) : kind === 'promos' ? (
+        <Overrides
+          section={detail.data.promos}
+          label="at a promo rate"
+          empty="promos"
+          summary={summary.promoForgone}
+        />
       ) : (
-        <FriendRates data={detail.data} summary={summary} />
+        <Overrides
+          section={detail.data.friendRates}
+          label="at a friend rate"
+          empty="friend rates"
+          summary={summary.friendForgone}
+        />
       )}
     </Modal>
   );
@@ -185,18 +217,137 @@ function Voids({ data, summary }: { data: LossesDetailData; summary: Losses }) {
   );
 }
 
-function FriendRates({ data, summary }: { data: LossesDetailData; summary: Losses }) {
-  const { lines, overrideSessions, forgoneRevenue } = data.friendRates;
+/**
+ * Money knocked off whole bills at the counter.
+ *
+ * The only giveaway on this screen that is not about table time — it reaches the food and the
+ * drink too — which is why it sits beside "Time not charged" rather than inside it. A bill can
+ * carry both, and they do not overlap: a time reduction rewrites the TIME lines first, so the
+ * subtotal a discount was computed against is already the reduced one.
+ *
+ * Each row shows the whole subtraction rather than the discount alone. "654 less 54, charged
+ * 600" is a sentence the owner can check against the receipt; a lone 54 is not.
+ */
+function Discounts({ data, summary }: { data: LossesDetailData; summary: Losses }) {
+  const { lines, discountBills, discountAmount } = data.discounts;
   return (
     <div className="flex flex-col gap-4">
       <SectionTotal
-        label={`${overrideSessions} ${overrideSessions === 1 ? 'session' : 'sessions'} at a friend rate`}
-        detail={forgoneRevenue}
-        summary={summary.forgoneRevenue}
+        label={`${discountBills} ${discountBills === 1 ? 'bill' : 'bills'} discounted`}
+        detail={discountAmount}
+        summary={summary.discountAmount}
         format={formatMoney}
       />
       {lines.length === 0 ? (
-        <Empty what="friend rates" />
+        <Empty what="discounts" />
+      ) : (
+        <ul className="divide-y divide-border border-t border-border">
+          {lines.map((line, index) => (
+            <li key={index} className="py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-body text-text">
+                  {formatMoney(line.subtotal)} → {formatMoney(line.chargedAmount)}
+                </span>
+                <span className="tabular text-body text-danger">
+                  {formatMoney(line.discountAmount)}
+                </span>
+              </div>
+              <p className="mt-1 text-body text-text">{line.reason ?? '— no reason recorded —'}</p>
+              <p className="text-label uppercase text-text-dim">
+                {line.actorUsername ?? 'unknown'} · {formatDateTime(line.discountAt)}
+                {' · '}
+                <Link to={`/receipt/${line.billId}`} className="text-info underline">
+                  receipt #{line.receiptNo}
+                </Link>
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Free table time won as a prize and redeemed at the counter.
+ *
+ * The only giveaway on this screen where what the hall gave up and what the customer received
+ * are different numbers. A two-hour code spent on a ninety-minute session costs the hall ninety
+ * minutes of table time; the other thirty are forfeited and cost nothing. Both are shown,
+ * because the owner sizing the next giveaway needs to know how much of it went unused — fifty
+ * two-hour codes is not fifty times two hours of lost revenue, and budgeting it as though it
+ * were is how a promotion gets cancelled for the wrong reason.
+ */
+function Vouchers({ data, summary }: { data: LossesDetailData; summary: Losses }) {
+  const { lines, voucherCount, voucherAmount } = data.vouchers;
+  return (
+    <div className="flex flex-col gap-4">
+      <SectionTotal
+        label={`${voucherCount} ${voucherCount === 1 ? 'voucher' : 'vouchers'} redeemed`}
+        detail={voucherAmount}
+        summary={summary.voucherAmount}
+        format={formatMoney}
+      />
+      {lines.length === 0 ? (
+        <Empty what="vouchers" />
+      ) : (
+        <ul className="divide-y divide-border border-t border-border">
+          {lines.map((line, index) => (
+            <li key={index} className="py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-body text-text">
+                  {line.code}
+                  {line.poolTableName ? ` · ${line.poolTableName}` : ''}
+                </span>
+                <span className="tabular text-body text-danger">
+                  {formatMoney(line.voucherAmount)}
+                </span>
+              </div>
+              <p className="mt-1 text-body text-text">
+                {formatMinutes(line.minutesCovered)} covered of{' '}
+                {formatMinutes(line.voucherMinutes)}
+                {line.minutesForfeited > 0
+                  ? ` · ${line.minutesForfeited} min forfeited`
+                  : ' · used in full'}
+              </p>
+              <p className="text-body text-text-dim">
+                {line.batchNote ?? '— no batch note —'}
+              </p>
+              <p className="text-label uppercase text-text-dim">
+                {line.actorUsername ?? 'unknown'} · {formatDateTime(line.redeemedAt)}
+                {' · '}
+                <Link to={`/receipt/${line.billId}`} className="text-info underline">
+                  receipt #{line.receiptNo}
+                </Link>
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Tournament pricing. A flat fee below what the meter would have charged is a giveaway, and
+ * nothing else on this screen would show it — the rate-override figures are computed only over
+ * sessions carrying a per-minute override, which a flat session never has.
+ *
+ * Each row's forgone figure is clamped at zero server-side, so a fee ABOVE the metered figure
+ * contributes nothing here rather than cancelling out a real loss on another table.
+ */
+function FlatRates({ data, summary }: { data: LossesDetailData; summary: Losses }) {
+  const { lines, flatSessions, flatForgone } = data.flatRates;
+  return (
+    <div className="flex flex-col gap-4">
+      <SectionTotal
+        label={`${flatSessions} ${flatSessions === 1 ? 'session' : 'sessions'} at a flat rate`}
+        detail={flatForgone}
+        summary={summary.flatForgone}
+        format={formatMoney}
+      />
+      {lines.length === 0 ? (
+        <Empty what="flat rates" />
       ) : (
         <ul className="divide-y divide-border border-t border-border">
           {lines.map((line, index) => (
@@ -208,8 +359,77 @@ function FriendRates({ data, summary }: { data: LossesDetailData; summary: Losse
                 </span>
               </div>
               <p className="tabular mt-1 text-label text-text-dim">
-                {formatRate(line.standardRatePerMinute)} standard, charged{' '}
-                {formatRate(line.chargedRatePerMinute)} · {line.billedMinutes} min billed
+                {formatMoney(line.flatAmount)} flat · {line.billedMinutes} min at{' '}
+                {formatRate(line.standardRatePerMinute)} would have been{' '}
+                {formatMoney(line.meteredRevenue)}
+              </p>
+              <p className="mt-1 text-body text-text">{line.reason ?? '— no reason recorded —'}</p>
+              <p className="text-label uppercase text-text-dim">
+                {line.actorUsername ?? 'unknown'} · {formatDateTime(line.openedAt)}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Promos and friend rates, which are one component because they are one mechanism.
+ *
+ * They price through the same columns and their forgone revenue is the same arithmetic; what
+ * differs is what they mean and therefore how they are counted. Two copies of this list would
+ * be two places for the rate pair's hourly/per-minute rule to drift.
+ */
+function Overrides({
+  section,
+  label,
+  empty,
+  summary,
+}: {
+  section: LossesDetailData['friendRates'];
+  label: string;
+  empty: string;
+  summary: number;
+}) {
+  const { lines, overrideSessions, forgoneRevenue } = section;
+  return (
+    <div className="flex flex-col gap-4">
+      <SectionTotal
+        label={`${overrideSessions} ${overrideSessions === 1 ? 'session' : 'sessions'} ${label}`}
+        detail={forgoneRevenue}
+        summary={summary}
+        format={formatMoney}
+      />
+      {lines.length === 0 ? (
+        <Empty what={empty} />
+      ) : (
+        <ul className="divide-y divide-border border-t border-border">
+          {lines.map((line, index) => (
+            <li key={index} className="py-3">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-body text-text">{line.poolTableName}</span>
+                <span className="tabular text-body text-danger">
+                  {formatMoney(line.forgoneRevenue)}
+                </span>
+              </div>
+              <p className="tabular mt-1 text-label text-text-dim">
+                {/* Both sides in the unit the giveaway was entered in, or both per minute.
+                    Never one of each: the pair is what the reader compares. The forgone figure
+                    beside it is computed per-minute either way. */}
+                {line.chargedRatePerHour !== null && line.standardRatePerHour !== null ? (
+                  <>
+                    {formatHourlyRate(line.standardRatePerHour)} standard, charged{' '}
+                    {formatHourlyRate(line.chargedRatePerHour)}
+                  </>
+                ) : (
+                  <>
+                    {formatRate(line.standardRatePerMinute)} standard, charged{' '}
+                    {formatRate(line.chargedRatePerMinute)}
+                  </>
+                )}{' '}
+                · {line.billedMinutes} min billed
               </p>
               <p className="mt-1 text-body text-text">{line.reason ?? '— no reason recorded —'}</p>
               <p className="text-label uppercase text-text-dim">

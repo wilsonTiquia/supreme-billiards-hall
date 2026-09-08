@@ -42,6 +42,7 @@ return raw image bytes with the stored content type. There is nothing to wrap an
 |---|---|---|---|
 | `STALE_BILL_VERSION` | 409 | The bill changed since you loaded it | Reload the bill, show the new total, ask again |
 | `DUPLICATE_PAYMENT_REFERENCE` | 409 | That reference is already recorded in this branch | Offer "record anyway" → resend with `duplicateOverride: true` |
+| `SESSION_NOTE_REQUIRED` | 409 | Leaving a bill unpaid when the session carries nobody's name | Mark the note field required and focus it — do not just show the message |
 
 Every other error carries no `code`; show `message`.
 
@@ -235,7 +236,7 @@ reads this. `allowsRateOverride` is what enables the friend-rate field.
 ```json
 { "tables": [
     { "id": "uuid", "name": "Table 3", "tableNumber": 3, "isActive": true,
-      "ratePerMinute": 4.0,
+      "ratePerMinute": 4.0, "ratePerHour": 240.00, "effectiveRatePerHour": 240.0000,
       "session": null }
   ],
   "serverNow": "2026-08-31T12:37:26.610539Z" }
@@ -246,7 +247,8 @@ reads this. `allowsRateOverride` is what enables the friend-rate field.
 ```json
 "session": { "sessionId", "billId", "poolTableName", "status", "customerTypeId", "customerTypeName",
              "openedAt", "billedMinutes", "billedSeconds", "ratePerMinute",
-             "timeAmount", "itemTotal", "runningTotal" }
+             "flatAmount", "rateOverrideKind",
+             "timeAmount", "itemCount", "itemTotal", "runningTotal" }
 ```
 
 `status` ∈ `OPEN | PAUSED`. `billedMinutes` and `timeAmount` are the **running** figures the
@@ -270,12 +272,35 @@ two components together in the client.
 
 Poll this endpoint for the floor; it is one query regardless of how many tables are occupied.
 
-**POST/PUT `/tables`** → `{ "name", "tableNumber"?, "ratePerMinute", "isActive"? }`. `ratePerMinute`
-is required: a table with no rate cannot host a session. On PUT, a changed rate opens a new rate
-period exactly as the dedicated endpoint does.
+### Rates: two ways to type the same number
 
-**PUT `/tables/{id}/rate`** → `{ "ratePerMinute", "effectiveFrom"? }`. Closes the current rate
-period and opens a new one. Never mutates history. A backdated overlap → 409.
+`ratePerMinute` is the only figure that bills. `ratePerHour` is an **input convenience** — the
+owner configures tables in pesos per hour — and a **record of what was typed**, so the screen can
+read the admin's own figure back. Nothing prices from it.
+
+- `ratePerMinute` — what bills. `numeric(10,4)`. Always present on a table that has a rate.
+- `ratePerHour` — what the admin typed, when they typed an hourly figure. `numeric(12,2)`.
+  **Null** on a table configured per minute, which is every table predating this feature. Do not
+  fill that null in by multiplying: it would show a number nobody entered.
+- `effectiveRatePerHour` — `60 × ratePerMinute`, computed server-side. What an hour is *actually*
+  priced at.
+
+`ratePerHour` and `effectiveRatePerHour` differ whenever the hourly figure does not divide by 60
+exactly. ₱240/hour stores `4.0000`/min and both read `240`. ₱200/hour stores `3.3333`/min, whose
+effective hourly rate is `199.9980`. Show the difference rather than hiding it — a full hour still
+bills ₱200.00 because the line rounds to centavos, but three hours bills ₱599.99 against ₱600.00
+nominal.
+
+**POST/PUT `/tables`** → `{ "name", "tableNumber"?, "ratePerMinute"?, "ratePerHour"?, "isActive"? }`.
+**Exactly one** of the two rates is required — neither is a 400 ("a table with no rate cannot host a
+session"), both is a 400. On PUT, a changed rate opens a new rate period exactly as the dedicated
+endpoint does; switching a table between the two input modes counts as a change, so send back the
+figure the table is currently configured with when you are only renaming it.
+
+**PUT `/tables/{id}/rate`** → `{ "ratePerMinute"?, "ratePerHour"?, "effectiveFrom"? }`, again
+exactly one of the two rates. Closes the current rate period and opens a new one. Never mutates
+history — a session already running keeps the rate snapshotted onto its segment. A backdated
+overlap → 409.
 
 **DELETE** archives, and is **rejected with 409 while a session is open** on that table.
 
@@ -290,8 +315,10 @@ period and opens a new one. Never mutates history. A backdated overlap → 409.
 | POST | `/api/v1/sessions/{id}/pause` | authenticated |
 | POST | `/api/v1/sessions/{id}/resume` | authenticated |
 | POST | `/api/v1/sessions/{id}/close` | authenticated |
+| GET | `/api/v1/sessions/{id}/notes` | authenticated |
+| POST | `/api/v1/sessions/{id}/notes` | authenticated |
 
-**POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverrideReason"? }`
+**POST `/sessions`** → `{ "tableId", "customerTypeId", "rateOverridePerMinute"?, "rateOverridePerHour"?, "rateOverrideKind"?, "rateOverrideReason"?, "flatAmount"?, "flatRateReason"? }`
 
 No start time — the server stamps it. Creates the bill, the session and its first segment in one
 transaction.
@@ -299,8 +326,42 @@ transaction.
 - A **second open session on the same table returns 409** `That table already has an open session`.
   This comes from a database index, so it is race-proof: if two tabs both press start, exactly one
   wins.
-- `rateOverridePerMinute` is only accepted when the chosen customer type has
-  `allowsRateOverride: true`; otherwise 409. Any value is allowed, with no floor and no approval.
+- The friend rate takes **at most one** of `rateOverridePerMinute` and `rateOverridePerHour` —
+  both in one request is a 400, and **neither is the ordinary case**, meaning "charge the table's
+  standard rate". This differs from the table endpoints, where a rate is mandatory.
+- When `rateOverridePerHour` is given, the server derives `rateOverridePerMinute = rateOverridePerHour / 60`
+  at HALF_UP to four decimals and stores both. The derived per-minute figure is what is snapshotted
+  onto `session_segment.rate_per_minute` and what bills; the hourly figure is a record of what was
+  typed and prices nothing.
+- `rateOverrideKind` ∈ `FRIEND | PROMO` says **which kind of override** the rate is. It is a
+  pricing mode, not a kind of customer, and both kinds bill through the same two rate fields —
+  this only decides the gate, the reason rule, and which figure the report counts it under.
+  Sending it without a rate is a 400: a kind labels an override, it does not create one.
+- **`FRIEND`** — a favour. Only accepted when the chosen customer type has
+  `allowsRateOverride: true`; otherwise 409. The reason is optional. **This is the default**:
+  omitting `rateOverrideKind` alongside a rate means `FRIEND`, which is what every override
+  written before this field existed was, and what they were all backfilled to.
+- **`PROMO`** — happy hour. **Not gated on the customer type**, exactly as the flat rate is not:
+  an event is not a kind of customer, and requiring a "Promo" customer type to run one would file
+  a happy-hour walk-in as customer type Promo and destroy the record of who they actually were.
+  `rateOverrideReason` is **required** — an unlabelled promo is unmeasurable, which is the whole
+  point of recording it apart. Missing reason is a 400.
+- Under either kind, any value is allowed, with no floor and no approval — **including zero**,
+  which is a comped game.
+- `flatAmount` is **tournament pricing**: a fixed charge for the whole session however long it
+  runs, set at session start. `flatRateReason` is **required** with it, and zero is allowed — the
+  reason is the whole control on a fee somebody chose. Unlike the friend rate it is **not gated on
+  the customer type**: a tournament is an event, not a kind of customer, and requiring a
+  "Tournament" customer type would mean remembering to switch it back.
+- A session is priced **one way**. `flatAmount` together with either friend-rate field is a 400.
+- On a flat session the timer still runs and the minutes are still recorded — `billedMinutes` and
+  `billedSeconds` behave exactly as they do on a metered session, and utilisation counts them. What
+  stops growing is the charge: `timeAmount` equals `flatAmount` from the first second. Checkout
+  writes **one** TIME line for the whole session, described as `"Table 3 - flat rate (192 min)"`.
+- **`POST /sessions/{id}/billed-minutes` is refused with 409 on a flat session.** "Charge fewer
+  minutes" has no meaning against a fee that was never per-minute.
+- Pausing works normally: it stops the clock and lowers the recorded minutes, and does not change
+  the charge.
 
 **Session response** (returned by all five routes):
 
@@ -308,6 +369,8 @@ transaction.
 { "id", "billId", "poolTableId", "poolTableName", "customerTypeId", "customerTypeName",
   "status", "openedAt", "closedAt", "closeKind",
   "standardRatePerMinute", "rateOverridePerMinute",
+  "standardRatePerHour", "rateOverridePerHour", "rateOverrideKind",
+  "flatAmount", "flatRateReason",
   "billedMinutes", "billedSeconds", "timeAmount", "itemTotal", "runningTotal",
   "segments": [ { "id", "poolTableId", "poolTableName", "seq", "ratePerMinute",
                   "startedAt", "endedAt", "billedMinutes", "amount" } ],
@@ -317,6 +380,23 @@ transaction.
 
 `status` ∈ `OPEN | PAUSED | CLOSED | AUTO_CLOSED | VOIDED`.
 `closeKind` ∈ `MANUAL | AUTO_END_OF_DAY | null`.
+
+`flatAmount` and `flatRateReason` are null on a metered session. When `flatAmount` is set,
+`rateOverridePerMinute` is always null (the two are mutually exclusive) and the session's segments
+carry `ratePerMinute: 0` — **which means priced at session level, not that the table was free**.
+Read `flatAmount` for what was actually charged; the same applies to `TableSessionSummary`, which
+is why it carries `flatAmount` alongside its zero `ratePerMinute`.
+
+`rateOverrideKind` ∈ `FRIEND | PROMO | null`, null exactly when there is no override. Use it for
+the label: a friend rate is named after the customer type it was given on ("Happy Hour rate"),
+and a **promo is named after itself** — it runs on any customer type, so that rule would render
+"Regular rate" on a happy-hour table. The audit feed applies the same rule to `actionLabel`.
+
+`standardRatePerHour` and `rateOverridePerHour` are read-back only, both snapshotted when the
+session opened. `standardRatePerHour` is null if the table was configured per minute at that
+moment; `rateOverridePerHour` is null if the friend rate was typed per minute or there was none.
+Quote the pair only when **both** are non-null — half an hourly comparison reads worse than a
+per-minute one. Neither figure ever enters an amount.
 
 While the session is live, `billedMinutes` and `timeAmount` are recomputed on every read. Once
 closed they are the stored finals. **Billing is exact-minute, truncated** — 90m59s bills 90 minutes,
@@ -335,6 +415,39 @@ the close instant.
 **close** ends the segments, computes billed minutes and writes one TIME line per segment. It does
 **not** take payment.
 
+### Notes — who was on the table
+
+Free text attaching people to a session, and so to its bill. The unpaid strip in §7 shows the most
+recent one, which is the only thing that tells three unpaid "Table 1" bills apart.
+
+**Not admin-only.** The counter is who knows the names, and a note they cannot write is a note
+nobody writes.
+
+**GET `/sessions/{id}/notes`** — the thread for one session, **oldest first**.
+
+```json
+[ { "id", "sessionId", "kind": "STAFF", "body": "Marco + 2",
+    "authorId", "authorUsername": "counter", "createdAt": "..." } ]
+```
+
+`kind` ∈ `STAFF | SYSTEM`. A `SYSTEM` note is written by the server at an event — currently
+settlement, which appends `"Settled by <user> — CASH 1350.00"`. **Mark the two apart in the UI.**
+The kind is never accepted from the client, so a staff member cannot forge one by typing the
+sentence, and that distinction is worth nothing if the screen does not show it.
+
+**POST `/sessions/{id}/notes`** → `{ "body" }` — required, non-blank after trimming, at most 280
+characters, or 400. Nothing else in the body is read: the author is the authenticated user and the
+kind is always `STAFF`.
+
+**Notes are append-only. There is no PUT and no DELETE, and there will not be one.** The database
+blocks UPDATE and DELETE by trigger. A note about money owed that an employee can quietly remove
+defeats the point of writing it, so a wrong note is corrected by a later note and both stay in the
+thread.
+
+A note can be added to a session in **any** state, including a closed one — staff forget during a
+busy shift and put the name on when they see the unpaid card. Another branch's session is 404, for
+both the read and the write.
+
 ---
 
 ## 7. Bills, orders and voids
@@ -345,6 +458,7 @@ the close instant.
 | GET | `/api/v1/bills/{id}` | authenticated |
 | POST | `/api/v1/bills/{id}/lines` | authenticated |
 | POST | `/api/v1/bills/{id}/lines/{lineId}/void` | authenticated |
+| GET | `/api/v1/bills/{id}/notes` | authenticated |
 
 **GET `/bills?businessDate=`** — one business day's **settled** sales, newest receipt first,
 paged (`size` capped at 200). `businessDate` is required, `YYYY-MM-DD`.
@@ -359,12 +473,17 @@ paged (`size` capped at 200). `businessDate` is required, `YYYY-MM-DD`.
 though the route is ADMIN — this list is for finding a receipt, and margin belongs on the
 dashboard. Open the stored snapshot with `GET /bills/{id}/receipt`.
 
+**`method` and `takenByUsername` are `null`** on a bill closed with nothing to pay — see
+`POST /bills/{id}/no-charge`. Render the absence ("Nothing to pay"); do not default to `CASH`.
+
 **GET `/bills/{id}`**
 
 ```json
 { "id", "status", "customerTypeId", "customerTypeName", "openedAt", "closedAt",
   "businessDate", "version",
-  "subtotalTime", "subtotalItems", "totalAmount",
+  "subtotalTime", "subtotalItems",
+  "discountAmount", "discountReason", "discountByUsername", "discountAt",
+  "voucherAmount", "voucherCode", "voucherMinutes", "voucherMinutesCovered", "totalAmount",
   "lines": [ { "id", "lineKind", "seq", "productId", "sessionId", "description",
                "unitPrice", "quantity", "billedMinutes", "lineTotal",
                "voidedAt", "voidReason" } ],
@@ -373,6 +492,17 @@ dashboard. Open the stored snapshot with `GET /bills/{id}/receipt`.
 
 An ADMIN additionally receives `totalCost` and `grossProfit` at the top level, and `unitCost` and
 `lineCost` on each line. An EMPLOYEE receives neither key.
+
+`totalAmount` is `subtotalTime + subtotalItems − discountAmount − voucherAmount`. **The discount
+and voucher fields are on the base shape, not the admin one** — neither is a cost or a profit
+figure, and the counter who entered them has to be able to read them back. `discountAmount` and
+`voucherAmount` are `0.00` and the other fields `null` when nothing was given away. See
+`POST /bills/{id}/discount` and `POST /bills/{id}/voucher` below.
+
+`voucherCode` is the **display form** — `SB-7K4-M2Q`. Returning it here is safe where the admin
+code list is not: this code has already been spent, on this bill, by the person reading the screen.
+`voucherMinutes` is what the code was worth and `voucherMinutesCovered` is what it reached; the
+difference is what the customer forfeited.
 
 **Lines are returned one row per `bill_line`, and always will be.** Four of the same beer are
 four rows. The UI groups identical non-voided lines for display — "4 × San Miguel Pale Pilsen
@@ -411,18 +541,216 @@ would never be collected. Each row carries its own `businessDate` so an old one 
 
 ```json
 [ { "id", "openedAt", "sessionEndedAt", "businessDate", "customerTypeName",
-    "tableNames": ["Table 3"], "totalAmount": 5054.00 } ]
+    "tableNames": ["Table 3"], "totalAmount": 5054.00,
+    "latestNote": { "id", "sessionId", "kind", "body", "authorId", "authorUsername", "createdAt" } } ]
 ```
+
+`latestNote` is the most recent note on the bill, or **null** when nobody has written one — the
+name of who owes the money, so three unpaid bills on the same table are told apart. It is one more
+line on the card; nothing about how these bills are detected, totalled or collected changed. The
+whole thread is at `GET /bills/{id}/notes`.
 
 Bills totalling `0.00` are excluded: payment validation requires at least 0.01, so they can never
 be settled and would sit in the floor strip for ever. Carries no cost field, so one shape serves
 both roles.
+
+**GET `/bills/unpaid`** — every bill with status `UNSETTLED`, **newest first, all business dates**.
+A different list from `/bills/unsettled` above, and the two must never be merged in the UI:
+
+| | `/bills/unsettled` | `/bills/unpaid` |
+|---|---|---|
+| Status | `OPEN`, no live session | `UNSETTLED` |
+| What it means | **A mistake** — staff forgot to check out | **A debt** — the hall agreed to wait |
+| Totals | Computed from live lines; `total_amount` still reads `0.00` | **Frozen**; has a receipt number |
+| In the night's gross | No — it is not a finished sale | **Yes** |
+| Label on screen | "Not checked out" | "Unpaid" |
+
+```json
+[ { "id", "receiptNo": 412, "businessDate": "2026-09-05", "unsettledAt", "unsettledByUsername",
+    "daysOutstanding": 35, "tableNames": ["Table 3"], "totalAmount": 654.00,
+    "latestNote": { ...same shape as above... } } ]
+```
+
+`businessDate` is the night it was **played**, not the night it will be collected.
+`daysOutstanding` is counted between business dates server-side — the browser never dates money.
+Carries no cost field, so one shape serves both roles.
+
+**POST `/bills/{id}/leave-unpaid`** → `{ "note", "billVersion" }` — records the sale without the
+money. Runs the **same finalisation a checkout runs**: totals recomputed from live lines and frozen,
+`receipt_no` allocated under the branch row lock, `closed_at`/`closed_by` stamped, the `receipt`
+snapshot written. It then sets status `UNSETTLED` and takes no payment. Returns the `UnpaidBill`
+shape above.
+
+- **`note` is conditionally required.** The session must carry at least one `STAFF` note naming who
+  owes the money — either one already written during the session, or this one, which is written
+  through the ordinary note path in the same transaction and authored by the caller. Missing and
+  needed → 409 `SESSION_NOTE_REQUIRED`. A `SYSTEM` note does not satisfy this.
+- **`billVersion`** behaves exactly as at checkout: mismatch → 409 `STALE_BILL_VERSION`.
+- **A quick sale cannot be left unpaid** → 409. It has no session, so there is nowhere to record who
+  owes it, and it is created and settled in one transaction anyway.
+- The same blockers as checkout apply: a session still running → 409.
+- Audited as `BILL_LEFT_UNPAID` with the amount. No `SYSTEM` note is written — unlike settlement,
+  this event always has a staff note beside it already.
+
+**`closed_at` is stamped here and never written again.** `bill.business_date` is generated from it,
+so this is the single write that decides which night the sale reports under. Settlement records
+`settled_at` instead — see §8.
+
+**GET `/bills/{id}/notes`** — every note on every session this bill carried, oldest first,
+including the settlement note. Same shape as `/sessions/{id}/notes` in §6.
+
+**Nothing is dropped when the debt is collected.** The bill leaves the unpaid strip through the
+existing status logic and its notes travel with it, which is what makes "who keeps playing on
+credit" answerable a year from now. A quick sale carries no session and so has no thread — it is
+created and settled in one transaction, and never had a debt to attribute.
 
 **POST `/bills/{id}/lines/{lineId}/void`** → `{ "reason" }` — **required**, non-blank, or 400. The
 line is retained, the stock is returned, and an audit row is written. Voiding twice → 409. A TIME
 line cannot be voided on its own → 409.
 
 Adding or voiding lines on a bill that is not `OPEN` → 409.
+
+**POST `/bills/{id}/discount`** → `{ "chargeAmount", "reason" }` — knocks money off the **whole**
+bill, food and drink included. Returns the `Bill` shape.
+
+Independent of the "charge less time" control in §6 (`POST /sessions/{id}/billed-minutes`), which
+only ever reaches the TIME lines. **Both can apply to one bill**, both appear separately on the
+receipt and in the dashboard's losses band, and they do not double-count: a time reduction rewrites
+the TIME lines first, so the subtotal a discount is computed against is already the reduced one.
+
+- **`chargeAmount` is what is being CHARGED, not what is coming off.** The server computes
+  `discount_amount = subtotal - chargeAmount`; the browser never sends a discount and never
+  computes a total. The figures shown after saving must be the ones that came back.
+- **`reason` is required**, non-blank, or 400. **Any role may do this** — the owner is not at the
+  hall most nights — so the reason, the recorded actor and the dashboard figure are the whole
+  control. Detection, not prevention: the same posture the friend rate takes.
+- `chargeAmount` below `0.01` → 400.
+- `chargeAmount` **above** the subtotal → 409. That is a surcharge, not a discount.
+- `chargeAmount` **equal to** the subtotal → 409. A bill of `0.00` could never be settled, so it
+  would sit on the floor for ever. A free game is a zero friend or flat rate set when the table is
+  **opened**, not a discount at checkout. (Comping a whole bill at checkout has no route today.)
+- Bill not `OPEN` → 409.
+- Audited as `BILL_DISCOUNTED` with before/after snapshots and the reason.
+
+**The stored discount is a FIXED PESO AMOUNT, not a percentage.** Add a ₱50 beer to a bill
+discounted by ₱54 and the total goes from ₱600 to ₱650 — the discount stays at ₱54. Say so on
+screen; it is the thing that surprises people.
+
+Applying a discount bumps `bill.version`, so a checkout tab still holding the undiscounted total
+gets 409 `STALE_BILL_VERSION` rather than charging the old amount.
+
+**DELETE `/bills/{id}/discount`** — clears it and restores the full amount. All four columns are
+nulled together. No discount to clear → 409; bill not `OPEN` → 409. Audited as
+`BILL_DISCOUNT_CLEARED`, carrying the cleared discount's own reason.
+
+**POST `/bills/{id}/no-charge`** — finishes a bill that comes to **nothing**. Returns the
+`Receipt` shape. Any role.
+
+Not a payment of `0.00`: `payment_amount_chk` refuses one and `PaymentRequestDTO` will not carry
+one, because a payment of zero is not something that happened. The bill closes, takes its receipt
+number and lands on the night's report like any other sale — it simply had nothing to collect, and
+**no `payment` row is written**.
+
+- **Refuses any bill with a figure on it** → 409, naming the amount. This is the one route that
+  completes a sale without money, and that refusal is all that separates it from a way to give any
+  bill away. The gate is checked after the totals are finalised, where the figure is real.
+- Bill not `OPEN` → 409. Running session → 409, same blockers as payment.
+- Audited as `BILL_CLOSED_NO_CHARGE`.
+
+Reached by a voucher covering the whole of a bill with nothing else on it — the prize winner who
+plays ninety minutes on a two-hour code and buys no drinks — and by a comped zero flat or friend
+rate. The receipt payload carries `"noCharge": true`, so the chit says **"Nothing to pay"** rather
+than showing an empty payment block.
+
+**`method` and `takenByUsername` are `null` on such a bill in `GET /bills?businessDate=`.** Render
+the absence; do not default to `CASH`, which would show money in the owner's list that never went
+in the drawer.
+
+**POST `/bills/{id}/voucher`** → `{ "code" }` — spends a giveaway voucher against this bill.
+**Any role**: making a batch is the owner's job, spending one is the cashier's. Returns
+
+```json
+{ "bill": <Bill>, "code", "voucherMinutes", "minutesCovered", "minutesForfeited", "voucherAmount" }
+```
+
+A voucher is **TIME, not money**. "2 hours" covers up to two hours of this bill's table time at
+whatever rate that time was actually billed at, so the same code is worth ₱480 on a ₱240/hour table
+and ₱300 on a ₱150/hour one. Play longer and the customer pays the difference; **play less and the
+rest is forfeited** — no change, no residual balance, the code is spent. `minutesForfeited` is the
+field that says so, and the screen must say it at the moment of redemption. The cashier is the one
+who has to tell the customer.
+
+- `code` is sent **as typed**. The server uppercases it, strips spaces and dashes and adds the `SB`
+  prefix if it was left off, so `sb 7k4-m2q` and `SB7K4M2Q` both find `SB-7K4-M2Q`.
+- **Six refusals, each with its own message.** Render the server's `message`; "invalid code" for all
+  six is useless to a cashier holding up a queue.
+  - No such code in this branch → **404**. A code from another branch is simply not found.
+  - Already redeemed → 409, naming the date and the receipt it was used on.
+  - Expired → 409, naming the date. Judged against the **business** date, so a code expiring on the
+    31st still works at 2am on the 1st.
+  - Bill not `OPEN` → 409.
+  - Any session on the bill priced at a **promo, friend rate or flat fee** → 409, naming which and
+    which table. One pricing story per session, the same rule the flat rate already follows.
+  - No table time on the bill yet → 409. Close the session first; the code is not spent.
+- A bill already discounted so far that the voucher would take it below zero → 409, naming the
+  order that works: voucher first, then agree the discount on what is left.
+- Audited as `VOUCHER_REDEEMED`. Bumps `bill.version`.
+
+**Single use is enforced by the database, not by a pre-check.** Redemption is a conditional
+`UPDATE ... WHERE redeemed_at IS NULL`, and zero rows affected *is* the already-redeemed refusal —
+two tills racing one code is exactly what a read-then-write loses.
+
+**DELETE `/bills/{id}/voucher`** — un-redeems it, for a code entered against the wrong bill. Returns
+the same shape, the code to unredeemed and the bill to its full amount. No voucher on the bill →
+409; bill not `OPEN` → 409. Audited as `VOUCHER_RELEASED`.
+
+---
+
+## 7a. Voucher batches — ADMIN only
+
+| Method | Path | Who |
+|---|---|---|
+| POST | `/api/v1/voucher-batches` | **ADMIN** |
+| GET | `/api/v1/voucher-batches` | **ADMIN** |
+| GET | `/api/v1/vouchers?batchId=&status=` | **ADMIN** |
+
+**ADMIN is a security boundary here, not a layout choice: whoever can read a list of unredeemed
+codes can redeem them.** The counter never sees these routes; redeeming needs a code the customer
+already holds.
+
+**POST `/voucher-batches`** → `{ "hours", "quantity", "expiresOn", "note"? }`. Generates the whole
+batch in one transaction and returns it **with the codes**, which is the only response that ever
+carries a list of live codes — the owner needs them to copy or print.
+
+- **`hours`**, because that is how the prize was advertised. The server converts to minutes and
+  stores minutes; a fractional minute is refused (409) rather than rounded.
+- `quantity` 1–500. Above → 400. `expiresOn` must be in the future → 400.
+- Audited as `VOUCHER_BATCH_CREATED`. **The codes are not in the audit row** — an audit log is never
+  pruned, and live codes in it make every future reader of that screen able to spend them.
+
+```json
+{ "id", "minutes", "hoursLabel", "quantity", "expiresOn", "note",
+  "createdByUsername", "createdAt",
+  "issued", "redeemed", "expired", "outstanding",
+  "codes": [ <Voucher>, ... ] }
+```
+
+**GET `/voucher-batches`** returns the same shape with **`codes: null`** — a screen rendering every
+code of every batch leaks the whole giveaway to anyone looking over a shoulder. The four counts are
+exclusive and sum to `issued`; `outstanding` is the one that is still a liability.
+
+**GET `/vouchers`** — the individual codes. Both filters optional; `status` is `OUTSTANDING`,
+`REDEEMED` or `EXPIRED`.
+
+```json
+{ "id", "batchId", "code", "minutes", "expiresOn", "status",
+  "redeemedAt", "redeemedByUsername", "redeemedBillId", "redeemedReceiptNo" }
+```
+
+`code` is always the display form. `status` is **resolved against the current business date, never
+stored**: a code expiring tonight is `OUTSTANDING` until the night ends at 05:00, which is while the
+customer is still playing. A code redeemed before its expiry that has since passed it reads
+`REDEEMED`, not `EXPIRED` — it was spent while it was good.
 
 ---
 
@@ -479,9 +807,34 @@ Response:
   "duplicateReferenceOverridden": false, "replayed": false }
 ```
 
+#### Settling a debt
+
+The same endpoint collects an `UNSETTLED` bill. Everything above still applies — idempotency, the
+duplicate-reference warning, server-computed change, one payment per bill — with three differences:
+
+- **Totals are not recomputed.** They were frozen when the bill was left unpaid, and `amount` must
+  equal that frozen `total_amount`. Anything else → 409 *"This debt is … and must be settled in
+  full."* **Partial settlement does not exist**; a debt is paid in full or stays outstanding.
+- **`closed_at` is not touched.** The bill records `settled_at` and moves to `CLOSED`. The sale
+  still reports under the night it was played; only `payment.business_date`, generated from
+  `taken_at`, follows the money into today's drawer and today's cash count.
+- **No second receipt is written.** `receipt` is append-only and unique per bill, so the chit issued
+  on the night is the only one. See `GET /receipt` below.
+
+The `SYSTEM` settlement note is written on this path exactly as on a normal checkout.
+
 **GET `/receipt`** returns the stored snapshot, never re-rendered:
-`{ "id", "billId", "receiptNo", "issuedAt", "payload": { ... } }`. `payload` is the customer-facing
-document: lines, subtotals, total, method, tendered, change, reference. It carries no cost.
+`{ "id", "billId", "receiptNo", "issuedAt", "payload": { ... }, "settlement": null }`. `payload` is
+the customer-facing document: lines, subtotals, total, `status`, and — on a bill that was paid at
+the counter — method, tendered, change, reference. It carries no cost.
+
+`payload.status` is `CLOSED` or `UNSETTLED`: read it rather than inferring the state from a missing
+`method` key. A chit issued against a debt carries no payment keys at all, because nothing was paid.
+
+`settlement` is **not part of the snapshot** and is null unless a debt was collected later:
+`{ "method", "amount", "takenAt", "takenByUsername" }`, derived from the payment row at read time.
+Render it as a separate block. The payload is append-only and said "unpaid" because the bill was
+unpaid; annotating it would make the record claim something untrue of the night it was issued.
 
 ### Give-aways (batched comps)
 
@@ -579,15 +932,34 @@ optional and defaults to the night currently running, same as `/reports/daily`.
   "voids":       { "voidCount", "voidAmount",
                    "lines": [ { "description", "quantity", "lineTotal", "reason",
                                 "actorUsername", "voidedAt", "billId", "receiptNo" } ] },
+  "promos":      { "overrideSessions", "forgoneRevenue", "lines": [ ...override lines... ] },
   "friendRates": { "overrideSessions", "forgoneRevenue",
                    "lines": [ { "poolTableName", "standardRatePerMinute", "chargedRatePerMinute",
+                                "standardRatePerHour", "chargedRatePerHour",
                                 "billedMinutes", "forgoneRevenue", "actorUsername",
-                                "reason", "openedAt" } ] } }
+                                "reason", "openedAt", "rateOverrideKind" } ] },
+  "flatRates":   { "flatSessions", "flatForgone",
+                   "lines": [ { "poolTableName", "billedMinutes", "standardRatePerMinute",
+                                "meteredRevenue", "flatAmount", "forgoneRevenue",
+                                "actorUsername", "reason", "openedAt" } ] },
+  "discounts":   { "discountBills", "discountAmount",
+                   "lines": [ { "billId", "receiptNo", "subtotal", "discountAmount",
+                                "chargedAmount", "reason", "actorUsername", "discountAt" } ] },
+  "vouchers":    { "voucherCount", "voucherAmount",
+                   "lines": [ { "billId", "receiptNo", "code", "batchNote", "voucherMinutes",
+                                "minutesCovered", "minutesForfeited", "voucherAmount",
+                                "poolTableName", "actorUsername", "redeemedAt" } ] } }
 ```
 
 Each list is newest first. **Each section repeats its own tile's figure under the same field
 name**, summed from the very rows listed beneath it — so a mismatch between the detail and
 `/reports/daily`'s `losses` is a bug, and the screen says so rather than showing both quietly.
+
+`promos` and `friendRates` are **the same shape**: one list of rate overrides split on
+`rateOverrideKind`, which every line also carries so it reads on its own. Their scoped field
+names stay `overrideSessions` / `forgoneRevenue` — inside `promos` those can only mean the
+promos' own — and they map onto the top-level `promoSessions` / `promoForgone` and
+`friendSessions` / `friendForgone`, where nothing scopes them.
 
 The predicates mirror the daily report exactly, including that comps are dated by the stock
 movement's `business_date` while voids and friend rates are dated by their bill's.
@@ -753,21 +1125,64 @@ threshold (10), which sweeps up anything negative.
   "totals":         { "bills", "gross", "cost", "profit", "timeRevenue", "itemRevenue" },
   "previousTotals": { ...same shape, zeros when there is no previous day... },
   "salesByHour":      [ { "hour": 20, "bills": 5, "amount": 1310.00 } ],
+  "timeRevenueByMode":[ { "mode": "STANDARD", "sessions": 6, "amount": 2880.00 },
+                        { "mode": "PROMO",    "sessions": 3, "amount": 450.00  },
+                        { "mode": "FRIEND",   "sessions": 1, "amount": 120.00  },
+                        { "mode": "FLAT",     "sessions": 1, "amount": 500.00  } ],
   "tableUtilisation": [ { "tableName", "billedMinutes", "utilisationPercent" } ],
   "topItems":         [ { "description", "quantity", "revenue" } ],
   "paymentMix":       [ { "method", "payments", "amount" } ],
   "losses":           { "voidCount", "voidAmount",
-                        "overrideSessions", "forgoneRevenue",
+                        "promoSessions", "promoForgone",
+                        "friendSessions", "friendForgone",
+                        "flatSessions", "flatForgone",
+                        "reducedSessions", "timeReductionForgone",
+                        "discountBills", "discountAmount",
                         "compQuantity", "compEstimatedCost" },
   "lowStock":         [ { "name", "qtyOnHand" } ],
-  "perEmployee":      [ { "username", "fullName", "bills", "gross", "cost", "profit" } ] }
+  "perEmployee":      [ { "username", "fullName", "bills", "gross", "cost", "profit" } ],
+  "unsettledTonight": { "count": 1, "amount": 654.00 },
+  "collectedToday":   { "count": 0, "amount": 0 },
+  "outstanding":      { "count": 3, "amount": 2310.00 } }
 ```
 
 - `hour` is the Asia/Manila hour, 10 through 4 across the business day.
+- **`timeRevenueByMode` is `totals.timeRevenue` taken apart, and sums back to it exactly.**
+  Always four rows in the order `STANDARD, PROMO, FRIEND, FLAT`, zeros included, each with both
+  the amount and the session count. If the four ever fail to reconcile with `timeRevenue`, that
+  is a bug: show it rather than picking one of the two figures.
+- `promoForgone` and `friendForgone` are the two kinds of rate override, reported apart — same
+  arithmetic, `(standard − charged) × billedMinutes`, and different facts. They were one pair
+  called `overrideSessions` / `forgoneRevenue` before promos existed; renamed rather than
+  quietly narrowed, because "override" at the top level reads as all of them.
 - `utilisationPercent` is against a 19-hour day.
 - `perEmployee` sums exactly to `totals` — attributed to whoever took the payment.
-- `compEstimatedCost` is an **estimate** valued at current average cost; `voidAmount` and
-  `forgoneRevenue` are exact.
+- **`totals` counts `UNSETTLED` bills as sales.** The regular who plays tonight and pays next
+  month was still served tonight, so `gross`, `cost`, `profit`, `salesByHour`, `topItems`,
+  `tableUtilisation` and `perEmployee` all include the night's unpaid bills. **`paymentMix` does
+  not** — an unsettled bill has no payment row.
+- `unsettledTonight` says how much of `gross` is still a promise. It is **already inside** `gross`,
+  not additional to it. A **historical** figure keyed on when the bill was left unpaid, so
+  collecting the debt later does not rewrite a night the owner has already read.
+- `collectedToday` is money taken on this business date against an **earlier** night's sale. It is
+  **not** in `gross` — that revenue was recognised when it was earned — but it **is** in today's
+  drawer, which is what makes the cash count add up.
+- `outstanding` is every open debt across all dates, for the Attention band. The one **live**
+  figure here: it answers "right now", so unlike everything else it moves on an old night's report
+  when a debt is collected.
+- `discountAmount` is money knocked off whole bills — the one giveaway here that is not about
+  table time. Reported **beside** `timeReductionForgone` and never folded into it: a bill can carry
+  both, and they cannot double-count, because a time reduction rewrites the TIME lines before the
+  discount is computed against the subtotal.
+- **`totals.gross` reports the DISCOUNTED figure**, and that is deliberate: gross has to reconcile
+  to the drawer. ₱600 went in the till, and a gross of ₱654 would leave the cash count ₱54 short
+  every time with nothing explaining it. The losses band is what accounts for the gap.
+- `compEstimatedCost` is an **estimate** valued at current average cost; `voidAmount`,
+  `promoForgone`, `friendForgone`, `flatForgone` and `discountAmount` are exact.
+- `flatForgone` is the metered figure less the flat fee — `standardRatePerMinute × billedMinutes
+  − flatAmount` — **clamped at zero per session**. A flat fee above what the meter would have
+  charged is not a loss and contributes zero rather than netting off against a real giveaway
+  elsewhere, so this figure never understates the night.
 
 **`/audit`** — all filters optional. `entity` is a table name (`bill_line`, `product`,
 `pool_table_rate`, `table_session`, `cash_count`); `actor` is a user UUID; `from`/`to` are business
@@ -842,15 +1257,34 @@ reads**: the same history with the stock ledger unioned in and every id already 
 ```json
 { "id", "source": "AUDIT" | "STOCK",
   "action": "SESSION_RATE_OVERRIDE",        // the stored constant; send it back as a filter
-  "actionLabel": "Friend rate given",        // the same thing in words; display this
+  "actionLabel": "Happy Hour rate",          // the same thing in words; display this
   "entityLabel": "Table",                    // what kind of thing changed
   "subject": "Table 5",                      // which one — never an id
   "actorName": "Front Counter",
   "note": "regular customer",
   "quantityDelta": -2,                       // stock rows only; negative took stock out
+  "customerTypeName": "Happy Hour",          // table_session rows only; joined, not snapshotted
   "before": { }, "after": { },               // audit rows only
   "occurredAt", "businessDate" }
 ```
+
+`actionLabel` is usually the fixed wording for the action — `SESSION_RATE_OVERRIDE` is
+`"Rate overridden"`. The one exception is that same action **when the session carries a customer
+type**, where it is named after the type instead: `"Happy Hour rate"`. The owner has customer
+types beyond friends, and one fixed phrase misnames all but one of them.
+
+`customerTypeName` is **joined at read time** from `table_session`, not taken from the audit
+snapshot. Two reasons: `audit_log` is append-only, so rows already written could never be
+backfilled, whereas the join names the history correctly too; and the customer type is not a
+before/after *change*, so putting it in the snapshot would render a meaningless
+`Customer type name  —  →  Happy Hour` row in the diff. It is null on every non-session row, and
+on a session opened without a type — `table_session.customer_type_id` is nullable.
+
+Two display rules the Audit screen applies, worth knowing if anything else renders this feed:
+`entityLabel` is suppressed when `subject` already starts with it on a word boundary, so a row
+reads `· Table 2` rather than `· Table Table 2` while a table named `Corner` still reads
+`· Table Corner`. And in `before`/`after`, `ratePerMinute` and `ratePerHour` are one rate stated
+two ways — render a single row in the unit each side was set in, never both.
 
 Stock movements appear as `STOCK_DELIVERY`, `STOCK_CORRECTION` and `STOCK_STAFF_COMP`. **`SALE` and
 `SALE_VOID` are excluded**: every sold bottle writes a movement, so including sales would bury the

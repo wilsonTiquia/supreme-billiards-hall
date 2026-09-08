@@ -6,6 +6,7 @@ import com.supremebilliardshall.billiards_hall_system.dto.audit.AuditFilterOptio
 import com.supremebilliardshall.billiards_hall_system.dto.audit.AuditLogResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.entity.AuditLog;
 import com.supremebilliardshall.billiards_hall_system.entity.AppUser;
+import com.supremebilliardshall.billiards_hall_system.entity.RateOverrideKind;
 import com.supremebilliardshall.billiards_hall_system.repository.AppUserRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.AuditLogRepository;
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
@@ -152,12 +153,13 @@ public class AuditServiceImpl implements AuditService {
                     row.getId(),
                     row.getSource(),
                     row.getAction(),
-                    AuditVocabulary.action(row.getAction()),
+                    actionLabel(row),
                     AuditVocabulary.entity(row.getEntityTable()),
                     row.getEntityLabel(),
                     names.get(row.getActorId()),
                     row.getNote(),
                     row.getQuantityDelta(),
+                    row.getCustomerTypeName(),
                     diffs.containsKey(row.getId()) ? diffs.get(row.getId()).getBefore() : null,
                     diffs.containsKey(row.getId()) ? diffs.get(row.getId()).getAfter() : null,
                     // Native projections hand back Instant for timestamptz.
@@ -190,6 +192,41 @@ public class AuditServiceImpl implements AuditService {
                         .toList();
 
         return new AuditFilterOptionsDTO(actions, actors);
+    }
+
+    /*
+     * A rate override is named after the customer type it was given on: "Happy Hour rate".
+     *
+     * The vocabulary cannot do this on its own -- it maps a constant to a fixed phrase, and the
+     * owner now has customer types beyond friends, so a single phrase misnames all but one of
+     * them. The type comes from the feed's join on table_session.
+     *
+     * Gated on the action. SESSION_TIME_REDUCED also happens on a session with a customer type
+     * and must not read "Happy Hour rate"; it is not a rate change at all.
+     *
+     * Falls back to the vocabulary when the type is absent. That is a real path, not merely a
+     * defensive one: table_session.customer_type_id is nullable.
+     */
+    private String actionLabel(AuditLogRepository.AuditFeedProjection row) {
+        if (!"SESSION_RATE_OVERRIDE".equals(row.getAction())) {
+            return AuditVocabulary.action(row.getAction());
+        }
+        /*
+         * A promo is named after itself, not after who was playing.
+         *
+         * The customer-type rule below is right for a favour -- a friend rate given on Happy
+         * Hour reads "Happy Hour rate" -- and wrong for a promo, which is ungated and runs on
+         * any type. Left to that rule a happy-hour walk-in would read "Regular rate", which
+         * says the opposite of what happened and says it plausibly enough to go unchallenged.
+         */
+        if (RateOverrideKind.PROMO.name().equals(row.getRateOverrideKind())) {
+            return "Promo rate";
+        }
+        String customerType = row.getCustomerTypeName();
+        if (customerType != null && !customerType.isBlank()) {
+            return customerType.trim() + " rate";
+        }
+        return AuditVocabulary.action(row.getAction());
     }
 
     // The name people call each other by, falling back to the login when it is missing.

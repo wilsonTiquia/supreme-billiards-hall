@@ -61,6 +61,19 @@ public class Bill implements BranchScoped {
     @Column(name = "closed_at")
     private OffsetDateTime closedAt;
 
+    // When this sale was recorded as a debt, and by whom. Written in the same statement as
+    // closed_at, which is what dates the sale; these two say why it closed without a payment.
+    @Column(name = "unsettled_at")
+    private OffsetDateTime unsettledAt;
+
+    @Column(name = "unsettled_by")
+    private UUID unsettledBy;
+
+    // When the debt was collected. Never closed_at: business_date is generated from that, so
+    // settling five weeks later would move the original night's revenue onto the wrong report.
+    @Column(name = "settled_at")
+    private OffsetDateTime settledAt;
+
     @Column(name = "voided_by")
     private UUID voidedBy;
 
@@ -82,13 +95,73 @@ public class Bill implements BranchScoped {
     @Column(name = "total_cost", nullable = false, precision = 12, scale = 2)
     private BigDecimal totalCost;
 
+    /*
+     * Pesos taken off the whole bill, food and drink included. Distinct from a session's
+     * billed_minutes_override, which only ever reaches table time; a bill can carry both.
+     *
+     * A FIXED amount rather than a rate. Adding a line after the discount raises the total and
+     * leaves this exactly where it was put -- the round number agreed at the counter does not
+     * quietly stop being round because somebody ordered another beer.
+     *
+     * Defaulted in the FIELD rather than by each caller. The column is NOT NULL with a database
+     * default, but Hibernate writes every mapped column on insert, so an unset field goes down
+     * as an explicit null and the insert fails. Every bill starts undiscounted, so the zero
+     * belongs here rather than in each of the places that build one.
+     */
+    @Column(name = "discount_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal discountAmount = BigDecimal.ZERO;
+
+    @Column(name = "discount_reason", columnDefinition = "text")
+    private String discountReason;
+
+    @Column(name = "discount_by")
+    private UUID discountBy;
+
+    @Column(name = "discount_at")
+    private OffsetDateTime discountAt;
+
+    /*
+     * Table time covered by a giveaway voucher, in pesos. The third subtraction on a bill, and
+     * independent of the two above: a session's billed_minutes_override changes what the TIME
+     * lines cost, a discount reaches the whole payable, and this covers a measured quantity of
+     * time at the rate that time was actually billed at.
+     *
+     * Computed at redemption and stored, never re-derived. The bill's lines are what it was
+     * computed from, and once they are frozen at checkout the walk that produced this figure
+     * cannot be repeated -- nor should it be, for the same reason bill_line snapshots its price.
+     *
+     * Defaulted in the field, like discountAmount and for the same reason: the column is NOT
+     * NULL with a database default, but Hibernate writes every mapped column on insert, so an
+     * unset field goes down as an explicit null and the insert fails.
+     */
+    @Column(name = "voucher_amount", nullable = false, precision = 12, scale = 2)
+    private BigDecimal voucherAmount = BigDecimal.ZERO;
+
+    @Column(name = "voucher_id")
+    private UUID voucherId;
+
+    // Minutes the voucher actually covered, at most voucher.minutes. The difference between the
+    // two is what the customer forfeited, which the receipt states and the owner's losses
+    // drill-down reports -- and which nothing could reconstruct once the lines are frozen.
+    @Column(name = "voucher_minutes_covered")
+    private Integer voucherMinutesCovered;
+
     // Optimistic lock. Hibernate owns this column; never set it by hand.
     @Version
     @Column(name = "version", nullable = false)
     private Integer version;
 
-    // Generated from COALESCE(closed_at, opened_at). The database computes it.
-    @Generated(event = EventType.INSERT)
+    /*
+     * Generated from COALESCE(closed_at, opened_at). The database computes it.
+     *
+     * Read back on UPDATE as well as INSERT. Without the UPDATE half, stamping closed_at leaves
+     * this field holding the opened_at-derived date that came back at insert, while the row in
+     * the database says something else. The divergence is narrow -- it needs a bill that opened
+     * before 05:00 and closed after it, so the two dates differ -- which is exactly why it went
+     * unnoticed on the checkout path for as long as it did. The cost is one extra SELECT after
+     * each bill update, which at a hall's volume is nothing.
+     */
+    @Generated(event = { EventType.INSERT, EventType.UPDATE })
     @Column(name = "business_date", insertable = false, updatable = false)
     private LocalDate businessDate;
 }

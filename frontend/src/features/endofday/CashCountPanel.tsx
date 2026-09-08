@@ -21,6 +21,7 @@ import { formatAmountDigits, formatMoney, parseAmount } from '@/lib/money';
 export function CashCountPanel({
   count,
   standardFloat,
+  paidFromDrawer,
   pending,
   error,
   canCorrect,
@@ -33,6 +34,15 @@ export function CashCountPanel({
 }: {
   count: CashCount | null;
   standardFloat: number;
+  /**
+   * Paid out of the drawer tonight, before it has been counted.
+   *
+   * Shown for the same reason the float is: it is not a secret — the counter handed the money
+   * over themselves — and it is the difference between a drawer that reads ₱850 short and one
+   * that reads right. It does NOT reveal the expected total, which needs the takings, and those
+   * stay hidden until after the count is committed.
+   */
+  paidFromDrawer: number;
   pending: boolean;
   error: string | null;
   canCorrect: boolean;
@@ -79,7 +89,8 @@ export function CashCountPanel({
     // The night runs to 05:00, so a sale can land on a day already signed off. When that has
     // happened the variance below is measured against a total that has since moved, and
     // showing it as a clean balance would be a lie the screen tells with a straight face.
-    const stale = count.closedAt !== null && count.salesAfterClose > 0;
+    const stale =
+      count.closedAt !== null && (count.salesAfterClose > 0 || count.expensesAfterClose > 0);
 
     return (
       <Card>
@@ -103,6 +114,16 @@ export function CashCountPanel({
             <dt className="text-label uppercase text-text-dim">Cash takings</dt>
             <dd className="tabular text-body text-text-dim">{formatMoney(count.cashSales)}</dd>
           </div>
+          {/* Only when there was one. A "less expenses ₱0.00" line every night is a row people
+              stop reading, and then miss on the night it says 850. */}
+          {count.cashExpenses > 0 ? (
+            <div className="flex justify-between gap-3">
+              <dt className="text-label uppercase text-text-dim">Less paid from the drawer</dt>
+              <dd className="tabular text-body text-text-dim">
+                −{formatMoney(count.cashExpenses)}
+              </dd>
+            </div>
+          ) : null}
           <div className="flex justify-between gap-3 border-t border-border pt-2">
             <dt className="text-label uppercase text-text-dim">Expected</dt>
             <dd className="tabular text-body text-text">{formatMoney(count.expectedCash)}</dd>
@@ -128,12 +149,28 @@ export function CashCountPanel({
             <Banner tone="warning">
               <div>
                 <strong>This count no longer describes the night.</strong> The day was closed{' '}
-                {formatDateTime(count.closedAt as string)}, and {count.salesAfterClose}{' '}
-                {count.salesAfterClose === 1 ? 'sale' : 'sales'} worth{' '}
-                {formatMoney(count.amountAfterClose)} have been recorded since —{' '}
-                {formatMoney(count.cashAfterClose)} of it cash. The expected figure above was
-                frozen when you counted, so the variance is measured against a total that has
-                moved. Count the drawer again and close the day a second time.
+                {formatDateTime(count.closedAt as string)}, and{' '}
+                {count.salesAfterClose > 0 ? (
+                  <>
+                    {count.salesAfterClose}{' '}
+                    {count.salesAfterClose === 1 ? 'sale' : 'sales'} worth{' '}
+                    {formatMoney(count.amountAfterClose)} have been recorded since —{' '}
+                    {formatMoney(count.cashAfterClose)} of it cash.{' '}
+                  </>
+                ) : null}
+                {/* A payout after the close moves the drawer exactly as a late sale does, and
+                    without this it would be the one change to the night nothing announced. */}
+                {count.expensesAfterClose > 0 ? (
+                  <>
+                    {count.expensesAfterClose}{' '}
+                    {count.expensesAfterClose === 1 ? 'expense' : 'expenses'} worth{' '}
+                    {formatMoney(count.cashExpensesAfterClose)} have been paid out of the drawer
+                    since.{' '}
+                  </>
+                ) : null}
+                The expected figure above was frozen when you counted, so the variance is
+                measured against a total that has moved. Count the drawer again and close the day
+                a second time.
               </div>
             </Banner>
             {showRecount ? (
@@ -341,6 +378,17 @@ export function CashCountPanel({
               </div>
             )}
           </div>
+          {/* Beside the float, and on the same footing: both are things the counter already
+              knows because they did them, and neither gives away the takings. Without this the
+              drawer simply reads short by whatever was paid out. */}
+          {paidFromDrawer > 0 ? (
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-label uppercase text-text-dim">
+                Paid out of the drawer tonight
+              </span>
+              <span className="tabular text-body text-text">{formatMoney(paidFromDrawer)}</span>
+            </div>
+          ) : null}
           <Field
             label="Note (optional)"
             value={note}

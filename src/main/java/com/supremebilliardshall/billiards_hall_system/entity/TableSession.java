@@ -76,6 +76,23 @@ public class TableSession implements BranchScoped {
     @Column(name = "standard_rate_per_minute", precision = 10, scale = 4)
     private BigDecimal standardRatePerMinute;
 
+    // The hourly figures, when that is the unit either rate was configured in. Read back by the
+    // screen and the loss drill-down so the giveaway is quoted the way it was entered; neither
+    // is ever used to compute money. Null when the rate concerned was set per minute.
+    @Column(name = "rate_override_per_hour", precision = 12, scale = 2)
+    private BigDecimal rateOverridePerHour;
+
+    @Column(name = "standard_rate_per_hour", precision = 12, scale = 2)
+    private BigDecimal standardRatePerHour;
+
+    // Which kind of override this is — a promo or a favour. Set exactly when the override is,
+    // and never used to compute money: both kinds bill through rateOverridePerMinute above.
+    // It exists so the report can tell a happy hour from a free game for a friend.
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.NAMED_ENUM)
+    @Column(name = "rate_override_kind", columnDefinition = "rate_override_kind")
+    private RateOverrideKind rateOverrideKind;
+
     @Column(name = "rate_override_by")
     private UUID rateOverrideBy;
 
@@ -85,6 +102,18 @@ public class TableSession implements BranchScoped {
 
     @Column(name = "rate_override_reason", columnDefinition = "text")
     private String rateOverrideReason;
+
+    // Tournament pricing: a fixed charge for the whole session, however long it runs. Set at
+    // session start and mutually exclusive with the rate override — one session, one pricing
+    // story. Null on a metered session, which is every session that predates this.
+    @Column(name = "flat_amount", precision = 12, scale = 2)
+    private BigDecimal flatAmount;
+
+    @Column(name = "flat_rate_by")
+    private UUID flatRateBy;
+
+    @Column(name = "flat_rate_reason", columnDefinition = "text")
+    private String flatRateReason;
 
     // What was CHARGED, when the counter charged less time than was played. billedMinutes
     // above stays what actually happened; this never overwrites it.

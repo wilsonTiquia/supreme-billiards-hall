@@ -19,7 +19,11 @@ Full POS, built and running on `http://localhost:8080` from this machine.
 - Scripts: `start.sh`, `stop.sh`, `rebuild.sh`, `backup.sh`, `restore.sh`, `verify-backup.sh`,
   `reset-for-testing.sh`, `reset-for-golive.sh`
 
-Current logins are **temporary**: `owner` / `TEMPORARY-owner-1`, `counter` / `TEMPORARY-counter-1`.
+Current logins are **temporary** and are two accounts, `owner` (ADMIN) and `counter` (EMPLOYEE).
+The passwords are the ones `scripts/reset-for-testing.sh` writes; read them there, on the POS
+machine. They are not printed here because `reset-for-golive.sh` replaces them on Saturday, and
+a password written into a tracked document is both wrong the moment it is rotated and published
+to everyone with repo access until then.
 
 ---
 
@@ -73,6 +77,9 @@ Tailscale access specifically to check takings from home.
 - **Any employee can set any friend rate, discount any time, give away any stock** — no limits, no
   approvals, all logged
 - **A stock correction cannot be undone** — post another; the ledger is append-only
+- **A bill of ₱0.00 closes with no payment row**, via "Nothing to pay" on the checkout screen.
+  It appears in the Sales list with a blank method — that is not a missing payment, it is a sale
+  that had nothing to collect. Reached by a voucher covering a whole bill, or a comped zero rate
 - **No PDF export**
 - **`.golive` must never be deleted.** It is the only thing stopping `reset-for-testing.sh` from
   wiping a trading database

@@ -47,6 +47,25 @@ export function formatBusinessDate(date: BusinessDate): string {
   return longDate.format(new Date(`${date}T12:00:00Z`));
 }
 
+/**
+ * A whole number of minutes said the way the hall says it: "2 hours", "1h 30m", "45 min".
+ *
+ * Hours only when the figure divides exactly, because "1.5 hours" and "90 min" are the same
+ * thing and only one of them is how anybody at a counter talks. This is a DURATION, never a
+ * billing figure — the amount charged for that time always comes from the server.
+ */
+export function formatMinutes(minutes: number): string {
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (rest === 0) {
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`;
+  }
+  return `${hours}h ${rest}m`;
+}
+
 /** Elapsed milliseconds as H:MM:SS, for the live table timers in Phase B. */
 export function formatElapsed(milliseconds: number): string {
   const total = Math.max(0, Math.floor(milliseconds / 1000));

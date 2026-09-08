@@ -66,13 +66,23 @@ public class BillLine implements BranchScoped {
     @Column(name = "billed_minutes")
     private Integer billedMinutes;
 
-    // Generated columns: the database computes them, and @Generated makes Hibernate read the
-    // result back on insert rather than leaving null in the entity for the rest of the transaction.
-    @Generated(event = EventType.INSERT)
+    /*
+     * Generated columns: the database computes them, and @Generated makes Hibernate read the
+     * result back rather than leaving a stale value in the entity for the rest of the transaction.
+     *
+     * Read back on UPDATE as well as INSERT, for the same reason Bill.businessDate is.
+     * line_total is round(quantity * unit_price, 2), and SessionServiceImpl.overrideBilledMinutes
+     * REWRITES unit_price when the counter charges less time than was played -- so without the
+     * UPDATE half this field goes on reporting the pre-reduction figure until the persistence
+     * context is discarded. Nothing noticed while every reader of it arrived in a later request
+     * and got a fresh row; applying a discount sums these lines to find the subtotal it
+     * subtracts from, which is not a figure to compute from a stale multiplication.
+     */
+    @Generated(event = { EventType.INSERT, EventType.UPDATE })
     @Column(name = "line_total", insertable = false, updatable = false, precision = 12, scale = 2)
     private BigDecimal lineTotal;
 
-    @Generated(event = EventType.INSERT)
+    @Generated(event = { EventType.INSERT, EventType.UPDATE })
     @Column(name = "line_cost", insertable = false, updatable = false, precision = 12, scale = 2)
     private BigDecimal lineCost;
 

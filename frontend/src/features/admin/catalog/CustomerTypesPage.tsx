@@ -52,7 +52,7 @@ export function CustomerTypesPage() {
   return (
     <AdminPage
       title="Customer types"
-      intro="The start-session dropdown reads this. Allowing a rate override is what enables the friend rate — and every override is recorded against the session."
+      intro="The start-session dropdown reads this. Allowing a rate override is what lets the counter charge this type something other than the table's standard rate — and every override is recorded against the session."
       error={error ?? (types.isError ? messageOf(types.error) : null)}
     >
       <div className="mb-4 flex justify-end">

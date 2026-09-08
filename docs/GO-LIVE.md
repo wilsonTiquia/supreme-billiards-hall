@@ -12,9 +12,10 @@ Operational questions during the week — how to start it, what to do if it won'
 The last three gate items from the product-image work are unverified. Do them yourself; you need to
 know this app anyway.
 
-- [ ] Log in at `http://localhost:8080` as `owner` / `TEMPORARY-owner-1`
+- [ ] Log in at `http://localhost:8080` as the **owner** account (the temporary password is in
+      `scripts/reset-for-testing.sh`, on the POS machine — not in this file)
 - [ ] Admin → Products → upload an image to one product, confirm the preview
-- [ ] Log in as `counter` / `TEMPORARY-counter-1`, open a table, look at the product grid
+- [ ] Log in as the **counter** account, open a table, look at the product grid
 - [ ] **Judge the mixed grid.** One product with a photo, the rest with initials tiles. Does it look
       deliberate or broken? This is the normal state for months — if the placeholders read as errors,
       say so and it gets fixed.
@@ -77,7 +78,8 @@ database, so any testing after the reset re-pollutes it.
         of failure
 9. - [ ] **Set a real `DB_PASSWORD` in the environment.** Production must not run on the
         `${DB_PASSWORD:supreme}` fallback in `application.properties`. Set `DB_URL`, `DB_USERNAME`
-        and `DB_PASSWORD` where the app reads them, and start it with `SPRING_PROFILES_ACTIVE=prod`.
+        and `DB_PASSWORD` where the app reads them. **Do not add `SPRING_PROFILES_ACTIVE=prod`
+        here** — see the hosting section below for why it would break the till on Saturday.
         **This is not one change.** `scripts/backup.sh`, `scripts/restore.sh` and
         `scripts/verify-backup.sh` each hardcode `supreme`. A rotation that changes the database
         role and the environment but misses those three leaves the till running normally while the
@@ -93,6 +95,38 @@ database, so any testing after the reset re-pollutes it.
 > **Decide Thursday, not Saturday:** entering the catalogue before the reset means entering it twice.
 > Entering it after means doing it on opening day. Given the reset also sets the passwords, the
 > cleanest order is: reset Saturday morning → enter catalogue → open. Budget the time for it.
+
+---
+
+## Only when this moves off localhost — the hosting-day step
+
+**Not for Saturday.** The venue install runs on `http://localhost:8080` over plain HTTP, and the
+`prod` profile is the wrong thing there: `server.servlet.session.cookie.secure=true` tells the
+browser to send the session cookie only over HTTPS, so on plain HTTP it is never sent back and
+nobody can stay logged in. On localhost the profile is a liability, not a hardening. That is why
+`scripts/start.sh` deliberately does not set it.
+
+Do all of this on the day the app first answers on a public address, not before:
+
+- [ ] Put a TLS-terminating reverse proxy in front of it. The app itself only ever speaks HTTP
+- [ ] Start it with `SPRING_PROFILES_ACTIVE=prod`. That turns on `Secure`, `SameSite=Strict` and
+      `HttpOnly` on the session cookie, and `server.forward-headers-strategy=framework` so the
+      login lockout sees the real client address instead of the proxy's
+- [ ] **Confirm the profile actually took**, in the log: it must say
+      `The following 1 profile is active: "prod"`. If it says `No active profile set, falling back
+      to 1 default profile: "default"`, none of the above is on and the deployment is not hardened
+- [ ] Satisfy the two requirements `application-prod.properties` states, because trusting
+      `X-Forwarded-For` is only safe under both: the proxy must **overwrite** that header rather
+      than append to a client-supplied one, and the app's own port must not be reachable except
+      through the proxy. Verify the first by checking what the app records for a request that
+      arrives carrying a forged `X-Forwarded-For`, not by reading the proxy's documentation
+- [ ] Cap the request body at the proxy too (`client_max_body_size` in nginx). The app enforces
+      `supreme.request.max-body-bytes`, but only the proxy can stop the bytes before they reach
+      the JVM
+- [ ] Decide where payment photos live. `supreme.payment-photo.path` is a local directory that
+      `scripts/backup.sh` tars into `~/SupremeBackups`; neither the directory nor that backup
+      exists on a hosted box, and on an ephemeral filesystem the photos vanish on the next deploy
+      while `payment.photo_path` still points at them
 
 ---
 

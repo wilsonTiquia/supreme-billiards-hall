@@ -42,6 +42,13 @@ public class CashCount implements BranchScoped {
     // The change float as applied to THIS night, copied from the branch standard rather than
     // joined to it: the standard can change next month, and a night reconciled in March has to
     // still add up in March's terms.
+    //
+    // DELIBERATELY NOT DEFAULTED, unlike cashExpenses below. The two look alike and are not.
+    // Zero is a true answer for cash_expenses — a night nobody paid anything out genuinely had
+    // none — but it is never a true answer here: this figure comes from standard_cash_float and
+    // a hall that keeps a float kept it whether or not anyone set the field. Defaulting it would
+    // turn a loud NOT NULL violation into a variance that is quietly wrong by the size of the
+    // float, on every night the caller forgot. Failing at the insert is the correct behaviour.
     @Column(name = "opening_float", nullable = false, precision = 12, scale = 2)
     private BigDecimal openingFloat;
 
@@ -50,10 +57,23 @@ public class CashCount implements BranchScoped {
     @Column(name = "float_overridden", nullable = false)
     private boolean floatOverridden;
 
+    // Cash paid out of the till on this night — a water delivery, a bag of ice — frozen at the
+    // moment of counting like the two figures above it. Money that left the drawer is money the
+    // drawer should not be expected to hold. Cash only: rent paid by transfer never touched it.
+    //
+    // Defaulted here rather than relying on the column's DEFAULT 0: Hibernate names every mapped
+    // column in the INSERT, so an unset field sends an explicit NULL and the database default
+    // never applies. Zero is defensible for this column specifically because it is the honest
+    // answer for a night nothing was paid out on — see openingFloat above for why the same
+    // treatment would be wrong there.
+    @Column(name = "cash_expenses", nullable = false, precision = 12, scale = 2)
+    private BigDecimal cashExpenses = BigDecimal.ZERO;
+
     @Column(name = "counted_cash", nullable = false, precision = 12, scale = 2)
     private BigDecimal countedCash;
 
-    // Generated column: counted_cash - (cash_sales + opening_float). Negative is a shortfall.
+    // Generated column: counted_cash - (cash_sales + opening_float - cash_expenses). Negative
+    // is a shortfall.
     // Read back on UPDATE as well as INSERT: an admin correcting a mistyped count changes
     // counted_cash, and without this the variance in the response would be the old one.
     @Generated(event = { EventType.INSERT, EventType.UPDATE })

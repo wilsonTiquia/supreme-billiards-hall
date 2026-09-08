@@ -5,14 +5,18 @@ import com.supremebilliardshall.billiards_hall_system.dto.bill.*;
 import com.supremebilliardshall.billiards_hall_system.entity.*;
 import com.supremebilliardshall.billiards_hall_system.exception.BusinessRuleException;
 import com.supremebilliardshall.billiards_hall_system.exception.ResourceNotFoundException;
+import com.supremebilliardshall.billiards_hall_system.repository.AppUserRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.BillLineRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.BillRepository;
+import com.supremebilliardshall.billiards_hall_system.repository.BranchRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.CustomerTypeRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.PoolTableRepository;
 import com.supremebilliardshall.billiards_hall_system.repository.TableSessionRepository;
+import com.supremebilliardshall.billiards_hall_system.repository.VoucherRepository;
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
 import com.supremebilliardshall.billiards_hall_system.service.AuditService;
 import com.supremebilliardshall.billiards_hall_system.service.BillService;
+import com.supremebilliardshall.billiards_hall_system.service.SessionNoteService;
 import com.supremebilliardshall.billiards_hall_system.service.SessionService;
 import com.supremebilliardshall.billiards_hall_system.service.StockService;
 import org.springframework.data.domain.Page;
@@ -24,6 +28,7 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.time.temporal.ChronoUnit;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,30 +44,44 @@ public class BillServiceImpl implements BillService {
 
     private final BillRepository billRepository;
     private final BillLineRepository billLineRepository;
+    private final BranchRepository branchRepository;
+    private final AppUserRepository appUserRepository;
     private final CustomerTypeRepository customerTypeRepository;
     private final TableSessionRepository tableSessionRepository;
     private final PoolTableRepository poolTableRepository;
+    // Read-only, and for one thing: naming the voucher already spent on a bill. Redeeming and
+    // releasing live in VoucherService, which owns that state.
+    private final VoucherRepository voucherRepository;
     private final StockService stockService;
     private final SessionService sessionService;
+    private final SessionNoteService sessionNoteService;
     private final AuditService auditService;
     private final BranchContext branchContext;
 
     public BillServiceImpl(BillRepository billRepository,
                            BillLineRepository billLineRepository,
+                           BranchRepository branchRepository,
+                           AppUserRepository appUserRepository,
                            CustomerTypeRepository customerTypeRepository,
                            TableSessionRepository tableSessionRepository,
                            PoolTableRepository poolTableRepository,
+                           VoucherRepository voucherRepository,
                            StockService stockService,
                            SessionService sessionService,
+                           SessionNoteService sessionNoteService,
                            AuditService auditService,
                            BranchContext branchContext) {
         this.billRepository = billRepository;
         this.billLineRepository = billLineRepository;
+        this.branchRepository = branchRepository;
+        this.appUserRepository = appUserRepository;
         this.customerTypeRepository = customerTypeRepository;
         this.tableSessionRepository = tableSessionRepository;
         this.poolTableRepository = poolTableRepository;
+        this.voucherRepository = voucherRepository;
         this.stockService = stockService;
         this.sessionService = sessionService;
+        this.sessionNoteService = sessionNoteService;
         this.auditService = auditService;
         this.branchContext = branchContext;
     }
@@ -87,7 +106,12 @@ public class BillServiceImpl implements BillService {
                 .map(row -> new BillSummaryResponseDTO(
                         row.getId(), row.getReceiptNo(),
                         row.getClosedAt().atOffset(ZoneOffset.UTC), row.getTotalAmount(),
-                        PaymentMethod.valueOf(row.getMethod()), row.getTakenByUsername(),
+                        // Null on a bill closed with nothing to pay -- a voucher that covered
+                        // the whole of it writes no payment row, so there is no method and
+                        // nobody took it. Mapped as null rather than defaulted to CASH, which
+                        // would put money in the owner's list that never went in the drawer.
+                        row.getMethod() == null ? null : PaymentMethod.valueOf(row.getMethod()),
+                        row.getTakenByUsername(),
                         row.getQuickSale()))
                 .toList();
 
@@ -100,14 +124,40 @@ public class BillServiceImpl implements BillService {
     public List<UnsettledBillResponseDTO> getUnsettledBills() {
         // Every unsettled bill, newest first — not just tonight's. Each row carries its own
         // businessDate so an old one is visibly old on screen.
+        /*
+         * Zero-total bills are LISTED, and were filtered out until vouchers existed.
+         *
+         * The filter's reason was that such a bill could not be settled at all -- payment
+         * validation requires at least 0.01 -- so it would sit in the strip for ever and teach
+         * staff to ignore it, which is the one thing the strip cannot afford. That reason is
+         * gone: CheckoutServiceImpl.settleWithoutPayment closes a bill that comes to nothing,
+         * and it is now the ordinary end of a prize winner's night rather than a dead row.
+         *
+         * Filtering it now would be the worse failure of the two. The winner's table shows
+         * free, their bill is still OPEN, and nothing anywhere would prompt anyone to finish
+         * it -- the sale would never reach a report.
+         */
         return billRepository.findUnsettled().stream()
                 .map(this::toUnsettledResponseDto)
-                // A bill totalling zero cannot be settled at all: payment validation requires
-                // at least 0.01, so it would sit in the floor strip for ever. It is also not a
-                // lost sale — there is nothing to collect. Listing it would only teach staff
-                // to ignore the strip, which is the one thing it cannot afford.
-                .filter(unsettled -> unsettled.getTotalAmount().signum() > 0)
                 .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<UnpaidBillResponseDTO> getUnpaidBills() {
+        // Every debt, newest first, across every business date. No zero filter, unlike the
+        // unsettled strip above: leaveUnpaid refuses a bill with nothing to charge, so a debt
+        // of 0.00 cannot exist in the first place.
+        LocalDate today = branchRepository.currentBusinessDate();
+        return billRepository.findUnpaid().stream()
+                .map(bill -> toUnpaidResponseDto(bill, today))
+                .toList();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UnpaidBillResponseDTO getUnpaidBill(UUID billId) {
+        return toUnpaidResponseDto(requireBill(billId), branchRepository.currentBusinessDate());
     }
 
     @Override
@@ -188,14 +238,124 @@ public class BillServiceImpl implements BillService {
         return toResponseDto(voidedLine);
     }
 
+    /*
+     * Knocking money off the whole bill -- the second giveaway route, and independent of the
+     * first.
+     *
+     * SessionServiceImpl.overrideBilledMinutes reduces what the TIME lines cost and can reach
+     * nothing else. This reaches everything, beer included, and the two compose on one bill.
+     * They also cannot double-count: a time reduction rewrites the TIME lines BEFORE this runs,
+     * so the subtotal subtracted from here is already the reduced one, and each is measured off
+     * a different row over an amount the other never touches.
+     *
+     * The counter types the amount being CHARGED and the server does the subtraction. That is
+     * the number the conversation produced -- "make it 600" -- and computing the discount here
+     * rather than accepting one keeps the arithmetic on the side of the wire that owns money.
+     */
+    @Override
+    @Transactional
+    public BillResponseDTO applyDiscount(UUID billId, BillDiscountRequestDTO billDiscountRequestDTO) {
+        Bill bill = requireBill(billId);
+        requireOpen(bill);
+
+        List<BillLine> lines = billLineRepository.findByBillId(bill.getId());
+        /*
+         * The LIVE subtotal, summed from the lines and LESS ANY VOUCHER ALREADY ON THE BILL.
+         *
+         * bill.subtotal_time and subtotal_items are still zero at this point -- nothing writes
+         * them until checkout finalises the bill -- so reading them off the row would compare
+         * the charge against 0.00 and reject everything. Same reason V19's check constraint is
+         * conditioned on the bill being finalised: this is the only place the figure exists yet.
+         *
+         * The voucher is subtracted because the counter types the FINAL charge, whatever else
+         * is already on the bill. A 654-peso bill carrying a 480-peso voucher is a 174-peso
+         * bill as far as this conversation goes, and "make it 150" has to mean 150 in the
+         * drawer rather than 150 before a giveaway the customer has already been granted.
+         * Without this the two would compose into a negative total.
+         */
+        BigDecimal subtotal = sumLive(lines, BillLineKind.TIME)
+                .add(sumLive(lines, BillLineKind.PRODUCT))
+                .subtract(bill.getVoucherAmount());
+        BigDecimal charge = billDiscountRequestDTO.getChargeAmount();
+
+        if (charge.compareTo(subtotal) > 0) {
+            throw new BusinessRuleException("This bill comes to "
+                    + subtotal.toPlainString() + ". Charging " + charge.toPlainString()
+                    + " would be more than that, which is a surcharge rather than a discount.");
+        }
+        /*
+         * A bill charged at nothing cannot be settled: payment requires at least 0.01, so it
+         * would sit in the floor strip for ever with no route out of it.
+         *
+         * The refusal names the route that EXISTS rather than the one that would be
+         * convenient. There is no void-a-bill endpoint -- BillController voids a line, and a
+         * TIME line cannot be voided on its own -- so a bill carrying a session cannot be
+         * zeroed by any path in this system. Pointing staff at a door that is not there is
+         * worse than a blunt no.
+         */
+        if (charge.compareTo(subtotal) == 0) {
+            throw new BusinessRuleException("That would charge nothing at all, and a bill of "
+                    + "0.00 can never be settled. A free game is set as a zero friend or flat "
+                    + "rate when the table is opened, not as a discount at checkout.");
+        }
+
+        BigDecimal discount = subtotal.subtract(charge);
+        Map<String, Object> before = discountSnapshot(bill);
+
+        bill.setDiscountAmount(discount);
+        bill.setDiscountReason(billDiscountRequestDTO.getReason().trim());
+        bill.setDiscountBy(branchContext.getCurrentUserId());
+        bill.setDiscountAt(OffsetDateTime.now());
+        // Bumps @Version, which is what a checkout tab still holding the undiscounted total
+        // collides with. That collision is the point: it must not be able to charge 654.
+        Bill saved = billRepository.saveAndFlush(bill);
+
+        auditService.record("BILL_DISCOUNTED", "bill", saved.getId(),
+                before, discountSnapshot(saved), saved.getDiscountReason());
+
+        return toResponseDto(saved);
+    }
+
+    @Override
+    @Transactional
+    public BillResponseDTO clearDiscount(UUID billId) {
+        Bill bill = requireBill(billId);
+        requireOpen(bill);
+
+        if (bill.getDiscountAmount().signum() == 0) {
+            throw new BusinessRuleException("There is no discount on this bill to clear.");
+        }
+
+        Map<String, Object> before = discountSnapshot(bill);
+
+        // All four together, back to the shape a bill that was never discounted has:
+        // bill_discount_together_chk admits no half-cleared row.
+        bill.setDiscountAmount(BigDecimal.ZERO);
+        bill.setDiscountReason(null);
+        bill.setDiscountBy(null);
+        bill.setDiscountAt(null);
+        Bill saved = billRepository.saveAndFlush(bill);
+
+        // The reason from the BEFORE side, because clearing has no reason of its own and the
+        // question the owner will ask of this row is which discount went away.
+        auditService.record("BILL_DISCOUNT_CLEARED", "bill", saved.getId(),
+                before, discountSnapshot(saved), (String) before.get("discountReason"));
+
+        return toResponseDto(saved);
+    }
+
 
     // Looked up per bill rather than joined. The list is what staff forgot to settle tonight,
     // so it is a handful of rows at most, and the per-bill reads stay far easier to follow
     // than the multi-table aggregate that would replace them.
     private UnsettledBillResponseDTO toUnsettledResponseDto(Bill bill) {
         List<BillLine> lines = billLineRepository.findByBillId(bill.getId());
-        BigDecimal totalAmount = sumLive(lines, BillLineKind.TIME)
-                .add(sumLive(lines, BillLineKind.PRODUCT));
+        // Discounted and vouchered, like every other quotation of this bill. A bill can carry
+        // both and then be forgotten on the floor, and a strip quoting the full amount would
+        // send staff back to the customer with a figure that was already agreed away.
+        BigDecimal totalAmount = BillTotals.payable(
+                sumLive(lines, BillLineKind.TIME), sumLive(lines, BillLineKind.PRODUCT),
+                bill.getDiscountAmount(), bill.getVoucherAmount());
 
         List<TableSession> sessions = tableSessionRepository.findByBillId(bill.getId());
 
@@ -221,7 +381,54 @@ public class BillServiceImpl implements BillService {
                 bill.getBusinessDate(),
                 customerTypeName(bill.getCustomerTypeId()),
                 tableNames,
-                totalAmount);
+                totalAmount,
+                sessionNoteService.getLatestNoteForBill(bill.getId()));
+    }
+
+    /*
+     * A debt, not a mistake. Deliberately a separate shape from toUnsettledResponseDto above,
+     * and the difference is not cosmetic: that one computes its total from the live lines
+     * because an OPEN bill's total_amount still reads 0.00, while this one reads the frozen
+     * column, because finalisation has already run and the frozen figure IS the amount that
+     * must be tendered. Computing this one from the lines would re-price a month-old sale.
+     *
+     * The business day is passed in rather than read per bill: it costs a query, and every row
+     * in one list must be counted against the same day or two bills from the same night could
+     * report different ages.
+     */
+    private UnpaidBillResponseDTO toUnpaidResponseDto(Bill bill, LocalDate today) {
+        List<String> tableNames = tableSessionRepository.findByBillId(bill.getId()).stream()
+                .map(TableSession::getPoolTableId)
+                .distinct()
+                .map(poolTableId -> poolTableRepository.findById(poolTableId)
+                        .map(PoolTable::getName)
+                        .orElse(null))
+                .filter(Objects::nonNull)
+                .toList();
+
+        // Counted between BUSINESS dates, never from LocalDate.now(): those two differ between
+        // 00:00 and 05:00, which would make a debt look a day older for five hours a night.
+        int daysOutstanding = bill.getBusinessDate() == null
+                ? 0
+                : (int) ChronoUnit.DAYS.between(bill.getBusinessDate(), today);
+
+        return new UnpaidBillResponseDTO(
+                bill.getId(),
+                bill.getReceiptNo(),
+                bill.getBusinessDate(),
+                bill.getUnsettledAt(),
+                usernameOf(bill.getUnsettledBy()),
+                daysOutstanding,
+                tableNames,
+                bill.getTotalAmount(),
+                sessionNoteService.getLatestNoteForBill(bill.getId()));
+    }
+
+    private String usernameOf(UUID userId) {
+        if (userId == null) {
+            return null;
+        }
+        return appUserRepository.findById(userId).map(AppUser::getUsername).orElse("someone");
     }
 
     private BillResponseDTO toResponseDto(Bill bill) {
@@ -229,7 +436,12 @@ public class BillServiceImpl implements BillService {
 
         BigDecimal subtotalTime = sumLive(lines, BillLineKind.TIME);
         BigDecimal subtotalItems = sumLive(lines, BillLineKind.PRODUCT);
-        BigDecimal totalAmount = subtotalTime.add(subtotalItems);
+        // Both fixed, so neither moves when a line is added: the total rises and the two
+        // reductions stay where they were put.
+        BigDecimal discountAmount = bill.getDiscountAmount();
+        BigDecimal voucherAmount = bill.getVoucherAmount();
+        BigDecimal totalAmount = BillTotals.payable(subtotalTime, subtotalItems,
+                discountAmount, voucherAmount);
 
         BillResponseDTO responseDto = branchContext.isAdmin()
                 ? new BillAdminResponseDTO()
@@ -245,6 +457,24 @@ public class BillServiceImpl implements BillService {
         responseDto.setVersion(bill.getVersion());
         responseDto.setSubtotalTime(subtotalTime);
         responseDto.setSubtotalItems(subtotalItems);
+        responseDto.setDiscountAmount(discountAmount);
+        responseDto.setDiscountReason(bill.getDiscountReason());
+        responseDto.setDiscountByUsername(usernameOf(bill.getDiscountBy()));
+        responseDto.setDiscountAt(bill.getDiscountAt());
+        responseDto.setVoucherAmount(voucherAmount);
+        responseDto.setVoucherMinutesCovered(bill.getVoucherMinutesCovered());
+        // The DISPLAY form of the code, and its face value beside what it actually reached --
+        // "90 of 120 min" is what tells the customer they forfeited half an hour.
+        //
+        // Returning a code here is safe where returning the admin code list is not: this one
+        // has already been spent, on this bill, by the person reading the screen, and the
+        // receipt has to name it anyway.
+        if (bill.getVoucherId() != null) {
+            voucherRepository.findById(bill.getVoucherId()).ifPresent(voucher -> {
+                responseDto.setVoucherCode(VoucherCodes.display(voucher.getCode()));
+                responseDto.setVoucherMinutes(voucher.getMinutes());
+            });
+        }
         responseDto.setTotalAmount(totalAmount);
         responseDto.setLines(lines.stream().map(this::toResponseDto).toList());
         responseDto.setSessions(sessionService.getSummariesForBill(bill.getId()));
@@ -311,6 +541,16 @@ public class BillServiceImpl implements BillService {
         return customerTypeRepository.findById(customerTypeId)
                 .map(CustomerType::getName)
                 .orElse(null);
+    }
+
+    // Both sides of a discount change, in the words the audit screen shows. The reason is on
+    // the snapshot as well as in the note because the two sides can carry different ones: a
+    // discount replaced by another is one row holding both.
+    private Map<String, Object> discountSnapshot(Bill bill) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("discountAmount", bill.getDiscountAmount());
+        snapshot.put("discountReason", bill.getDiscountReason());
+        return snapshot;
     }
 
     private Map<String, Object> auditSnapshot(BillLine line) {

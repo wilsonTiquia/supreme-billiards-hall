@@ -2,12 +2,14 @@ package com.supremebilliardshall.billiards_hall_system.exception;
 
 import com.supremebilliardshall.billiards_hall_system.dto.APIResponse;
 import jakarta.validation.ConstraintViolationException;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.validation.FieldError;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -62,6 +64,14 @@ public class GlobalExceptionHandler {
                 .body(APIResponse.failure(ex.getMessage(), StaleBillVersionException.CODE));
     }
 
+    // Leaving a bill unpaid with no name against it. Coded for the same reason as the two
+    // above: the client's repair is to make the note field required, not to restate a sentence.
+    @ExceptionHandler(SessionNoteRequiredException.class)
+    public ResponseEntity<APIResponse<Object>> handleSessionNoteRequired(SessionNoteRequiredException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(APIResponse.failure(ex.getMessage(), SessionNoteRequiredException.CODE));
+    }
+
     // Hibernate's own optimistic lock, if two transactions raced past the version check.
     @ExceptionHandler(org.springframework.orm.ObjectOptimisticLockingFailureException.class)
     public ResponseEntity<APIResponse<Object>> handleOptimisticLock(
@@ -100,13 +110,17 @@ public class GlobalExceptionHandler {
             Map.entry("product_name_key", "Product name already exists"),
             Map.entry("pool_table_name_key", "Table name already exists"),
             Map.entry("customer_type_name_key", "Customer type name already exists"),
+            Map.entry("expense_category_name_key", "Expense category name already exists"),
             Map.entry("pool_table_rate_no_overlap", "That table already has a rate in force for this period"),
             Map.entry("pool_table_rate_period_chk", "A rate period must end after it starts"),
             Map.entry("table_session_one_open_per_table_key", "That table already has an open session"),
             Map.entry("payment_one_per_bill_key", "That bill has already been paid"),
             Map.entry("payment_idempotency_key", "That checkout has already been recorded"),
             Map.entry("cash_count_day_key", "The drawer has already been counted for that business day"),
-            Map.entry("receipt_bill_key", "That bill already has a receipt")
+            Map.entry("receipt_bill_key", "That bill already has a receipt"),
+            // Reachable only by two batches generating the same code at the same instant, which
+            // VoucherServiceImpl retries past. This is the message if the retries are exhausted.
+            Map.entry("voucher_code_key", "That voucher code already exists")
     );
 
     @ExceptionHandler(DataIntegrityViolationException.class)
@@ -136,6 +150,21 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity.badRequest()
                 .body(new APIResponse<>(null, "That file is too large to upload. The limit is 2 MB.", false));
+    }
+
+    // A body that ran past the ceiling RequestSizeLimitFilter imposes. The message converter
+    // wraps whatever the input stream threw, so the cause is what identifies it. Anything else
+    // that could not be read is a malformed body — the client's error either way, and answered
+    // in the envelope rather than through the container's default error page.
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<APIResponse<Object>> handleUnreadableBody(HttpMessageNotReadableException ex) {
+
+        if (NestedExceptionUtils.getMostSpecificCause(ex) instanceof RequestBodyTooLargeException) {
+            return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE)
+                    .body(APIResponse.failure("That request is too large."));
+        }
+        return ResponseEntity.badRequest()
+                .body(APIResponse.failure("The request body could not be read."));
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

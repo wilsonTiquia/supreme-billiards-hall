@@ -68,7 +68,28 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
                               rate_table.name,
                               sess_table.name,
                               bl.description,
-                              to_char(cc.business_date, 'FMDay DD Mon YYYY'))              AS entity_label
+                              to_char(cc.business_date, 'FMDay DD Mon YYYY'))              AS entity_label,
+                     -- The customer type the session was opened on, so a rate override can be
+                     -- named after it: "Happy Hour rate", not "Friend rate given" for every
+                     -- type the owner has since added.
+                     --
+                     -- A JOIN and not a wider audit snapshot, for two reasons. audit_log is
+                     -- append-only -- audit_log_append_only rejects UPDATE -- so rows already
+                     -- written could never be backfilled, whereas customer_type_id is still on
+                     -- every table_session row and this repairs the history as well as the new
+                     -- rows. And the customer type is not a before/after CHANGE: putting it in
+                     -- the diff would render a bogus "Customer type name  —  ->  Happy Hour".
+                     sess_ct.name                                         AS customer_type_name,
+                     -- Which kind of override, for the same label. Naming an override after
+                     -- the customer type is right for a favour and WRONG for a promo: happy
+                     -- hour runs on any customer type, so a promo on a Regular walk-in would
+                     -- read "Regular rate", which is both plausible and untrue.
+                     --
+                     -- From the join and not the audit snapshot, for the reason the customer
+                     -- type is: audit_log is append-only, so rows already written could never
+                     -- be backfilled, whereas rate_override_kind is on every table_session row
+                     -- including the ones V18 backfilled -- this labels the history too.
+                     ts.rate_override_kind::text                          AS rate_override_kind
               FROM audit_log a
               LEFT JOIN product         pr ON a.entity_table = 'product'          AND pr.id = a.entity_id
               LEFT JOIN product_category pc ON a.entity_table = 'product_category' AND pc.id = a.entity_id
@@ -78,6 +99,7 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
               LEFT JOIN pool_table      rate_table ON rate_table.id = ptr.pool_table_id
               LEFT JOIN table_session   ts ON a.entity_table = 'table_session'    AND ts.id = a.entity_id
               LEFT JOIN pool_table      sess_table ON sess_table.id = ts.pool_table_id
+              LEFT JOIN customer_type   sess_ct ON sess_ct.id = ts.customer_type_id
               LEFT JOIN bill_line       bl ON a.entity_table = 'bill_line'        AND bl.id = a.entity_id
               LEFT JOIN cash_count      cc ON a.entity_table = 'cash_count'       AND cc.id = a.entity_id
               WHERE a.branch_id = cast(:branchId as uuid)
@@ -97,7 +119,11 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
                      sm.occurred_at                                       AS occurred_at,
                      sm.business_date                                     AS business_date,
                      sm.quantity_delta                                    AS quantity_delta,
-                     smp.name                                             AS entity_label
+                     smp.name                                             AS entity_label,
+                     -- A stock movement has no session and so no customer type. Typed, because
+                     -- the UNION ALL has to agree on both the count and the type of every column.
+                     NULL::text                                           AS customer_type_name,
+                     NULL::text                                           AS rate_override_kind
               FROM stock_movement sm
               JOIN product smp ON smp.id = sm.product_id
               WHERE sm.branch_id = cast(:branchId as uuid)
@@ -123,7 +149,9 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
                    note               AS "note",
                    occurred_at        AS "occurredAt",
                    business_date      AS "businessDate",
-                   quantity_delta     AS "quantityDelta"
+                   quantity_delta     AS "quantityDelta",
+                   customer_type_name AS "customerTypeName",
+                   rate_override_kind AS "rateOverrideKind"
             """;
 
     @Query(value = FEED_CTE + FEED_COLUMNS + FEED_WHERE
@@ -188,6 +216,8 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
         Instant getOccurredAt();
         LocalDate getBusinessDate();
         BigDecimal getQuantityDelta();
+        String getCustomerTypeName();
+        String getRateOverrideKind();
     }
 
     interface ActorProjection {

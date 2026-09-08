@@ -133,6 +133,10 @@ The counter is a **desktop with mouse and keyboard**, in a dark room, used under
 - Types for API shapes live in one place, derived from `API-CONTRACT.md`. Do not redeclare a
   `Session` type in three files.
 - No `TODO` stubs that silently render nothing. If a screen is not built, say so.
+- **`npm run build` is the verification command, not `npx tsc --noEmit`.** The two disagree:
+  the build runs `tsc -b`, which checks the whole project graph, and it has caught real type
+  errors — a missing field on an object literal built to satisfy an interface — that
+  `--noEmit` passed clean. If you only ran `--noEmit`, you have not checked the frontend.
 - Run it and click through it before reporting a phase done. "It compiles" is not "it works".
 
 ## 6. Ask, don't assume

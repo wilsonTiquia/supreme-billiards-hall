@@ -12,12 +12,13 @@ import { useElapsed } from '@/time/useElapsed';
 import { useScreenTheme } from '@/app/useTheme';
 import { BreakFlourish } from './BreakFlourish';
 import { formatElapsed } from '@/lib/datetime';
-import { formatMoney, formatRate } from '@/lib/money';
+import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
 import { Button } from '@/components/Button';
 import { Banner } from '@/components/Banner';
 import { Card } from '@/components/Card';
 import { Spinner } from '@/components/Spinner';
 import { Modal } from '@/components/Modal';
+import { NoteThread } from '@/features/notes/NoteThread';
 import { ProductGrid } from './ProductGrid';
 import { BillLines } from './BillLines';
 import { VoidLineModal } from './VoidLineModal';
@@ -80,6 +81,8 @@ export function SessionPage() {
         billedMinutes: session.data.billedMinutes,
         billedSeconds: session.data.billedSeconds,
         ratePerMinute: session.data.rateOverridePerMinute ?? session.data.standardRatePerMinute,
+        flatAmount: session.data.flatAmount,
+        rateOverrideKind: session.data.rateOverrideKind,
         timeAmount: session.data.timeAmount,
         itemCount: session.data.itemCount,
         itemTotal: session.data.itemTotal,
@@ -224,9 +227,48 @@ export function SessionPage() {
               </div>
             </dl>
 
+            {/*
+              A flat session's charge does not tick, which without saying so looks like a frozen
+              screen rather than the price it is. The timer above keeps running and the minutes
+              keep counting — they are recorded and feed utilisation — they just do not price it.
+            */}
+            {live.flatAmount !== null ? (
+              <p className="mt-3 text-label text-amount">
+                Flat rate — {formatMoney(live.flatAmount)} for the session however long it runs.
+                The timer keeps running; the charge does not change.
+                {live.flatRateReason ? ` (${live.flatRateReason})` : ''}
+              </p>
+            ) : null}
+
             {live.rateOverridePerMinute !== null ? (
               <p className="mt-3 text-label text-amount">
-                Friend rate in effect — standard is {formatRate(live.standardRatePerMinute)}
+                {/* Named after the customer type the session was opened on, and quoted in the
+                    unit the override was set in — but only when BOTH sides were snapshotted
+                    hourly, since half a comparison reads worse than a per-minute one.
+
+                    A PROMO is named after itself. It is ungated and runs on any customer type,
+                    so the customer-type rule would put "Regular rate in effect" on a happy-hour
+                    table — plausible, and the opposite of what happened. */}
+                {live.rateOverrideKind === 'PROMO'
+                  ? 'Promo rate'
+                  : live.customerTypeName
+                    ? `${live.customerTypeName} rate`
+                    : 'Rate override'}{' '}
+                in effect — standard is{' '}
+                {live.rateOverridePerHour !== null && live.standardRatePerHour !== null
+                  ? formatHourlyRate(live.standardRatePerHour)
+                  : formatRate(live.standardRatePerMinute)}
+              </p>
+            ) : null}
+
+            {/* Pause stays available on a flat session. It still stops the clock and still
+                reduces the recorded minutes; it just does not change what is charged. Said in a
+                line rather than solved by disabling the button — staff pause for real reasons,
+                and the recorded minutes are what feed utilisation. */}
+            {!finished && live.flatAmount !== null ? (
+              <p className="mt-2 text-label text-text-dim">
+                Pausing stops the clock and lowers the recorded minutes. The charge stays at{' '}
+                {formatMoney(live.flatAmount)}.
               </p>
             ) : null}
 
@@ -271,6 +313,13 @@ export function SessionPage() {
               }}
             />
           )}
+        </Card>
+
+        {/* While people are playing is when staff know who is on the table, so the box is here
+            rather than only at checkout. It stays after the close: nothing about a note depends
+            on the session still running. */}
+        <Card className="max-h-72 shrink-0 overflow-y-auto">
+          <NoteThread source={{ kind: 'session', sessionId: live.id }} writeTo={live.id} />
         </Card>
 
         {/* Close sits at the bottom, away from Add item, and confirms with the amount. */}
