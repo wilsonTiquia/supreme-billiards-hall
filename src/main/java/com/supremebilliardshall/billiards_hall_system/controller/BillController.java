@@ -194,6 +194,26 @@ public class BillController {
                                 : "Payment recorded successfully"));
     }
 
+    /*
+     * Finishing a bill that comes to nothing.
+     *
+     * Its own route rather than a payment of 0.00, because a payment of 0.00 is not something
+     * that happened: payment_amount_chk refuses one and PaymentRequestDTO will not carry one.
+     * The bill closes, takes its receipt number and lands on the night's report like any other
+     * sale — it simply had nothing to collect.
+     *
+     * Refuses any bill with a figure on it, which is what keeps it out of the way of the paid
+     * path. The counter reaches it only when the screen already reads 0.00.
+     */
+    @PostMapping("/{id}/no-charge")
+    public ResponseEntity<APIResponse<ReceiptResponseDTO>> settleWithoutPayment(@PathVariable UUID id) {
+        ReceiptResponseDTO receipt = checkoutService.settleWithoutPayment(id);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        receipt,
+                        "Bill closed with nothing to pay"));
+    }
+
     // Recording the sale without the money. Not a variant of payment and deliberately not on
     // the same path: this is the one route by which a bill is completed and nothing goes in the
     // drawer, and it is audited as such.

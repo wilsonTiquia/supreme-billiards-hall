@@ -106,7 +106,12 @@ public class BillServiceImpl implements BillService {
                 .map(row -> new BillSummaryResponseDTO(
                         row.getId(), row.getReceiptNo(),
                         row.getClosedAt().atOffset(ZoneOffset.UTC), row.getTotalAmount(),
-                        PaymentMethod.valueOf(row.getMethod()), row.getTakenByUsername(),
+                        // Null on a bill closed with nothing to pay -- a voucher that covered
+                        // the whole of it writes no payment row, so there is no method and
+                        // nobody took it. Mapped as null rather than defaulted to CASH, which
+                        // would put money in the owner's list that never went in the drawer.
+                        row.getMethod() == null ? null : PaymentMethod.valueOf(row.getMethod()),
+                        row.getTakenByUsername(),
                         row.getQuickSale()))
                 .toList();
 
@@ -119,13 +124,21 @@ public class BillServiceImpl implements BillService {
     public List<UnsettledBillResponseDTO> getUnsettledBills() {
         // Every unsettled bill, newest first — not just tonight's. Each row carries its own
         // businessDate so an old one is visibly old on screen.
+        /*
+         * Zero-total bills are LISTED, and were filtered out until vouchers existed.
+         *
+         * The filter's reason was that such a bill could not be settled at all -- payment
+         * validation requires at least 0.01 -- so it would sit in the strip for ever and teach
+         * staff to ignore it, which is the one thing the strip cannot afford. That reason is
+         * gone: CheckoutServiceImpl.settleWithoutPayment closes a bill that comes to nothing,
+         * and it is now the ordinary end of a prize winner's night rather than a dead row.
+         *
+         * Filtering it now would be the worse failure of the two. The winner's table shows
+         * free, their bill is still OPEN, and nothing anywhere would prompt anyone to finish
+         * it -- the sale would never reach a report.
+         */
         return billRepository.findUnsettled().stream()
                 .map(this::toUnsettledResponseDto)
-                // A bill totalling zero cannot be settled at all: payment validation requires
-                // at least 0.01, so it would sit in the floor strip for ever. It is also not a
-                // lost sale — there is nothing to collect. Listing it would only teach staff
-                // to ignore the strip, which is the one thing it cannot afford.
-                .filter(unsettled -> unsettled.getTotalAmount().signum() > 0)
                 .toList();
     }
 

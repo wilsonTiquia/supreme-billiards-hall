@@ -71,11 +71,25 @@ public interface BillRepository extends BranchScopedRepository<Bill> {
     }
 
     // One night's settled sales, newest first, for the owner browsing receipts.
-    //
-    // Native because business_date is a generated column that JPQL cannot see, and because the
-    // payment method is a Postgres enum that has to be cast to text before it will bind back.
-    // The join to payment is inner: a CLOSED bill always has exactly one, and a bill without
-    // one is not a sale anybody can produce a receipt for.
+    /*
+     * Native because business_date is a generated column that JPQL cannot see, and because the
+     * payment method is a Postgres enum that has to be cast to text before it will bind back.
+     *
+     * THE JOIN TO PAYMENT IS OUTER, AND WAS INNER UNTIL VOUCHERS EXISTED. It said then that a
+     * CLOSED bill always has exactly one, and a bill without one is not a sale anybody can
+     * produce a receipt for. Both halves were true when they were written and the first stopped
+     * being true the moment a bill could be closed with nothing to pay -- a prize winner who
+     * plays ninety minutes on a two-hour voucher and buys nothing owes nothing, so no payment
+     * row is written, and there is nothing for an inner join to match.
+     *
+     * Left as an inner join it did not error: the sale simply vanished from the owner's list,
+     * and the countQuery agreed with it, so the page count was consistent and wrong together.
+     * That is the failure worth naming here -- a silently short list is the one a reader
+     * believes.
+     *
+     * `method` and `takenByUsername` are therefore NULL on such a row, and the service maps
+     * them as null rather than defaulting them to something that looks like a payment.
+     */
     @Query(value = """
             SELECT b.id                AS id,
                    b.receipt_no        AS receiptNo,
@@ -85,7 +99,7 @@ public interface BillRepository extends BranchScopedRepository<Bill> {
                    u.username          AS takenByUsername,
                    NOT EXISTS (SELECT 1 FROM table_session s WHERE s.bill_id = b.id) AS quickSale
             FROM bill b
-            JOIN payment p ON p.bill_id = b.id
+            LEFT JOIN payment p ON p.bill_id = b.id
             LEFT JOIN app_user u ON u.id = p.taken_by
             WHERE b.branch_id = cast(:branchId as uuid)
               AND b.status = 'CLOSED'
@@ -95,7 +109,7 @@ public interface BillRepository extends BranchScopedRepository<Bill> {
             countQuery = """
             SELECT count(*)
             FROM bill b
-            JOIN payment p ON p.bill_id = b.id
+            LEFT JOIN payment p ON p.bill_id = b.id
             WHERE b.branch_id = cast(:branchId as uuid)
               AND b.status = 'CLOSED'
               AND b.business_date = cast(:businessDate as date)

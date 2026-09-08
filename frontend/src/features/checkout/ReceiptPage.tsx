@@ -249,7 +249,14 @@ export function ReceiptPage() {
                 from a missing method key — the inference that breaks the first time the payload
                 gains or loses an unrelated column. */}
             <dd className="text-body text-text">
-              {text(payload, 'method') ?? (issuedUnpaid ? 'Unpaid' : '—')}
+              {/* Three states, and the third one is new: paid by some method, issued against a
+                  debt, or nothing to pay at all. `noCharge` is written from the FIGURE rather
+                  than from the absence of a method, so a chit reading 0.00 says why instead of
+                  showing a dash the customer has to ask about. */}
+              {text(payload, 'method')
+                ?? (payload.noCharge === true
+                  ? 'Nothing to pay'
+                  : issuedUnpaid ? 'Unpaid' : '—')}
             </dd>
           </div>
           {money(payload, 'tendered') !== null ? (

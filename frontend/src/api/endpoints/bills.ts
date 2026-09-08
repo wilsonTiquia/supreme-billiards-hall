@@ -111,6 +111,18 @@ export function releaseVoucher(billId: string): Promise<VoucherRedemption> {
   return request<VoucherRedemption>(`/bills/${billId}/voucher`, { method: 'DELETE' });
 }
 
+/**
+ * Finishes a bill that comes to nothing — a voucher covering all of it, or a comped rate.
+ *
+ * Not a payment of zero: `payment_amount_chk` refuses one and there is no row that could
+ * record it. The bill closes, takes a receipt number and lands on the night's report like any
+ * other sale; it simply had nothing to collect. The server refuses any bill with a figure on
+ * it, so this can only ever complete on a total the operator can already see is 0.00.
+ */
+export function settleWithoutPayment(billId: string): Promise<Receipt> {
+  return request<Receipt>(`/bills/${billId}/no-charge`, { method: 'POST' });
+}
+
 /** The reason is required and non-blank, or the server returns 400. */
 export function voidBillLine(
   billId: string,

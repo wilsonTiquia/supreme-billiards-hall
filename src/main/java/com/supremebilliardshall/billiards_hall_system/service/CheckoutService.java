@@ -29,6 +29,10 @@ public interface CheckoutService {
     // session must carry a staff note naming who owes it, either already written or supplied here.
     UnpaidBillResponseDTO leaveUnpaid(UUID billId, LeaveUnpaidRequestDTO leaveUnpaidRequestDTO);
 
+    // Finishes a bill that comes to nothing -- a voucher covering the whole of it, or a comped
+    // rate -- by closing it with no payment row. Refuses any bill with a figure on it.
+    ReceiptResponseDTO settleWithoutPayment(UUID billId);
+
     ReceiptResponseDTO getReceipt(UUID billId);
 
     // Prices a set of lines without selling them, so the counter screen can show a total and

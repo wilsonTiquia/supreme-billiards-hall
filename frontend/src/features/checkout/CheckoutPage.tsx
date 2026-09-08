@@ -7,6 +7,7 @@ import {
   fetchCheckout,
   payBill,
   redeemVoucher,
+  settleWithoutPayment,
   releaseVoucher,
 } from '@/api/endpoints/bills';
 import { overrideBilledMinutes } from '@/api/endpoints/sessions';
@@ -223,6 +224,19 @@ export function CheckoutPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.checkout(billId) });
     },
     onError: (caught) => setVoucherError(messageOf(caught)),
+  });
+
+  /* Finishing a bill that comes to nothing. Its own call rather than a payment of zero,
+     because a payment of zero is not something that happened — the server has no row that
+     could record one. On success the operator goes straight to the receipt, exactly as a
+     paid checkout does. */
+  const noCharge = useMutation({
+    mutationFn: () => settleWithoutPayment(billId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.bills });
+      navigate(`/receipt/${billId}`, { replace: true });
+    },
+    onError: (caught) => setRecovery({ kind: 'plain', message: messageOf(caught) }),
   });
 
   const removeVoucher = useMutation({
@@ -627,6 +641,29 @@ export function CheckoutPage() {
                 ? 'This bill is settled.'
                 : 'Sort the above out first — the server will refuse the payment until then.'}
             </p>
+          ) : total === 0 ? (
+            /* Nothing to collect, so no payment form at all. This is the ordinary end of a
+               prize winner's night — a voucher covering the whole of the table time, nothing
+               bought — and the counter needs one button, not a payment form it cannot use.
+               The server refuses this route on any bill with a figure on it, so the `total === 0`
+               here is what the operator sees rather than what makes it safe. */
+            <div className="flex flex-col gap-4">
+              <p className="text-body text-text">
+                There is nothing to pay on this bill.
+                {bill.voucherAmount > 0
+                  ? ` Voucher ${bill.voucherCode} covered all of it.`
+                  : ''}{' '}
+                Finishing it closes the sale and prints a receipt.
+              </p>
+              <Button
+                type="button"
+                className="w-full"
+                pending={noCharge.isPending}
+                onClick={() => noCharge.mutate()}
+              >
+                Nothing to pay — finish
+              </Button>
+            </div>
           ) : (
             <PaymentForm
               total={total}

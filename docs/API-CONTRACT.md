@@ -473,6 +473,9 @@ paged (`size` capped at 200). `businessDate` is required, `YYYY-MM-DD`.
 though the route is ADMIN — this list is for finding a receipt, and margin belongs on the
 dashboard. Open the stored snapshot with `GET /bills/{id}/receipt`.
 
+**`method` and `takenByUsername` are `null`** on a bill closed with nothing to pay — see
+`POST /bills/{id}/no-charge`. Render the absence ("Nothing to pay"); do not default to `CASH`.
+
 **GET `/bills/{id}`**
 
 ```json
@@ -639,6 +642,29 @@ gets 409 `STALE_BILL_VERSION` rather than charging the old amount.
 **DELETE `/bills/{id}/discount`** — clears it and restores the full amount. All four columns are
 nulled together. No discount to clear → 409; bill not `OPEN` → 409. Audited as
 `BILL_DISCOUNT_CLEARED`, carrying the cleared discount's own reason.
+
+**POST `/bills/{id}/no-charge`** — finishes a bill that comes to **nothing**. Returns the
+`Receipt` shape. Any role.
+
+Not a payment of `0.00`: `payment_amount_chk` refuses one and `PaymentRequestDTO` will not carry
+one, because a payment of zero is not something that happened. The bill closes, takes its receipt
+number and lands on the night's report like any other sale — it simply had nothing to collect, and
+**no `payment` row is written**.
+
+- **Refuses any bill with a figure on it** → 409, naming the amount. This is the one route that
+  completes a sale without money, and that refusal is all that separates it from a way to give any
+  bill away. The gate is checked after the totals are finalised, where the figure is real.
+- Bill not `OPEN` → 409. Running session → 409, same blockers as payment.
+- Audited as `BILL_CLOSED_NO_CHARGE`.
+
+Reached by a voucher covering the whole of a bill with nothing else on it — the prize winner who
+plays ninety minutes on a two-hour code and buys no drinks — and by a comped zero flat or friend
+rate. The receipt payload carries `"noCharge": true`, so the chit says **"Nothing to pay"** rather
+than showing an empty payment block.
+
+**`method` and `takenByUsername` are `null` on such a bill in `GET /bills?businessDate=`.** Render
+the absence; do not default to `CASH`, which would show money in the owner's list that never went
+in the drawer.
 
 **POST `/bills/{id}/voucher`** → `{ "code" }` — spends a giveaway voucher against this bill.
 **Any role**: making a batch is the owner's job, spending one is the cashier's. Returns

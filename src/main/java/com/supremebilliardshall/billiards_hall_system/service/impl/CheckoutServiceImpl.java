@@ -179,6 +179,13 @@ public class CheckoutServiceImpl implements CheckoutService {
         bill.setUnsettledAt(OffsetDateTime.now());
         bill.setUnsettledBy(actorId);
         List<BillLine> lines = finalise(bill, actorId, BillStatus.UNSETTLED);
+        // A debt of nothing is not a debt. Refused after finalise rather than before, because
+        // the total is not known until the live lines are summed -- and the whole request rolls
+        // back, so the receipt number finalise allocated is never handed out.
+        if (bill.getTotalAmount().signum() == 0) {
+            throw new BusinessRuleException("There is nothing owed on this bill, so there is no "
+                    + "debt to record. Finish it with \"Nothing to pay\".");
+        }
 
         // Written against the most recent session, which is where CheckoutPage's note box and
         // the settlement note both write: a merged bill has several, and one debt is one event.
@@ -217,6 +224,71 @@ public class CheckoutServiceImpl implements CheckoutService {
                 note.isEmpty() ? null : note);
 
         return billService.getUnpaidBill(bill.getId());
+    }
+
+    /*
+     * Finishing a bill that comes to nothing.
+     *
+     * The prize winner who plays ninety minutes on a two-hour voucher and buys no drinks owes
+     * nothing, and this is the only way that night ends. Without it the counter reaches
+     * "There is nothing to charge on this bill" with a customer standing in front of them
+     * holding a prize, and the bill stays open on the floor for ever.
+     *
+     * NO PAYMENT ROW, and that is the honest record rather than a gap: payment_amount_chk
+     * requires an amount above zero, because a payment of 0.00 is not a thing that happened.
+     * bill_closed_consistency_chk asks only for closed_at, closed_by and a receipt number, all
+     * of which this writes -- a CLOSED bill has never been required to carry a payment, and
+     * BillRepository.findSettledByBusinessDate now joins payment outer for exactly this row.
+     *
+     * GATED ON THE FIGURE BEING ZERO, checked after finalise where the figure is real. A bill
+     * with anything on it must be unreachable from here: this is the one path in the system
+     * that completes a sale without money, and the only thing standing between it and a
+     * giveaway is that test. Everything else about checkout -- the receipt number under its row
+     * lock, closed_at deciding the business date, the version bump -- is finalise's, unchanged
+     * and shared, so this cannot drift from the paid path.
+     */
+    @Override
+    @Transactional
+    public ReceiptResponseDTO settleWithoutPayment(UUID billId) {
+        Bill bill = requireBill(billId);
+
+        List<String> blockers = checkoutBlockers(bill);
+        if (!blockers.isEmpty()) {
+            throw new BusinessRuleException(String.join(" ", blockers));
+        }
+        // UNSETTLED is payable and therefore not zero -- leaveUnpaid refuses a zero debt -- so a
+        // bill arriving here already finalised has money on it and belongs on the paid path.
+        if (bill.getStatus() != BillStatus.OPEN) {
+            throw new BusinessRuleException("Bill is already " + bill.getStatus() + ".");
+        }
+
+        UUID actorId = branchContext.getCurrentUserId();
+        List<BillLine> lines = finalise(bill, actorId, BillStatus.CLOSED);
+
+        if (bill.getTotalAmount().signum() != 0) {
+            throw new BusinessRuleException("This bill comes to "
+                    + bill.getTotalAmount().toPlainString() + ", so it has to be paid. "
+                    + "Take the payment, or leave it unpaid.");
+        }
+
+        Receipt receipt = new Receipt();
+        receipt.setBranchId(bill.getBranchId());
+        receipt.setBillId(bill.getId());
+        receipt.setReceiptNo(bill.getReceiptNo());
+        receipt.setPayload(receiptPayload(bill, lines, null));
+        receiptRepository.saveAndFlush(receipt);
+
+        // Audited like every other way money does not reach the drawer. There is no reason
+        // field: the voucher or the zero rate that produced the figure carries its own, and
+        // asking for a second one here would be asking the counter to justify arithmetic.
+        Map<String, Object> after = new LinkedHashMap<>();
+        after.put("receiptNo", bill.getReceiptNo());
+        after.put("voucherAmount", bill.getVoucherAmount());
+        after.put("discountAmount", bill.getDiscountAmount());
+        after.put("businessDate", bill.getBusinessDate());
+        auditService.record("BILL_CLOSED_NO_CHARGE", "bill", bill.getId(), null, after, null);
+
+        return getReceipt(bill.getId());
     }
 
     @Override
@@ -319,6 +391,14 @@ public class CheckoutServiceImpl implements CheckoutService {
 
         BigDecimal totalAmount = bill.getTotalAmount();
 
+        // Nothing to take. payment_amount_chk requires more than zero, so there is no payment
+        // row that could record this -- and there does not need to be one: settleWithoutPayment
+        // closes such a bill, and the message names it rather than leaving the counter stuck.
+        if (totalAmount.signum() == 0) {
+            throw new BusinessRuleException("There is nothing to charge on this bill. "
+                    + "Finish it with \"Nothing to pay\" instead of taking a payment.");
+        }
+
         if (paymentRequestDTO.getAmount().compareTo(totalAmount) != 0) {
             // Part payment is not a thing this system records. A debt is collected in full or
             // it stays outstanding, and half of ₱654 in the drawer against a bill that still
@@ -416,19 +496,25 @@ public class CheckoutServiceImpl implements CheckoutService {
         BigDecimal totalCost = sumLive(lines, null, true);
 
         /*
-         * The reduced figure, deliberately: a bill brought down to nothing is a bill nobody can
-         * settle -- payment_amount_chk requires more than zero -- which is why applyDiscount
-         * refuses to produce one in the first place. This is the backstop for the same state
-         * arrived at another way.
+         * NEGATIVE only. Zero is a legitimate outcome and each caller decides what to do with it.
          *
-         * A VOUCHER CAN REACH IT LEGITIMATELY, and this refusal is what stops such a bill:
-         * a prize winner who plays ninety minutes on a two-hour voucher and buys nothing owes
-         * nothing, and there is no route in this system to close a bill without a payment. That
-         * is a real gap rather than a rule -- see the same acknowledgement on getUnsettledBills
-         * -- and it wants its own decision rather than being papered over here.
+         * This guard used to refuse zero as well, back when nothing could close a bill without
+         * a payment. A voucher covering the whole of a bill reaches zero honestly -- a prize
+         * winner who plays ninety minutes on a two-hour code and buys nothing owes nothing --
+         * so the rule moved to the three callers, which want three different things from the
+         * same figure: settle refuses zero because there is no payment to take, leaveUnpaid
+         * refuses it because a debt of nothing is not a debt, and settleWithoutPayment requires
+         * it. One shared refusal could only ever have been right for one of them.
+         *
+         * Below zero is not a case, it is a broken invariant: applyDiscount and redeem each
+         * bound themselves by the subtotal, and lines only ever get added. It fails loudly here
+         * rather than writing a bill the hall owes the customer money on.
          */
-        if (totalAmount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new BusinessRuleException("There is nothing to charge on this bill.");
+        if (totalAmount.signum() < 0) {
+            throw new BusinessRuleException("This bill has been reduced below zero — "
+                    + subtotalTime.add(subtotalItems).toPlainString() + " charged, "
+                    + discountAmount.add(voucherAmount).toPlainString()
+                    + " taken off. Remove the discount or the voucher and start again.");
         }
 
         // Allocated under a row lock, inside this transaction: two simultaneous checkouts
@@ -600,6 +686,19 @@ public class CheckoutServiceImpl implements CheckoutService {
             payload.put("voucherAmount", bill.getVoucherAmount());
         }
         payload.put("totalAmount", bill.getTotalAmount());
+        /*
+         * Said on the chit, rather than left as an empty payment block.
+         *
+         * A receipt reading 0.00 with a dash where the method goes is the one a staff member
+         * telephones about at midnight. The voucher line above already names the code; this
+         * says the consequence -- there was nothing to pay -- and it is written from the FIGURE
+         * rather than from the absence of a payment, so it means the same thing on a bill
+         * zeroed by a comped flat rate as on one covered by a prize.
+         */
+        if (payment == null && bill.getStatus() == BillStatus.CLOSED
+                && bill.getTotalAmount().signum() == 0) {
+            payload.put("noCharge", true);
+        }
         if (payment != null) {
             payload.put("method", payment.getMethod().name());
             payload.put("tendered", payment.getTendered());

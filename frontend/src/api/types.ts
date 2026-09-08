@@ -879,7 +879,12 @@ export interface BillSummary {
   receiptNo: number;
   closedAt: IsoInstant;
   totalAmount: Money;
-  method: PaymentMethod;
+  /**
+   * Null on a bill closed with nothing to pay — a voucher covering the whole of it writes no
+   * payment row, so there is no method and nobody took it. Render the absence; do not default
+   * it to Cash, which would show money in the list that never went in the drawer.
+   */
+  method: PaymentMethod | null;
   takenByUsername: string | null;
   /** A table sale carried a session; a quick sale never did. */
   quickSale: boolean;

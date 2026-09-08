@@ -83,6 +83,9 @@ class VoucherRedemptionTest {
     private VoucherRepository voucherRepository;
 
     @Autowired
+    private PaymentRepository paymentRepository;
+
+    @Autowired
     private VoucherBatchRepository voucherBatchRepository;
 
     @Autowired
@@ -439,6 +442,101 @@ class VoucherRedemptionTest {
         assertThat(line.get("poolTableName").asText()).isEqualTo("Table 1");
         assertThat(line.get("actorUsername").isNull()).isFalse();
         assertThat(line.get("receiptNo").isNull()).isFalse();
+    }
+
+    /*
+     * THE PRIZE WINNER'S WHOLE NIGHT, end to end, because this is what the feature is FOR.
+     *
+     * She wins two hours in the Facebook draw, plays ninety minutes, buys nothing and walks out
+     * paying nothing. Every step of that has to work: the code covers the table time, the bill
+     * closes at 0.00 with no payment row, it appears in the owner's Sales list, and the 360.00
+     * the hall gave up shows under Vouchers in Given away with the thirty unused minutes
+     * recorded beside it.
+     *
+     * Until this existed the night dead-ended at "There is nothing to charge on this bill" with
+     * a customer standing at the counter holding a prize.
+     */
+    @Test
+    void aPrizeWinnerWhoOwesNothingFinishesTheNightAndLandsOnTheReport() throws Exception {
+        String code = givenVoucherCode(2, LocalDate.now().plusMonths(1), "October Facebook draw");
+        UUID billId = givenClosedSessionOf(90, false);
+
+        JsonNode redemption = body(redeem(billId, code).andExpect(status().isOk())).get("data");
+        assertThat(redemption.get("minutesForfeited").asInt()).isEqualTo(30);
+        assertThat(money(redemption.get("bill"), "totalAmount")).isEqualByComparingTo("0.00");
+
+        // Taking a payment is refused, and the message names the route that exists rather than
+        // leaving the counter to work it out.
+        assertThat(messageOf(pay(billId, "0.00", redemption.get("bill").get("version").asInt(),
+                "prize-cash").andExpect(status().isBadRequest())))
+                .contains("Amount");
+
+        JsonNode receipt = body(mockMvc.perform(post("/api/v1/bills/" + billId + "/no-charge")
+                .with(user(principal()))).andExpect(status().isOk())).get("data");
+        JsonNode payload = receipt.get("payload");
+        assertThat(money(payload, "totalAmount")).isEqualByComparingTo("0.00");
+        // The chit says what happened rather than showing a blank payment block.
+        assertThat(payload.get("noCharge").asBoolean()).isTrue();
+        assertThat(payload.get("voucherCode").asText()).isEqualTo(code);
+        assertThat(payload.get("voucherHoursCovered").asText()).isEqualTo("1.5");
+
+        // Closed, numbered, and carrying NO payment row -- payment_amount_chk could not hold one.
+        Bill closed = asUser(() -> billRepository.findById(billId).orElseThrow());
+        assertThat(closed.getStatus()).isEqualTo(BillStatus.CLOSED);
+        assertThat(closed.getReceiptNo()).isNotNull();
+        assertThat(closed.getTotalAmount()).isEqualByComparingTo("0.00");
+        assertThat(asUser(() -> paymentRepository.findByBillId(billId))).isEmpty();
+
+        /*
+         * IN THE OWNER'S SALES LIST. This is the half that was missing: the query joined
+         * payment INNER, so a bill with no payment row simply vanished -- and the count agreed
+         * with the short list, which is what makes that failure believable rather than obvious.
+         */
+        JsonNode sales = body(mockMvc.perform(get("/api/v1/bills")
+                .param("businessDate", closed.getBusinessDate().toString())
+                .with(user(principal()))).andExpect(status().isOk())).get("data");
+        assertThat(sales.get("totalElements").asInt()).isEqualTo(1);
+        JsonNode sale = sales.get("content").get(0);
+        assertThat(sale.get("id").asText()).isEqualTo(billId.toString());
+        assertThat(money(sale, "totalAmount")).isEqualByComparingTo("0.00");
+        // Null rather than defaulted to CASH, which would show money that never went in.
+        assertThat(sale.get("method").isNull()).isTrue();
+
+        // And the giveaway is on the report, with what was used and what was thrown away.
+        JsonNode losses = body(mockMvc.perform(get("/api/v1/reports/daily").with(user(principal())))
+                .andExpect(status().isOk())).get("data").get("losses");
+        assertThat(losses.get("voucherCount").asInt()).isEqualTo(1);
+        assertThat(money(losses, "voucherAmount")).isEqualByComparingTo("360.00");
+
+        JsonNode line = body(mockMvc.perform(get("/api/v1/reports/losses").with(user(principal())))
+                .andExpect(status().isOk())).get("data").get("vouchers").get("lines").get(0);
+        assertThat(money(line, "voucherAmount")).isEqualByComparingTo("360.00");
+        assertThat(line.get("minutesCovered").asInt()).isEqualTo(90);
+        assertThat(line.get("minutesForfeited").asInt()).isEqualTo(30);
+
+        assertThat(auditActions()).contains("VOUCHER_REDEEMED", "BILL_CLOSED_NO_CHARGE");
+    }
+
+    // A bill with a figure on it must be unreachable from the no-charge route. This is the one
+    // path that completes a sale without money, and that refusal is all that separates it from
+    // a way to give any bill away.
+    @Test
+    void aBillWithSomethingToPayCannotBeClosedWithoutPayment() throws Exception {
+        UUID billId = givenClosedSessionOf(180, true);
+
+        assertThat(messageOf(mockMvc.perform(post("/api/v1/bills/" + billId + "/no-charge")
+                .with(user(principal()))).andExpect(status().isConflict())))
+                .contains("810.00").contains("has to be paid");
+        /*
+         * The refusal is what this asserts, and the rollback deliberately is not.
+         *
+         * finalise writes the bill before the gate reads its total, so under Spring the failed
+         * request rolls all of it back -- status, closed_at and the receipt number alike. Under
+         * this class's @Transactional it does not: the service joins the test's transaction
+         * rather than opening its own, so the flushed row is still there to read and asserting
+         * it had been undone would assert something this class cannot see. BillDiscountTest
+         * makes the same note about its own rejection case.
+         */
     }
 
     // ---- fixtures ------------------------------------------------------------------
