@@ -186,13 +186,20 @@ class PasswordChangeGateTest {
         }
 
         /*
-         * A 200 is NOT by itself a bypass here, and asserting otherwise was wrong: the SPA
-         * shell is public and answers any unmatched path, so //api/v1/tables comes back 200
-         * with index.html. That is the behaviour SecurityConfig documents -- the shell carries
-         * no data and every figure comes from /api/v1.
+         * DO NOT "STRENGTHEN" THIS INTO A STATUS ASSERTION. It was tried and it is wrong.
          *
-         * What must never come back is a served API call. Every controller answers through
-         * APIResponse, so a success envelope is the signature of one having run.
+         * A 200 is not a bypass here. The SPA shell is public and answers any path the router
+         * does not match, so //api/v1/tables comes back 200 with index.html -- which is the
+         * behaviour SecurityConfig documents on purpose: the shell carries no data, the login
+         * screen is part of it, and every figure the app displays comes from /api/v1. Asserting
+         * a non-2xx status here fails on correct behaviour.
+         *
+         * The claim is narrower and exact: no API call was SERVED. Every controller answers
+         * through APIResponse, so a success envelope is the signature of one having run, and
+         * its absence is the whole assertion.
+         *
+         * The defect this helper had was never the assertion -- it was the catch above, which
+         * used to be `catch (Exception) { return; }` and turned any failure at all into a pass.
          */
         assertThat(response.getContentAsString())
                 .as("%s must not reach the API (status was %d)", rawTarget, response.getStatus())

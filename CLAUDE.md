@@ -316,6 +316,17 @@ figure. `...StillLogsInFromADifferentAddress` never performed a login. `...Gives
 checked the status and not the message. Nobody re-reads the body once the name looks right, so
 the gap is permanent. Either assert what the name says, or rename it to what it asserts.
 
+**3. How much a can't-fail test costs depends on what else guards the behaviour, not only on
+what the test proves.** These are not all equally urgent, and ranking them by how little they
+prove gets the order wrong. `BillDiscountTest` read the cleared discount columns back through
+the persistence context — the wrong source, exactly shape 1 — and it does not much matter,
+because `bill_discount_together_chk` requires all four to be null-or-set together, so a
+half-written clear is rejected by the database and surfaces at the write. The assertion was
+worth correcting; it was never the thing standing between the hall and a bad row. Contrast
+`bill.business_date`, where nothing but the mapping was watching, the regression landed twice,
+and no test could see it either time. **Ask what fails if the test is wrong** — a schema
+constraint behind it makes a weak assertion cheap, and nothing behind it makes one expensive.
+
 **Prove it can fail before you call it done.** Break the behaviour on purpose, watch the test go
 red for the reason you expect, restore it, watch it go green. Not the assertion — the
 *behaviour*: narrow the `@Generated`, mark the column `updatable = false`, drop the `before`

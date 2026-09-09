@@ -39,6 +39,25 @@ test('a prize code closes a bill at nothing and lands in the night as given away
 
   // ── The counter plays the winner in ────────────────────────────────────────
   await signIn(COUNTER);
+
+  /*
+   * The free-table warning, checked here because this is the only spec with a rate form within
+   * reach -- openTable dismisses the modal immediately, so it is opened by hand and cancelled.
+   *
+   * ₱0.0001/hour derives ₱0.0000 a minute and bills nothing. That is the documented arithmetic
+   * and zero is a legitimate rate, so it is not refused -- but a counter who typed a figure and
+   * got a free table has to be told at the point of entry rather than at checkout.
+   */
+  await page.goto('/floor');
+  await page
+    .locator('button', { has: page.locator('.figure-table-number', { hasText: /^01$/ }) })
+    .click();
+  await page.getByRole('button', { name: 'Promo', exact: true }).click();
+  await page.getByRole('button', { name: 'Per hour', exact: true }).click();
+  await page.getByLabel('Promo rate per hour').fill('0.0001');
+  await expect(page.getByText(/rounds to ₱0.0000 per minute/)).toBeVisible();
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+
   const sessionId = await openTable(page, 1);
 
   // Thirty minutes at ₱4.00/min is ₱120.00 of table time. See the note on backdateSession:
@@ -85,9 +104,28 @@ test('a prize code closes a bill at nothing and lands in the night as given away
   const row = page.getByRole('row').filter({ hasText: '₱0.00' }).first();
   await expect(row).toBeVisible();
 
+  // The line that says why this list will not sum to the dashboard's gross. Added because the
+  // two figures disagree by design on any night with an unpaid bill, and nothing said so.
+  await expect(page.getByText(/will not add up to gross/)).toBeVisible();
+
   // And the giveaway is accounted for, with the forfeited minutes stated rather than folded
   // into one number — fifty two-hour codes is not fifty times two hours of lost revenue.
   await page.goto('/dashboard');
+
+  // Table utilisation, which no browser test had ever read. Thirty minutes were played on
+  // Table 1, and the figure is occupiedMinutes -- wall clock, pauses included -- which is what
+  // the line beneath it now says. It was called billedMinutes and was reported as a bug three
+  // times for looking like the session's charged figure.
+  const utilisation = page
+    .locator('div')
+    .filter({ has: page.getByRole('heading', { name: 'Table utilisation', exact: true }) })
+    .last();
+  // A figure, not a blank: a renamed field the client did not follow renders " min" with
+  // nothing in front of it. Scoped to the tile because "30 min" also matches a table NAMED
+  // "Table 3" followed by "0 min" on the row below.
+  await expect(utilisation.getByText(/^\d+ min ·/).first()).toBeVisible();
+  await expect(utilisation.getByText(/pauses included/)).toBeVisible();
+
   await page.getByRole('button', { name: /Vouchers/ }).click();
   const detail = page.getByText(new RegExp(`^${code}`));
   await expect(detail).toBeVisible();
