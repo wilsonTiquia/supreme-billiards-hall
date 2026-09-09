@@ -50,18 +50,39 @@ class CredentialsSecurityTest {
     // The value V9 writes into the seeded rows. Not a valid bcrypt hash.
     private static final String SENTINEL = "DISABLED-NO-LOGIN";
 
+    /*
+     * A V9-disabled account cannot be logged into WITH THE SENTINEL ITSELF.
+     *
+     * That is the whole test, and it used to try "anything-at-all" -- a wrong password against
+     * any hash, which would have produced the same 401 from an ordinary account with an
+     * ordinary password. It asserted nothing whatever about V9.
+     *
+     * The sentinel string is the one input that discriminates. "DISABLED-NO-LOGIN" is not a
+     * bcrypt hash, so the only way it could ever authenticate is a password encoder that falls
+     * back to comparing plaintext -- a NoOpPasswordEncoder, a DelegatingPasswordEncoder with a
+     * {noop} default, or a hand-rolled equals(). Every one of those turns the column's own
+     * contents into the password that opens the account, and every seeded row in the database
+     * carries the same one. This is the failure the sentinel was chosen to make impossible, so
+     * it is the failure the test has to attempt.
+     */
     @Test
-    void anAccountCarryingTheDisabledSentinelCannotLogIn() throws Exception {
+    void anAccountCarryingTheDisabledSentinelCannotBeLoggedIntoWithTheSentinel() throws Exception {
         UUID branchId = givenBranch();
         String username = "disabled-" + UUID.randomUUID();
         givenUser(branchId, username, SENTINEL, UserRole.EMPLOYEE);
 
-        // The sentinel is not bcrypt, so no password matches it. Every attempt is a 401.
-        String body = """
-                {"username":"%s","password":"anything-at-all"}""".formatted(username);
         mockMvc.perform(post("/api/v1/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+                        .content("""
+                                {"username":"%s","password":"%s"}""".formatted(username, SENTINEL)))
+                .andExpect(status().isUnauthorized());
+
+        // And an ordinary wrong password is still a 401 rather than anything louder -- the
+        // control, so the assertion above is read against a route that answers normally.
+        mockMvc.perform(post("/api/v1/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"username":"%s","password":"anything-at-all"}""".formatted(username)))
                 .andExpect(status().isUnauthorized());
     }
 
@@ -218,12 +239,17 @@ class CredentialsSecurityTest {
         // rather than a 404 from the branch scoping.
         AppUser globalOwner = givenUser(branchId, "owner-" + UUID.randomUUID(), SENTINEL, UserRole.ADMIN);
 
+        // The MESSAGE, not only the 409. The name of this test is about which of two checks
+        // answered, and a bare status cannot say -- any other conflict on this route would have
+        // satisfied it just as well.
         mockMvc.perform(put("/api/v1/users/{id}/password", globalOwner.getId())
                         .with(user(principal(branchId, UserRole.ADMIN)))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"newPassword":"reset-the-owner"}"""))
-                .andExpect(status().isConflict());
+                .andExpect(status().isConflict())
+                .andExpect(result -> assertThat(result.getResponse().getContentAsString())
+                        .contains("An administrator's password cannot be reset here"));
     }
 
     @Test

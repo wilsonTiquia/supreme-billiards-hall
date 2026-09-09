@@ -173,10 +173,12 @@ class CheckoutAcceptanceTest {
         assertThat(bill.getTotalAmount()).isEqualByComparingTo("630.00");
         assertThat(bill.getTotalCost()).isEqualByComparingTo("157.50");
         assertThat(bill.getTotalAmount().subtract(bill.getTotalCost())).isEqualByComparingTo("472.50");
-        // Derived, never hardcoded: the bill was opened just now, so it must land on whatever
-        // business_date_of() says now is. A trace taken at 02:00 belongs to the previous day,
-        // and that is exactly the behaviour worth asserting.
-        assertThat(bill.getBusinessDate()).isEqualTo(branchRepository.currentBusinessDate());
+        // business_date is NOT asserted here. It used to be, against
+        // branchRepository.currentBusinessDate(), with a comment claiming it proved the 02:00
+        // case -- but both sides of that comparison are business_date_of() evaluated at the
+        // same instant, so it held whatever the column did. The boundary itself is proved by
+        // theBusinessDayRunsFromTenToFive, and the recompute-on-update by
+        // theBusinessDateFollowsTheCloseAcrossTheTenOClockBoundary.
 
         // 48 opening, two sold, one returned by the void.
         assertThat(asUser(() -> productRepository.findById(beerId).orElseThrow().getQtyOnHand()))
@@ -242,6 +244,92 @@ class CheckoutAcceptanceTest {
         assertThat(businessDateOf("2026-09-01 05:00:00+08")).isEqualTo(LocalDate.of(2026, 8, 31));
     }
 
+    /*
+     * bill.business_date RECOMPUTES WHEN closed_at IS STAMPED, in the row and in the entity.
+     *
+     * Nothing tested this. theBusinessDayRunsFromTenToFive drives business_date_of() directly,
+     * which proves the FUNCTION; theWorkedTrace compared the column against the same function
+     * evaluated at the same moment, which proves nothing at all. What was missing is the only
+     * part that has ever actually broken: the column is generated from
+     * COALESCE(closed_at, opened_at), so stamping closed_at MOVES it, and the mapping has to
+     * carry that move back.
+     *
+     * Straddling the 10:00 roll is what makes the two dates differ. A bill opened at 09:00 and
+     * closed at 11:00 belongs to two different business days depending on which timestamp is
+     * read, so a column that failed to recompute is visible rather than coincidentally equal.
+     *
+     * BOTH halves are asserted, and they fail to different bugs:
+     *
+     *   - Before the clear, off the managed entity. This is @Generated(INSERT, UPDATE) doing
+     *     its job. With only the INSERT half, Hibernate does not re-read after the UPDATE and
+     *     the entity keeps the OLD date for the rest of the transaction while the row says
+     *     something else. That is the exact regression CLAUDE.md records as having bitten twice
+     *     on this exact column, and no test caught it either time.
+     *   - After the clear, off the row. This is the generated expression itself -- a column
+     *     built from opened_at alone, or from the wrong timestamp, survives the first half.
+     *
+     * It is load-bearing for the unsettled work: a September sale collected in October must not
+     * migrate to October's report, and the reason it does not is that settlement writes
+     * settled_at and never touches closed_at.
+     */
+    @Test
+    void theBusinessDateFollowsTheCloseAcrossTheTenOClockBoundary() {
+        // 09:00 Manila is before the 10:00 roll, so this bill opens on the PREVIOUS night.
+        OffsetDateTime openedAt = OffsetDateTime.parse("2026-03-17T09:00:00+08:00");
+        OffsetDateTime closedAt = OffsetDateTime.parse("2026-03-17T11:00:00+08:00");
+        LocalDate nightItOpenedIn = LocalDate.of(2026, 3, 16);
+        LocalDate nightItClosedIn = LocalDate.of(2026, 3, 17);
+
+        UUID billId = asUser(() -> {
+            Bill bill = new Bill();
+            bill.setBranchId(branchId);
+            bill.setStatus(BillStatus.OPEN);
+            bill.setOpenedBy(userId);
+            bill.setSubtotalTime(BigDecimal.ZERO);
+            bill.setSubtotalItems(BigDecimal.ZERO);
+            bill.setTotalAmount(BigDecimal.ZERO);
+            bill.setTotalCost(BigDecimal.ZERO);
+            bill.setVersion(0);
+            return billRepository.saveAndFlush(bill).getId();
+        });
+
+        // opened_at is @CreationTimestamp and non-updatable, so it moves by native SQL -- and
+        // the clear is what makes the reload below come from the row.
+        entityManager.createNativeQuery("update bill set opened_at = :t where id = :id")
+                .setParameter("t", openedAt)
+                .setParameter("id", billId)
+                .executeUpdate();
+        entityManager.flush();
+        entityManager.clear();
+
+        Bill open = asUser(() -> billRepository.findById(billId).orElseThrow());
+        assertThat(open.getBusinessDate())
+                .as("an unclosed bill dates from opened_at")
+                .isEqualTo(nightItOpenedIn);
+
+        // The close, through the mapping rather than through SQL: this is the write whose
+        // effect on the generated column has to reach the entity. All four columns together,
+        // because bill_closed_consistency_chk admits no half-closed row -- a receipt number is
+        // part of what CLOSED means.
+        open.setClosedBy(userId);
+        open.setClosedAt(closedAt);
+        open.setReceiptNo(9001L);
+        open.setStatus(BillStatus.CLOSED);
+        asUser(() -> billRepository.saveAndFlush(open));
+
+        // FIRST HALF: the managed entity, with no clear. Fails on @Generated(INSERT) alone.
+        assertThat(open.getBusinessDate())
+                .as("the entity must carry the recomputed date within the same transaction")
+                .isEqualTo(nightItClosedIn);
+
+        // SECOND HALF: the row. Fails if the generated expression ignores closed_at.
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(asUser(() -> billRepository.findById(billId).orElseThrow()).getBusinessDate())
+                .as("the row must carry the recomputed date")
+                .isEqualTo(nightItClosedIn);
+    }
+
     // Acceptance test 5 — double checkout.
     @Test
     void aReplayedCheckoutTakesTheMoneyOnce() throws Exception {
@@ -286,6 +374,19 @@ class CheckoutAcceptanceTest {
 
         OffsetDateTime cutoff = OffsetDateTime.now().minusMinutes(30);
         asUser(() -> sessionService.autoCloseOpenSessions(cutoff));
+
+        /*
+         * Read from the ROW, not from the persistence context.
+         *
+         * autoCloseOpenSessions ran inside this test's transaction, so without the clear below
+         * entityManager.find hands back the very instance the service mutated -- and every
+         * assertion here would then be checking what the service SET ON THE OBJECT rather than
+         * what reached the database. All five columns are ordinary and updatable today, so this
+         * is not currently masking anything; it is the shape that masked cash_count.counted_at
+         * until a business day could not be closed, and it costs two lines not to have it.
+         */
+        entityManager.flush();
+        entityManager.clear();
 
         TableSession closed = asUser(() -> entityManager.find(TableSession.class, sessionId));
         assertThat(closed.getStatus()).isEqualTo(SessionStatus.AUTO_CLOSED);

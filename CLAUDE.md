@@ -290,6 +290,37 @@ Only `EMPLOYEE` and `ADMIN`. **Employees must never see `purchase_price`, `avg_c
 - No `TODO` stubs that silently return null or empty — if something is not built yet, say so.
 - Keep comments to the density the existing code uses. Comment *why*, not *what*.
 
+### Tests that cannot fail
+
+A green suite is what every decision in this project rests on, so a test that reports a bug as
+fixed costs more than no test at all. Four have been found here — `cash_count.counted_at` read
+back through the same persistence context, a lockout exemption satisfied by `recordSuccess`
+having already cleared the key, a report CTE exercised only with an empty result, an image
+fixture whose payload never had to be an image — and every one was found by accident, while
+doing something else. **They are two shapes, not four bugs.**
+
+**1. An assertion whose expected and actual values come from the same source proves the source
+is self-consistent, not that the behaviour is right.** The same persistence context, so the
+read-back returns what the code set in memory rather than what reached the row. The same clock,
+so `business_date` compared against `business_date_of(now())` holds whatever the column does.
+The same role, so a cost field checked only as an EMPLOYEE would be hidden either way. The same
+wrong-password class, so attempting `"anything-at-all"` against a disabled account proves
+nothing the account being ordinary would not also prove. Ask of every assertion: *what would
+have to be broken for this to go red?* If the answer is "nothing that could plausibly break",
+the assertion is decoration. The mapping-specific version of this rule is in §4 — cross a
+transaction boundary before asserting a write persisted — and it is one case of the general one.
+
+**2. A test name that claims more than its assertions is a false record of coverage, and it is
+read far more often than the body is.** `...AndTheOriginalSurvives` asserted only the new
+figure. `...StillLogsInFromADifferentAddress` never performed a login. `...GivesTheAdminMessage`
+checked the status and not the message. Nobody re-reads the body once the name looks right, so
+the gap is permanent. Either assert what the name says, or rename it to what it asserts.
+
+**Prove it can fail before you call it done.** Break the behaviour on purpose, watch the test go
+red for the reason you expect, restore it, watch it go green. Not the assertion — the
+*behaviour*: narrow the `@Generated`, mark the column `updatable = false`, drop the `before`
+snapshot. A test whose first ever run is green has not been tested.
+
 ## 7. Frontend
 
 The React SPA lives in `frontend/` and has its own **`frontend/CLAUDE.md`** — read that instead of

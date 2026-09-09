@@ -56,6 +56,9 @@ class BusinessDayCloseTest {
     private CashCountRepository cashCountRepository;
 
     @Autowired
+    private AuditLogRepository auditLogRepository;
+
+    @Autowired
     private BillRepository billRepository;
 
     @Autowired
@@ -131,6 +134,15 @@ class BusinessDayCloseTest {
                         .contains("was already closed"));
     }
 
+    /*
+     * A correction moves the figure and keeps the one it replaced.
+     *
+     * The second half is the whole reason the name says "AndTheOriginalSurvives", and nothing
+     * asserted it: the test checked the two NEW figures and stopped, so a correction that
+     * destroyed every trace of the 455.00 would have passed. A cashier who can re-count until
+     * the variance reads zero is the thing this endpoint is admin-only to prevent, and the
+     * audit row is where the evidence of the first count lives.
+     */
     @Test
     void anAdminCorrectsAMistypedCountAndTheOriginalSurvives() throws Exception {
         JsonNode corrected = body(mockMvc.perform(correction(admin(), "545.00"))
@@ -139,6 +151,20 @@ class BusinessDayCloseTest {
         assertThat(new BigDecimal(corrected.get("countedCash").asText())).isEqualByComparingTo("545.00");
         // The generated column is read back on update, not left at the old figure.
         assertThat(new BigDecimal(corrected.get("variance").asText())).isEqualByComparingTo("85.00");
+
+        // And the figure it replaced is still recoverable, with the note that explains it.
+        AuditLog correction = asUser(() -> auditLogRepository.findAll().stream()
+                .filter(entry -> "CASH_COUNT_CORRECTED".equals(entry.getAction()))
+                .findFirst().orElseThrow(() ->
+                        new AssertionError("no CASH_COUNT_CORRECTED row was written")));
+
+        assertThat(correction.getBefore()).as("the before snapshot").isNotNull();
+        assertThat(new BigDecimal(String.valueOf(correction.getBefore().get("countedCash"))))
+                .as("the original counted figure")
+                .isEqualByComparingTo("455.00");
+        assertThat(new BigDecimal(String.valueOf(correction.getAfter().get("countedCash"))))
+                .isEqualByComparingTo("545.00");
+        assertThat(correction.getNote()).isEqualTo("Miskeyed the hundreds");
     }
 
     // The whole point of restricting it: a cashier who can re-count until the variance reads
