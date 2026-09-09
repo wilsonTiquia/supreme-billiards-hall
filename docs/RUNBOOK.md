@@ -267,6 +267,52 @@ one that loses is the till.
 
 ---
 
+## Never point the browser tests at the trading database
+
+The third face of the same hazard. The two sections above are `./mvnw test` and the IDE Run
+button; this one is `npm run e2e`.
+
+The browser tests drive a **real running app** with a real browser. Everything they do is a real
+request: real bills, real payments, real stock movements, real vouchers spent. The Java tests at
+least pretend a transaction will take their rows back. These cannot — the browser is a separate
+process going through HTTP, and every row it writes is committed the moment it is written.
+
+**They get their own everything.** `scripts/e2e-backend.sh` starts a second POS on **8081**
+against a throwaway database called `supreme_e2e`, with its own photo folders under the temporary
+directory, and Playwright starts the SPA beside it on 5174. Nothing about a test run touches
+8080, `supreme`, or `~/SupremeData`. To run them:
+
+```
+cd ~/SupremeBilliards/frontend
+npm run e2e
+```
+
+That is the whole command — it starts both halves, runs the four tests, and stops them again.
+
+**The refusals are in code, not in this page.** The other two hazards here were documented and
+fired anyway, so this one is enforced by `frontend/playwright.config.ts`, which throws before a
+browser or a JVM exists if any of these is true:
+
+| Refused when | Because |
+|---|---|
+| The base URL is on port 8080 | That is the till |
+| The API target is on port 8080 | **The one that catches people.** A dev server on 5174 proxying to 8080 has a completely innocent base URL and writes real bills into the till |
+| The database is `supreme`, or is not named `*_e2e` | That is the trading database |
+| The database is not on this machine | Somewhere else's data |
+| The database already holds payment rows and carries no scratch marker | Payments are real money whatever the database is called. This is the only check that does not depend on somebody having named things correctly |
+
+The same refusals are repeated inside `scripts/e2e-backend.sh`, because that script can be run
+on its own and a guard that only lives in the caller is not a guard.
+
+All five have been watched refusing — deliberately pointed at 8080, at `supreme`, and at a
+database holding a payment row — and the last one was then watched letting the same database
+through once it carried the marker, which is what stops it crying wolf on the second run.
+
+**If you see one of these refusals, it is working.** Do not set the variable it names to get
+past it. The only reason to touch `E2E_DB_NAME` is to use a *different* scratch database.
+
+---
+
 ## Starting the database over
 
 There are two scripts that erase the database, and the difference between them matters.

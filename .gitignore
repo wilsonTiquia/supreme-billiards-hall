@@ -1,7 +1,17 @@
 ### Operational — never publish ###
 # Deployment scripts hold the database password and the temporary logins;
 # they live on the POS machine only.
-scripts/
+scripts/*
+# EXEMPT — the reason above does not reach these. They are not policy leaking; each is named
+# here on its own merits, and anything new in scripts/ is still excluded by default.
+#
+# e2e-backend.sh is a TEST HARNESS, not a deployment script: it holds no credential beyond the
+# local-dev defaults already committed in application.properties. docs/RUNBOOK.md and the e2e
+# skill both point at it, so a clone without it has tests it cannot start.
+#
+# Written as `scripts/*` rather than `scripts/`: git never descends into an excluded DIRECTORY,
+# so with `scripts/` the negation below would silently do nothing.
+!scripts/e2e-backend.sh
 # Runtime state written by the running app.
 logs/
 run/
@@ -26,11 +36,22 @@ node_modules/
 frontend/dist/
 *.tsbuildinfo
 
+### Browser tests ###
+# Traces, screenshots and reports from a Playwright run. The browsers themselves live in
+# ~/Library/Caches/ms-playwright, outside the project.
+frontend/test-results/
+frontend/playwright-report/
+
 ### OS ###
 .DS_Store
 
 ### Editors / IDEs ###
-.claude/
+# Same shape as the scripts/ exemption above, and the same reasoning. .claude/ is excluded for
+# MACHINE STATE — settings.local.json, scheduled_tasks.lock. A SKILL.md is documentation, and
+# the next person to run the browser tests needs it.
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 .idea/
 *.iws
 *.iml
