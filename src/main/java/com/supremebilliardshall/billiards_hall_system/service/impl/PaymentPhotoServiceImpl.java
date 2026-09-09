@@ -70,7 +70,7 @@ public class PaymentPhotoServiceImpl implements PaymentPhotoService {
         // The declared type is not enough: an HTML or script payload can claim image/png. The
         // bytes themselves must carry the magic number of the type they claim, or the file is
         // refused before anything is written.
-        if (!magicMatches(type, bytes)) {
+        if (!ImageSignature.matches(type, bytes)) {
             throw new BusinessRuleException(
                     "That file is not a real JPEG, PNG or WebP image, whatever its name says.");
         }
@@ -140,33 +140,6 @@ public class PaymentPhotoServiceImpl implements PaymentPhotoService {
         int semicolon = contentType.indexOf(';');
         String bare = semicolon < 0 ? contentType : contentType.substring(0, semicolon);
         return bare.trim().toLowerCase();
-    }
-
-    // The file signature for each allowed type. Checked against the type the upload claims, so
-    // a mismatch — the classic "HTML renamed to .png" — is refused.
-    private boolean magicMatches(String type, byte[] bytes) {
-        return switch (type) {
-            case "image/jpeg" -> startsWith(bytes, 0xFF, 0xD8, 0xFF);
-            case "image/png" -> startsWith(bytes, 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A);
-            // RIFF....WEBP: bytes 0-3 are "RIFF" and bytes 8-11 are "WEBP".
-            case "image/webp" -> startsWith(bytes, 0x52, 0x49, 0x46, 0x46)
-                    && bytes.length >= 12
-                    && (bytes[8] & 0xFF) == 0x57 && (bytes[9] & 0xFF) == 0x45
-                    && (bytes[10] & 0xFF) == 0x42 && (bytes[11] & 0xFF) == 0x50;
-            default -> false;
-        };
-    }
-
-    private boolean startsWith(byte[] bytes, int... signature) {
-        if (bytes.length < signature.length) {
-            return false;
-        }
-        for (int i = 0; i < signature.length; i++) {
-            if ((bytes[i] & 0xFF) != signature[i]) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private String extensionOf(String path) {

@@ -62,6 +62,17 @@ Every other error carries no `code`; show `message`.
 as you are concerned. Note the precedence — on an ADMIN-only route the role check runs first, so an
 employee gets **403** whether or not the row is in their branch.
 
+**Bean validation runs BEFORE the role check**, though, so an employee POSTing a malformed or empty
+body to an admin route gets **400** and the field messages rather than 403. Send a body that binds
+and the 403 is what comes back, on all eleven admin write routes, with nothing changed. This is the
+framework's ordering: `@PreAuthorize` is an AOP interceptor on the handler method, and arguments
+are bound and validated before the method is reached. It is documented rather than fixed because
+the alternative is moving the admin rules out of `@PreAuthorize` and into URL matchers in the
+security chain — which duplicates the authorisation away from the methods it guards, and a route
+added later with the annotation but missing from the matcher list would be silently unprotected.
+That trades a disclosure for an escalation. What leaks is the existence of a route the SPA bundle
+already names to both roles.
+
 ---
 
 ## 2. Auth and session
@@ -550,9 +561,13 @@ name of who owes the money, so three unpaid bills on the same table are told apa
 line on the card; nothing about how these bills are detected, totalled or collected changed. The
 whole thread is at `GET /bills/{id}/notes`.
 
-Bills totalling `0.00` are excluded: payment validation requires at least 0.01, so they can never
-be settled and would sit in the floor strip for ever. Carries no cost field, so one shape serves
-both roles.
+**Bills totalling `0.00` are listed**, and were excluded until vouchers existed. The old reason was
+that payment validation requires at least 0.01, so such a bill could never be settled and would sit
+in the strip for ever — teaching staff to ignore it, which is the one thing this strip cannot
+afford. `POST /bills/{id}/no-charge` closes it now, and a prize winner's night ending at zero is
+ordinary rather than stuck. Filtering it would be the worse failure of the two: their table reads
+free, the bill is still `OPEN`, and nothing anywhere would prompt anyone to finish it — the sale
+would never reach a report. Carries no cost field, so one shape serves both roles.
 
 **GET `/bills/unpaid`** — every bill with status `UNSETTLED`, **newest first, all business dates**.
 A different list from `/bills/unsettled` above, and the two must never be merged in the UI:
@@ -944,6 +959,10 @@ optional and defaults to the night currently running, same as `/reports/daily`.
                    "lines": [ { "poolTableName", "billedMinutes", "standardRatePerMinute",
                                 "meteredRevenue", "flatAmount", "forgoneRevenue",
                                 "actorUsername", "reason", "openedAt" } ] },
+  "timeReductions": { "reducedSessions", "forgoneRevenue",
+                   "lines": [ { "poolTableName", "actualMinutes", "chargedMinutes",
+                                "ratePerMinute", "forgoneRevenue", "actorUsername",
+                                "reason", "closedAt" } ] },
   "discounts":   { "discountBills", "discountAmount",
                    "lines": [ { "billId", "receiptNo", "subtotal", "discountAmount",
                                 "chargedAmount", "reason", "actorUsername", "discountAt" } ] },
@@ -969,6 +988,13 @@ movement's `business_date` while voids and friend rates are dated by their bill'
 `receiptNo` is null while the voided line's bill is still open. `reason` can be null on a friend
 rate (the field is optional at session start); it is never null on a comp, which the schema
 requires.
+
+In `timeReductions`, `actualMinutes` is what the table played and `chargedMinutes` what was billed
+after the reduction — `forgoneRevenue` is the difference times the rate that was in force, exact
+rather than estimated. It keeps a scoped name like `promos` and `friendRates` do, and maps onto
+`/reports/daily`'s top-level `reducedSessions` / `timeReductionForgone`. Its actor field is
+`actorUsername`, like every other section here; it was `actualUsername`, which read as a sibling
+of `actualMinutes` and is not one.
 
 ## 9. Business day
 
@@ -1104,7 +1130,14 @@ cash count row, so it happens exactly once.
 **corrections** → `{ "productId", "newQuantity", "note" }` — `note` required. Records the *delta*.
 Correcting to the quantity already held → 409.
 
-**comps** → `{ "productId", "quantity", "note" }` — `note` required. A counter action.
+**comps** → `{ "productId", "quantity", "note" }` — `note` required. A counter action. **An archived
+product is a 409**, as on `/stock/comps/batch`, the bill line and the quick-sale quote: a give-away
+is sale-shaped, and archiving is what stops a product being sold.
+
+**`deliveries` and `corrections` accept an archived product on purpose.** Neither is a sale. A
+correction is how the last of a discontinued line gets counted down to nothing, and refusing it
+would leave that quantity uncorrectable for ever, since `stock_movement` is append-only and there
+is no way to record it afterwards.
 
 **low** → `[ { "productId", "name", "qtyOnHand", "threshold" } ]` — at or below the branch
 threshold (10), which sweeps up anything negative.
@@ -1131,7 +1164,7 @@ threshold (10), which sweeps up anything negative.
                         { "mode": "PROMO",    "sessions": 3, "amount": 450.00  },
                         { "mode": "FRIEND",   "sessions": 1, "amount": 120.00  },
                         { "mode": "FLAT",     "sessions": 1, "amount": 500.00  } ],
-  "tableUtilisation": [ { "tableName", "billedMinutes", "utilisationPercent" } ],
+  "tableUtilisation": [ { "tableName", "occupiedMinutes", "utilisationPercent" } ],
   "topItems":         [ { "description", "quantity", "revenue" } ],
   "paymentMix":       [ { "method", "payments", "amount" } ],
   "losses":           { "voidCount", "voidAmount",
@@ -1140,7 +1173,10 @@ threshold (10), which sweeps up anything negative.
                         "flatSessions", "flatForgone",
                         "reducedSessions", "timeReductionForgone",
                         "discountBills", "discountAmount",
+                        "voucherCount", "voucherAmount",
                         "compQuantity", "compEstimatedCost" },
+  "expenses":         { "total", "previousTotal",
+                        "byCategory": [ { "category", "amount" } ] },
   "lowStock":         [ { "name", "qtyOnHand" } ],
   "perEmployee":      [ { "username", "fullName", "bills", "gross", "cost", "profit" } ],
   "unsettledTonight": { "count": 1, "amount": 654.00 },
@@ -1157,6 +1193,15 @@ threshold (10), which sweeps up anything negative.
   arithmetic, `(standard − charged) × billedMinutes`, and different facts. They were one pair
   called `overrideSessions` / `forgoneRevenue` before promos existed; renamed rather than
   quietly narrowed, because "override" at the top level reads as all of them.
+- **`occupiedMinutes` is wall clock, pauses included** — how long the table was HELD, not what it
+  was charged for. A paused table is nobody else's, and `utilisationPercent` divides by 19 hours of
+  wall clock, so the numerator has to be the same kind of minute. It will therefore not match the
+  session's own `billedMinutes`, and deducting pauses would not make it match either: a flat
+  session ignores minutes entirely, `billedMinutesOverride` rewrites them at checkout, and a rate
+  override changes what a minute is worth. Subtracting only pauses gives a third figure that
+  reconciles with neither occupancy nor money. What the time SOLD is lives in `totals.timeRevenue`
+  and `timeRevenueByMode`; what was given away lives in the losses band. (It was called
+  `billedMinutes`, which is what made it look like a bug three separate times.)
 - `utilisationPercent` is against a 19-hour day.
 - `perEmployee` sums exactly to `totals` — attributed to whoever took the payment.
 - **`totals` counts `UNSETTLED` bills as sales.** The regular who plays tonight and pays next
@@ -1179,6 +1224,14 @@ threshold (10), which sweeps up anything negative.
 - **`totals.gross` reports the DISCOUNTED figure**, and that is deliberate: gross has to reconcile
   to the drawer. ₱600 went in the till, and a gross of ₱654 would leave the cash count ₱54 short
   every time with nothing explaining it. The losses band is what accounts for the gap.
+- `voucherAmount` is table time given away as a prize and redeemed against a bill — a third
+  giveaway beside the discount and the time reduction, overlapping neither. Like `discountAmount`
+  it is already out of `totals.gross`, for the same reason: gross has to reconcile to the drawer.
+- `expenses` is operating cost for the night, dated by the expense's **own** `business_date` — an
+  expense has no bill, and the water man paid at 02:00 belongs to the night still running. Voided
+  expenses are excluded, exactly as voided lines are excluded from revenue. `previousTotal` is the
+  comparison night and is `0` rather than null, so the client can always subtract. `byCategory`
+  keeps archived categories, or the breakdown would stop adding up to the total beside it.
 - `compEstimatedCost` is an **estimate** valued at current average cost; `voidAmount`,
   `promoForgone`, `friendForgone`, `flatForgone` and `discountAmount` are exact.
 - `flatForgone` is the metered figure less the flat fee — `standardRatePerMinute × billedMinutes
@@ -1292,9 +1345,11 @@ these before go-live.**
 | GET | `/api/v1/settings` | ADMIN |
 | PUT | `/api/v1/settings` | ADMIN |
 
-`{ "standardCashFloat": 1000.00 }` both ways. Zero means the hall keeps no float and the drawer is
+`{ "standardCashFloat": 1000.00, "checkoutAnimation": true }` both ways. **Both fields are
+required on PUT** — a body carrying only `standardCashFloat` is a 400, so send the current
+`checkoutAnimation` back with it. Zero float means the hall keeps no float and the drawer is
 expected to hold takings alone — which is the seeded default, so nothing changes until the owner
-sets a figure.
+sets a figure. `checkoutAnimation` turns the settle confirmation flourish on and off.
 
 Deliberately **not** a generic key/value endpoint. `branch_setting` also holds keys the till
 reasons about (rate floors, negative stock), and those are not a text box.
@@ -1332,6 +1387,14 @@ reads**: the same history with the stock ledger unioned in and every id already 
 `"Rate overridden"`. The one exception is that same action **when the session carries a customer
 type**, where it is named after the type instead: `"Happy Hour rate"`. The owner has customer
 types beyond friends, and one fixed phrase misnames all but one of them.
+
+`subject` on a row about a **bill** — `BILL_DISCOUNTED`, `VOUCHER_REDEEMED`, `BILL_LEFT_UNPAID`,
+`BILL_CLOSED_NO_CHARGE` — is the **receipt number**, written `#412` as it is on Sales, Unsettled and
+the losses detail. Until the bill has one it is the table and the opening time instead
+(`Table 3 · 21:34`): the number is allocated at checkout, and a discount or a redemption is always
+agreed before that. Resolved at read time like `customerTypeName` below, so those rows acquire the
+number as soon as the bill closes rather than being frozen as null by the append-only log. A bill
+carrying more than one table lists them all.
 
 `customerTypeName` is **joined at read time** from `table_session`, not taken from the audit
 snapshot. Two reasons: `audit_log` is append-only, so rows already written could never be

@@ -70,6 +70,21 @@ export function RateModeField({
   // Compared at the precision both are displayed to, which sidesteps picking a float epsilon.
   const reconciles = effectivePerHour.toFixed(4) === typed.toFixed(4);
 
+  /*
+   * A typed figure that rounds away to nothing — anything under about ₱0.003/hour, since the
+   * stored rate carries four decimals.
+   *
+   * NOT an error and not blocked: the arithmetic is exactly as documented, and zero is a
+   * legitimate rate — a comped table is a real thing the counter is allowed to give. But
+   * somebody who typed a figure meant to charge something, and a table that then bills ₱0.00
+   * for the whole night is not a discovery to make at checkout.
+   *
+   * The preview below cannot say this on its own. It renders both figures through the money
+   * formatter, so a typed 0.0001 reads "stored as ₱0.0000, pricing an hour at ₱0.00 rather
+   * than ₱0.00" — the same number twice, explaining nothing. This replaces it in that one case.
+   */
+  const roundsToFree = typedIsRate && mode === 'hour' && typed > 0 && storedPerMinute === 0;
+
   return (
     <div className="flex flex-col gap-3">
       <div className="text-label uppercase text-text-dim">{legend}</div>
@@ -124,7 +139,13 @@ export function RateModeField({
         In hourly mode it speaks hourly. The four decimals on the per-minute figure are the one
         place four decimals survive, because that rounding is the whole subject of the sentence.
       */}
-      {typedIsRate && mode === 'hour' && !reconciles ? (
+      {roundsToFree ? (
+        <p className="tabular text-label text-amount">
+          That rounds to ₱0.0000 per minute — the table would be free for the whole session.
+          Type a higher figure if that is not what you meant.
+        </p>
+      ) : null}
+      {typedIsRate && mode === 'hour' && !reconciles && !roundsToFree ? (
         <p className="tabular text-label text-text-dim">
           Preview — stored as {formatPreciseRate(storedPerMinute)}, pricing an hour at{' '}
           {formatEffectiveHourly(effectivePerHour)} rather than {formatMoney(typed)}.

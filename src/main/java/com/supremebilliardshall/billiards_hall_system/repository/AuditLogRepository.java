@@ -68,6 +68,22 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
                               rate_table.name,
                               sess_table.name,
                               bl.description,
+                              -- WHICH BILL. Every Bill row read "Discount given ·" with nothing
+                              -- after it -- and the discount is money any employee can give away
+                              -- on their own, so this is the row the log most has to identify.
+                              --
+                              -- The receipt number once the bill has one, which is what the
+                              -- owner has in their hand and what Sales, Unsettled and the losses
+                              -- detail all print. It is allocated at CHECKOUT, so a discount or
+                              -- a redemption -- both taken while the bill is still open -- has
+                              -- none at the moment it is written. Resolved here at read time
+                              -- rather than snapshotted, so those rows acquire their number as
+                              -- soon as the bill closes; the table and the time carry the row
+                              -- until then, and for ever on a bill that never closed.
+                              coalesce('#' || bill_row.receipt_no,
+                                       nullif(concat_ws(' · ', bill_tables.names,
+                                              to_char(bill_row.opened_at AT TIME ZONE INTERVAL '+08:00',
+                                                      'HH24:MI')), '')),
                               -- Who the staff row is about. Named, because "Role changed" with
                               -- an empty subject is the one line in this log that has to say
                               -- WHOSE role, and the username is what the owner knows them by.
@@ -106,6 +122,18 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
               LEFT JOIN customer_type   sess_ct ON sess_ct.id = ts.customer_type_id
               LEFT JOIN bill_line       bl ON a.entity_table = 'bill_line'        AND bl.id = a.entity_id
               LEFT JOIN cash_count      cc ON a.entity_table = 'cash_count'       AND cc.id = a.entity_id
+              LEFT JOIN bill            bill_row ON a.entity_table = 'bill'      AND bill_row.id = a.entity_id
+              -- AN AGGREGATE, NOT A JOIN, and that is load-bearing. A bill can carry more than
+              -- one table_session, and a plain LEFT JOIN to it would emit one feed row PER
+              -- session -- the audit log reporting a single discount twice, which is the one
+              -- failure this screen cannot have. An aggregate with no GROUP BY returns exactly
+              -- one row whatever it finds, including none, so the row count is untouched.
+              LEFT JOIN LATERAL (
+                SELECT string_agg(DISTINCT bill_pt.name, ', ') AS names
+                FROM table_session bill_ts
+                JOIN pool_table bill_pt ON bill_pt.id = bill_ts.pool_table_id
+                WHERE bill_ts.bill_id = bill_row.id
+              ) bill_tables ON true
               -- Archived users included on purpose: the log outlives the account, and a row
               -- reading "Staff member archived ·" with no name would be worse than useless.
               LEFT JOIN app_user        au ON a.entity_table = 'app_user'         AND au.id = a.entity_id

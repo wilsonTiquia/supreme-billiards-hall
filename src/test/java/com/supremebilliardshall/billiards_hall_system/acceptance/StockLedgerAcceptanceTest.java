@@ -186,6 +186,76 @@ class StockLedgerAcceptanceTest {
         }
     }
 
+    /*
+     * A give-away of a product nobody sells any more.
+     *
+     * The batch route has always refused this and its contract entry says so -- "an archived
+     * product is a 409, like anywhere else" -- while the single route accepted it, so the two
+     * siblings disagreed about the same act. Both are asserted here, because a guard that lives
+     * on one of two routes doing the same thing is the guard that gets forgotten again.
+     *
+     * Deliveries and corrections deliberately still accept an archived product: a correction is
+     * how the last of a discontinued line gets counted down to nothing, and refusing it would
+     * make that quantity uncorrectable for ever. See the comments on those two routes.
+     */
+    @Test
+    void aCompOfAnArchivedProductIsRefusedOnBothCompRoutes() throws Exception {
+        receiveDelivery("50", "52.50");
+        archiveProduct();
+
+        comp("2").andExpect(status().isConflict());
+        compBatch("2").andExpect(status().isConflict());
+
+        // Refused before the ledger, not after: nothing was written and nothing moved.
+        assertThat(qtyOnHand()).isEqualByComparingTo("50.000");
+        assertThat(reasons()).containsExactly(StockReason.DELIVERY);
+    }
+
+    /*
+     * A fat-fingered quantity is too large, and says so.
+     *
+     * numeric(12,3) holds nine integer digits, so this overflows in the database rather than in
+     * bean validation -- and Postgres raises it as SQLSTATE 22003, which Spring translates into
+     * the same DataIntegrityViolationException a duplicate key raises. It came back as "That
+     * change conflicts with an existing record", sending the counter to look for a duplicate
+     * that does not exist. Nothing conflicts with anything: the number does not fit.
+     *
+     * The overflow aborts the transaction, so this is deliberately the last statement in the
+     * test -- any query after it would fail on the poisoned transaction rather than on its own
+     * merits.
+     */
+    @Test
+    void aFatFingeredQuantityIsTooLargeRatherThanAConflict() throws Exception {
+        JsonNode refused = body(comp("1000000000").andExpect(status().isBadRequest()));
+
+        assertThat(refused.get("message").asText()).isEqualTo("That number is too large.");
+        assertThat(refused.get("success").asBoolean()).isFalse();
+    }
+
+
+    private ResultActions comp(String quantity) throws Exception {
+        return mockMvc.perform(post("/api/v1/stock/comps")
+                .with(user(principal()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"productId\":\"" + productId + "\",\"quantity\":" + quantity
+                        + ",\"note\":\"Staff drinks\"}"));
+    }
+
+    private ResultActions compBatch(String quantity) throws Exception {
+        return mockMvc.perform(post("/api/v1/stock/comps/batch")
+                .with(user(principal()))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"lines\":[{\"productId\":\"" + productId + "\",\"quantity\":" + quantity
+                        + "}],\"note\":\"Staff drinks\"}"));
+    }
+
+    private void archiveProduct() {
+        asUser(() -> {
+            Product product = productRepository.findById(productId).orElseThrow();
+            product.setArchivedAt(OffsetDateTime.now());
+            return productRepository.saveAndFlush(product);
+        });
+    }
 
     private void receiveDelivery(String quantity, String unitCost) throws Exception {
         mockMvc.perform(post("/api/v1/stock/deliveries")

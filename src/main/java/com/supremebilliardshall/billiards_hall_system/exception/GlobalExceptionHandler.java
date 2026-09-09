@@ -16,7 +16,10 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
+import java.sql.SQLException;
+import java.time.temporal.Temporal;
 import java.util.Map;
+import java.util.UUID;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -123,9 +126,31 @@ public class GlobalExceptionHandler {
             Map.entry("voucher_code_key", "That voucher code already exists")
     );
 
+    // Postgres SQLSTATE class 22 is a DATA exception -- the value does not fit the column --
+    // and Spring translates it to the same DataIntegrityViolationException a unique-constraint
+    // breach raises. It is not a conflict with anything: a quantity of 1,000,000,000 against
+    // numeric(12,3) is one person mistyping, and answering "That change conflicts with an
+    // existing record" sent them looking for a duplicate that does not exist. 400, and say
+    // which way the value is wrong.
+    private static final Map<String, String> DATA_EXCEPTION_MESSAGES = Map.of(
+            // numeric_value_out_of_range
+            "22003", "That number is too large.",
+            // string_data_right_truncation
+            "22001", "That text is too long.");
+
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<APIResponse<Object>> handleDataIntegrityViolation(
             DataIntegrityViolationException ex) {
+
+        // Read off the SQL state rather than the message text: the state is the part of a
+        // driver error that is specified, and the message is localised prose.
+        if (ex.getRootCause() instanceof SQLException sqlException) {
+            String dataMessage = DATA_EXCEPTION_MESSAGES.get(sqlException.getSQLState());
+            if (dataMessage != null) {
+                return ResponseEntity.badRequest()
+                        .body(new APIResponse<>(null, dataMessage, false));
+            }
+        }
 
         String message = "That change conflicts with an existing record";
         Throwable rootCause = ex.getRootCause();
@@ -167,12 +192,25 @@ public class GlobalExceptionHandler {
                 .body(APIResponse.failure("The request body could not be read."));
     }
 
+    // A path variable or query parameter that would not convert. Named after what was actually
+    // sent: every one of these used to answer "Invalid ID format", so a malformed ?date= on a
+    // report told the owner to check an id the request does not carry.
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<APIResponse<Object>> handleTypeMismatch(
             MethodArgumentTypeMismatchException ex) {
 
+        Class<?> required = ex.getRequiredType();
+        String message;
+        if (required == UUID.class) {
+            message = "Invalid ID format";
+        } else if (required != null && Temporal.class.isAssignableFrom(required)) {
+            message = "Invalid date format";
+        } else {
+            message = "Invalid value for '" + ex.getName() + "'";
+        }
+
         return ResponseEntity.badRequest()
-                .body(new APIResponse<>(null, "Invalid ID format", false));
+                .body(new APIResponse<>(null, message, false));
     }
 
     @ExceptionHandler(ConstraintViolationException.class)

@@ -299,10 +299,11 @@ class FlatRateSessionTest {
 
     // Utilisation, on its OWN session with no pause.
     //
-    // Deliberately separate from the pause case above: segment_minutes uses raw wall-clock and
-    // does NOT deduct pauses, so a session that both paused and asserted utilisation would
-    // either fail for the right reason or pass for the wrong one, with no way to tell which
-    // from the test name. Two facts, two sessions.
+    // Deliberately separate from the pause case above: occupiedMinutes is raw wall clock and
+    // does NOT deduct pauses -- that is what the field name says and what the segment_minutes
+    // CTE explains -- so a session that both paused and asserted utilisation would either fail
+    // for the right reason or pass for the wrong one, with no way to tell which from the test
+    // name. Two facts, two sessions.
     @Test
     void utilisationCountsTheMinutesAFlatSessionPlayed() throws Exception {
         JsonNode session = openFlat("500", "Saturday tournament");
@@ -317,7 +318,7 @@ class FlatRateSessionTest {
         Integer minutes = null;
         for (JsonNode row : report.get("tableUtilisation")) {
             if ("Table 3".equals(row.get("tableName").asText())) {
-                minutes = row.get("billedMinutes").asInt();
+                minutes = row.get("occupiedMinutes").asInt();
             }
         }
         // The rate is zero on the segments; utilisation reads time, not money, and is unaffected.

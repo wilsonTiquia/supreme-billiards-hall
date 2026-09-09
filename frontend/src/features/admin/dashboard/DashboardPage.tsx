@@ -627,14 +627,17 @@ export function DashboardPage() {
                     <div className="relative flex items-baseline justify-between gap-3 px-3 py-2">
                       <span className="text-body text-text">{table.tableName}</span>
                       <span className="tabular text-body text-text-dim">
-                        {table.billedMinutes} min ·{' '}
+                        {table.occupiedMinutes} min ·{' '}
                         <span className="text-text">{table.utilisationPercent}%</span>
                       </span>
                     </div>
                   </li>
                 ))}
               </ul>
-              <p className="mt-3 text-label text-text-dim">Against a 19-hour trading day.</p>
+              <p className="mt-3 text-label text-text-dim">
+                Time the table was held, pauses included, against a 19-hour trading day. Not what
+                was charged — a paused table is still nobody else's.
+              </p>
             </Tile>
           </Group>
 

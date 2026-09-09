@@ -116,6 +116,39 @@ class ProductImageAcceptanceTest {
         assertThat(body).contains("JPEG, PNG or WebP");
     }
 
+    /*
+     * A text file wearing image/png. Refused on its bytes, not on what it calls itself.
+     *
+     * The declared content type is the one thing on the upload the sender chooses freely, and
+     * this route used to take it at its word: the file was stored, and served straight back
+     * under an image content type, so the catalogue grew a tile that was a 200 with nothing in
+     * it. The payment-photo route had checked the signature since it was written; this is the
+     * same check, now shared, so the pair cannot drift again.
+     *
+     * The size cap is untouched and still runs first -- see the oversized test above, which
+     * declares image/png too and must keep getting the size message rather than this one.
+     */
+    @Test
+    void aTextFileDeclaredAsAPngIsRefusedOnItsBytes() throws Exception {
+        Product product = givenProduct();
+
+        MockMultipartFile liar = new MockMultipartFile(
+                "file", "tile.png", "image/png", "this is not a picture".getBytes());
+
+        String body = mockMvc.perform(multipart("/api/v1/products/{id}/image", product.getId())
+                        .file(liar)
+                        .with(user(principal(product.getBranchId(), UserRole.ADMIN))))
+                .andExpect(status().isConflict())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(body).contains("whatever its name says");
+
+        // And nothing was stored, so the grid has no tile to serve.
+        mockMvc.perform(get("/api/v1/products/{id}/image", product.getId())
+                        .with(user(principal(product.getBranchId(), UserRole.ADMIN))))
+                .andExpect(status().isNotFound());
+    }
+
     // Images are optional, so "no image" is an ordinary answer and not an error condition the
     // grid has to special-case beyond rendering its placeholder.
     @Test
@@ -137,8 +170,22 @@ class ProductImageAcceptanceTest {
                 .andExpect(status().isNotFound());
     }
 
+    /*
+     * A real PNG signature, because the route now checks it.
+     *
+     * This said "pretend-png-bytes" and both upload tests passed on it, which is the whole
+     * shape of the bug: the route believed the declared content type, so no fixture ever had
+     * to be an image. Nothing here decodes the file -- the eight signature bytes are what the
+     * service reads and what a text file cannot fake.
+     */
     private MockMultipartFile imageFile(String contentType) {
-        return new MockMultipartFile("file", "tile.png", contentType, "pretend-png-bytes".getBytes());
+        return new MockMultipartFile("file", "tile.png", contentType, pngBytes());
+    }
+
+    private static byte[] pngBytes() {
+        byte[] png = new byte[64];
+        System.arraycopy(new byte[] {(byte) 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}, 0, png, 0, 8);
+        return png;
     }
 
     private Product givenProduct() {

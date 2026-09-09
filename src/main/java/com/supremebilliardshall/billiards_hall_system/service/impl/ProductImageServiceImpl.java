@@ -26,7 +26,8 @@ public class ProductImageServiceImpl implements ProductImageService {
 
     // The upload is a browser-declared content type, so the extension is chosen from this map
     // rather than from the filename: nothing an operator can name decides what is written or
-    // what is later served back.
+    // what is later served back. The declared type is checked against the file's own signature
+    // before anything is stored -- see ImageSignature.
     private static final Map<String, String> ALLOWED_TYPES = new LinkedHashMap<>(Map.of(
             "image/jpeg", "jpg",
             "image/png", "png",
@@ -58,18 +59,31 @@ public class ProductImageServiceImpl implements ProductImageService {
                             + "scale it down and try again.");
         }
 
-        String extension = ALLOWED_TYPES.get(normalisedContentType(file.getContentType()));
+        String type = normalisedContentType(file.getContentType());
+        String extension = ALLOWED_TYPES.get(type);
         if (extension == null) {
             throw new BusinessRuleException(
                     "That file is not an image the POS can show. Use a JPEG, PNG or WebP.");
         }
 
-        // The filename is built from the product id, never from the upload: an attacker-chosen
-        // name is how a write escapes the storage directory.
-        Path target = storageRoot.resolve(productId + "." + extension);
         byte[] bytes;
         try {
             bytes = file.getBytes();
+        } catch (IOException e) {
+            throw new BusinessRuleException("Could not read the image: " + e.getMessage());
+        }
+        // The declared type is not enough: a text file can claim image/png, and this route
+        // believed it -- the grid tile then came back 200 with an image content type and
+        // nothing in it. The bytes must carry the signature of the type they claim.
+        if (!ImageSignature.matches(type, bytes)) {
+            throw new BusinessRuleException(
+                    "That file is not a real JPEG, PNG or WebP image, whatever its name says.");
+        }
+
+        // The filename is built from the product id, never from the upload: an attacker-chosen
+        // name is how a write escapes the storage directory.
+        Path target = storageRoot.resolve(productId + "." + extension);
+        try {
             Files.createDirectories(storageRoot);
             Files.write(target, bytes);
         } catch (IOException e) {

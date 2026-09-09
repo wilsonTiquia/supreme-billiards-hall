@@ -20,7 +20,10 @@ public class TimeReductionLossLineDTO {
     private BigDecimal ratePerMinute;
     // (actual - charged) x the rate that was billed. Exact, not an estimate.
     private BigDecimal forgoneRevenue;
-    private String actualUsername;
+    // actorUsername, like every other section of this report. It was actualUsername, which
+    // reads as a sibling of actualMinutes above -- and it is not: that "actual" means the time
+    // really played, this one is just who did it.
+    private String actorUsername;
     private String reason;
     private OffsetDateTime closedAt;
 }

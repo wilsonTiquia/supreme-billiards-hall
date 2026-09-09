@@ -471,7 +471,7 @@ function TimeReductions({ data, summary }: { data: LossesDetailData; summary: Lo
               </p>
               <p className="mt-1 text-body text-text">{line.reason ?? '— no reason recorded —'}</p>
               <p className="text-label uppercase text-text-dim">
-                {line.actualUsername ?? 'unknown'} · {formatDateTime(line.closedAt)}
+                {line.actorUsername ?? 'unknown'} · {formatDateTime(line.closedAt)}
               </p>
             </li>
           ))}
