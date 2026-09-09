@@ -229,6 +229,71 @@ class AuditFeedLabelTest {
         assertThat(label).isEqualTo("Rate overridden");
     }
 
+    /*
+     * WHICH BILL. Every row pointing at a bill came back with subject: null.
+     *
+     * Four actions land on the bill entity -- BILL_DISCOUNTED, VOUCHER_REDEEMED,
+     * BILL_LEFT_UNPAID, BILL_CLOSED_NO_CHARGE -- and the feed had no join for any of them, so
+     * the Audit screen could say a discount had been given and not which bill it came off. A
+     * discount is money any employee can give away on their own, which makes this the row that
+     * most has to identify itself.
+     *
+     * Both halves are asserted in one test on purpose: the point is not that a closed bill
+     * shows its receipt number, it is that THE SAME ROW changes from one to the other without
+     * being rewritten. audit_log is append-only, so a number snapshotted at write time would
+     * have been null for ever on every discount ever taken -- the receipt is allocated at
+     * checkout, and a discount is always agreed before that.
+     */
+    @Test
+    void aBillRowIsNamedByItsReceiptNumberOnceItHasOne() throws Exception {
+        UUID productId = givenProduct();
+        JsonNode session = body(mockMvc.perform(post("/api/v1/sessions")
+                .with(user(principal())).contentType(MediaType.APPLICATION_JSON)
+                .content("{\"tableId\":\"" + tableId + "\",\"customerTypeId\":\"" + happyHourId + "\"}"))
+                .andExpect(status().isOk())).get("data");
+        UUID sessionId = UUID.fromString(session.get("id").asText());
+        UUID billId = UUID.fromString(session.get("billId").asText());
+
+        mockMvc.perform(post("/api/v1/bills/" + billId + "/lines")
+                        .with(user(principal())).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"productId\":\"" + productId + "\",\"quantity\":1}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/sessions/" + sessionId + "/close").with(user(principal())))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/bills/" + billId + "/discount")
+                        .with(user(principal())).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"chargeAmount\":60.00,\"reason\":\"Regular, owner said yes\"}"))
+                .andExpect(status().isOk());
+
+        // Still OPEN, so there is no receipt number yet: the table and the time carry the row.
+        JsonNode beforeCheckout = feedEntry("BILL_DISCOUNTED");
+        assertThat(beforeCheckout.get("entityLabel").asText()).isEqualTo("Bill");
+        assertThat(beforeCheckout.get("subject").asText()).matches("Table 2 · \\d{2}:\\d{2}");
+
+        JsonNode bill = body(mockMvc.perform(get("/api/v1/bills/" + billId).with(user(principal())))
+                .andExpect(status().isOk())).get("data");
+        mockMvc.perform(post("/api/v1/bills/" + billId + "/payment")
+                        .with(user(principal())).contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"method\":\"CASH\",\"amount\":60.00,\"tendered\":60.00,"
+                                + "\"idempotencyKey\":\"audit-subject-1\",\"billVersion\":"
+                                + bill.get("version").asInt() + "}"))
+                .andExpect(status().isOk());
+
+        // The same row, re-read. Resolved at read time, so the number arrives on history too.
+        assertThat(feedEntry("BILL_DISCOUNTED").get("subject").asText()).isEqualTo("#1");
+    }
+
+    private UUID givenProduct() {
+        Product product = new Product();
+        product.setBranchId(branchId);
+        product.setName("San Miguel Pale Pilsen");
+        product.setSellingPrice(new BigDecimal("90.00"));
+        product.setAvgCost(BigDecimal.ZERO);
+        product.setQtyOnHand(new BigDecimal("24"));
+        product.setIsActive(true);
+        return asUser(() -> productRepository.saveAndFlush(product).getId());
+    }
+
     private UUID openSessionWithOverride() throws Exception {
         JsonNode session = body(mockMvc.perform(post("/api/v1/sessions")
                 .with(user(principal()))

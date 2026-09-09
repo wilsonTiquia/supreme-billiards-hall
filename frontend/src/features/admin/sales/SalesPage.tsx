@@ -20,6 +20,20 @@ function methodLabel(method: BillSummary['method']): string {
   return method ? METHOD_LABEL[method] : 'Nothing to pay';
 }
 
+/*
+ * The last sentence is the one that earns its place.
+ *
+ * The dashboard's gross counts bills left unpaid, and this list cannot show them: they have no
+ * payment and no settlement, which is the whole reason they are on a different screen. So the
+ * two disagree by design on any night that had one — and nothing said so, which left the owner
+ * adding up receipts by hand against a gross that would not match and no way to tell which of
+ * the two screens was lying. Neither figure changes; the screen just admits the gap.
+ */
+const INTRO =
+  "Every settled sale for one business day, newest first. Open one to see the receipt exactly " +
+  'as it was stored. A bill left unpaid counts in the night’s gross on the dashboard but has ' +
+  'no payment, so it is not listed here — on a night with one, this list will not add up to gross.';
+
 /**
  * A night's takings, receipt by receipt. The owner's way to answer "what was receipt 47?"
  * without a database client.
@@ -58,7 +72,7 @@ export function SalesPage() {
   return (
     <AdminPage
       title="Sales"
-      intro="Every settled sale for one business day, newest first. Open one to see the receipt exactly as it was stored."
+      intro={INTRO}
       error={bills.isError ? messageOf(bills.error) : null}
     >
       <Card className="mb-4">

@@ -105,6 +105,27 @@ public class ReportRepository {
               FROM closed_bills b, params p WHERE b.business_date = p.d GROUP BY 1
             ),
             segment_minutes AS (
+              /*
+               * WALL CLOCK, PAUSES INCLUDED, AND THAT IS THE POINT -- which is why the column
+               * this feeds is called occupiedMinutes and not billedMinutes.
+               *
+               * A paused table is not available to anybody: the customer still has it, and
+               * nobody else can be seated there. Utilisation asks how much of the trading day
+               * each table was held, and the denominator below is 19 hours of wall clock, so
+               * the numerator has to be wall clock too or the percentage means nothing.
+               *
+               * Deducting pauses here would not produce the session's charged figure either.
+               * A session's billedMinutes already diverges from wall clock for three further
+               * reasons -- a flat session ignores minutes entirely, billed_minutes_override
+               * rewrites them at checkout, and a rate override changes what a minute is worth.
+               * Subtracting only pauses would give a THIRD number, reconciling with neither
+               * occupancy nor money. This was reported as a bug three times because the field
+               * was named after the wrong one of the two.
+               *
+               * The money question is answered exactly and elsewhere: totals.timeRevenue and
+               * timeRevenueByMode for what the time sold, the losses band for what was given
+               * away.
+               */
               SELECT sg.pool_table_id,
                      sum(extract(epoch FROM (coalesce(sg.ended_at, now()) - sg.started_at)) / 60.0) AS minutes
               FROM session_segment sg
@@ -114,7 +135,7 @@ public class ReportRepository {
             ),
             table_util AS (
               SELECT t.name AS "tableName",
-                     round(coalesce(sm.minutes, 0))::int AS "billedMinutes",
+                     round(coalesce(sm.minutes, 0))::int AS "occupiedMinutes",
                      -- The business day is 19 hours long: 10:00 to 05:00.
                      round(coalesce(sm.minutes, 0) / (19 * 60) * 100, 1) AS "utilisationPercent"
               FROM pool_table t LEFT JOIN segment_minutes sm ON sm.pool_table_id = t.id, params p
@@ -536,7 +557,7 @@ public class ReportRepository {
                      ((ts.billed_minutes - ts.billed_minutes_override)
                         * coalesce(ts.rate_override_per_minute, ts.standard_rate_per_minute))
                                                          AS "forgoneRevenue",
-                     u.username                          AS "actualUsername",
+                     u.username                          AS "actorUsername",
                      ts.billed_minutes_override_reason   AS reason,
                      ts.closed_at                        AS "closedAt"
               FROM table_session ts

@@ -322,6 +322,7 @@ There are two scripts that erase the database, and the difference between them m
 | For | This week, while you try things out | Once, the day the hall opens |
 | Asks | `y` | The phrase `DESTROY n PAYMENTS`, typed out |
 | Passwords | Puts the temporary ones straight back | Asks you for the two real ones, twice each |
+| Forced change on first sign-in | No, deliberately | Yes, when it writes a default password |
 | After Saturday | **Refuses to run** | The only one left |
 
 ### Testing — this week only
@@ -338,6 +339,13 @@ moment `reset-for-golive.sh` rotates it.
 
 One keypress to confirm, no password prompts. That is deliberate — you will run it many times
 in an evening, and anything slower just means you stop using it and test on dirty data instead.
+
+**It leaves `must_change_password` false, and that is deliberate too.** The script prints both
+passwords on screen so you can sign straight back in; a forced change on every reset would mean
+changing them again every time, leaving what it just printed wrong within the minute, and it would
+stop the Playwright suite dead at the password gate. The gate is a go-live control —
+`reset-for-golive.sh` sets it in the same statement as the hash, so a default password is never
+live without it.
 
 **This script is dead after Saturday, by design.** The go-live reset writes a `.golive` marker
 in the project folder as its last act, and this script reads that marker and refuses. A script

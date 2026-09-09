@@ -48,6 +48,11 @@ public class StockServiceImpl implements StockService {
     }
 
 
+    // Archived products are accepted here on purpose, unlike on the two comp routes below.
+    // Archiving is a CATALOGUE act -- it stops a product being sold -- and a delivery is not a
+    // sale. The supplier who sends the last case of a line the hall has discontinued still put
+    // stock in the building, and stock_movement is append-only, so a route that refused it
+    // would leave no way to record it afterwards.
     @Override
     @Transactional
     public StockDeliveryResponseDTO receiveDelivery(StockDeliveryRequestDTO stockDeliveryRequestDTO) {
@@ -86,6 +91,10 @@ public class StockServiceImpl implements StockService {
                 movements);
     }
 
+    // Archived products are accepted here too, and for a sharper reason than the delivery
+    // route's: a correction is how the remaining quantity of a discontinued line gets counted
+    // down to nothing. Refusing it would make an archived product's qty_on_hand permanently
+    // uncorrectable, which is a worse bug than the one the comp guard closes.
     @Override
     @Transactional
     public StockMovementResponseDTO correctStock(StockCorrectionRequestDTO stockCorrectionRequestDTO) {
@@ -108,6 +117,7 @@ public class StockServiceImpl implements StockService {
     @Transactional
     public StockMovementResponseDTO compStock(StockCompRequestDTO stockCompRequestDTO) {
         Product product = lockProduct(stockCompRequestDTO.getProductId());
+        requireNotArchived(product);
 
         StockMovement movement = applyMovement(product, StockReason.STAFF_COMP,
                 stockCompRequestDTO.getQuantity().negate(), null, null, null, stockCompRequestDTO.getNote());
@@ -124,9 +134,7 @@ public class StockServiceImpl implements StockService {
 
         for (StockCompLineRequestDTO line : stockCompBatchRequestDTO.getLines()) {
             Product product = lockProduct(line.getProductId());
-            if (product.getArchivedAt() != null) {
-                throw new BusinessRuleException("Product '" + product.getName() + "' is archived.");
-            }
+            requireNotArchived(product);
 
             StockMovement movement = applyMovement(product, StockReason.STAFF_COMP,
                     line.getQuantity().negate(), null, null, null, stockCompBatchRequestDTO.getNote());
@@ -221,6 +229,16 @@ public class StockServiceImpl implements StockService {
         return responseDto;
     }
 
+
+    // A give-away is sale-shaped -- stock leaves the building against a decision someone made
+    // at the counter -- so it refuses an archived product exactly as the bill line and the
+    // quick-sale quote do. Deliveries and corrections are not sales and do not use this; see
+    // the comments on those two routes.
+    private void requireNotArchived(Product product) {
+        if (product.getArchivedAt() != null) {
+            throw new BusinessRuleException("Product '" + product.getName() + "' is archived.");
+        }
+    }
 
     // Moving weighted average, recalculated only when stock is received. The max(oldQty, 0)
     // guard matters because selling below zero is allowed: a negative quantity on hand would

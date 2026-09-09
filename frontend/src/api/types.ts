@@ -947,7 +947,8 @@ export interface HourlySales {
 
 export interface TableUtilisation {
   tableName: string;
-  billedMinutes: number;
+  /** Wall clock the table was held, pauses included — occupancy, not what was charged. */
+  occupiedMinutes: number;
   /** Against a 19-hour day. */
   utilisationPercent: number;
 }
@@ -970,7 +971,7 @@ export interface TimeReductionLossLine {
   chargedMinutes: number;
   ratePerMinute: Rate;
   forgoneRevenue: Money;
-  actualUsername: string | null;
+  actorUsername: string | null;
   reason: string | null;
   closedAt: IsoInstant;
 }
