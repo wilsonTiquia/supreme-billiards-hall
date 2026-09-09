@@ -278,11 +278,24 @@ class BillDiscountTest {
         assertThat(money(cleared, "totalAmount")).isEqualByComparingTo("654.00");
         assertThat(cleared.get("discountReason").isNull()).isTrue();
 
-        // All four columns back to the shape a bill that was never discounted has —
-        // bill_discount_together_chk admits no half-cleared row.
+        /*
+         * All four columns back to the shape a bill that was never discounted has --
+         * bill_discount_together_chk admits no half-cleared row.
+         *
+         * READ FROM THE ROW, NOT FROM THE PERSISTENCE CONTEXT. This assertion named a database
+         * constraint and never reached the database: the test is @Transactional, so the DELETE
+         * handler's entity was still managed and findById handed it straight back with the
+         * fields the handler had nulled in memory. discount_at is one of the columns the
+         * service restamps, so an `updatable = false` on it -- the mapping mistake that has
+         * bitten this project twice already -- would leave the row half-cleared for every later
+         * reader while this went green.
+         */
+        detach();
         Bill bill = asUser(() -> billRepository.findById(billId).orElseThrow());
         assertThat(bill.getDiscountBy()).isNull();
         assertThat(bill.getDiscountAt()).isNull();
+        assertThat(bill.getDiscountAmount()).isEqualByComparingTo("0.00");
+        assertThat(bill.getDiscountReason()).isNull();
 
         assertThat(auditActions()).contains("BILL_DISCOUNTED", "BILL_DISCOUNT_CLEARED");
     }
@@ -363,6 +376,19 @@ class BillDiscountTest {
 
     // 96 minutes at 4.0000/min is 384.00, a sisig and a beer are 270.00, and the session is
     // closed so the bill can be charged: 654.00 exactly.
+    /*
+     * Push the pending writes to the database and forget every managed entity, so the next read
+     * has to come from the row rather than the persistence context.
+     *
+     * Without this, an assertion about what was PERSISTED cannot fail: a mapping that declares
+     * a column unwritable makes Hibernate drop it from the UPDATE in silence, and the entity in
+     * memory still holds the value that never left it.
+     */
+    private void detach() {
+        entityManager.flush();
+        entityManager.clear();
+    }
+
     private UUID givenBillOf654() throws Exception {
         JsonNode session = body(openSession()).get("data");
         UUID sessionId = UUID.fromString(session.get("id").asText());

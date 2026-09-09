@@ -144,8 +144,13 @@ class LeaveUnpaidTest {
         assertThat(unpaid.get("latestNote").get("kind").asText()).isEqualTo("STAFF");
         assertThat(unpaid.get("daysOutstanding").asInt()).isZero();
         assertThat(unpaid.get("tableNames").get(0).asText()).isEqualTo("Table 3");
-        // No cost or profit: one shape serves both roles.
+        // No cost or profit: one shape serves both roles -- checked as the OWNER too, because
+        // as an employee the field would be stripped by role whatever the DTO looked like.
         assertThat(unpaid.has("totalCost")).isFalse();
+
+        JsonNode asAdmin = body(mockMvc.perform(get("/api/v1/bills/unpaid")
+                .with(user(adminPrincipal()))).andExpect(status().isOk())).get("data").get(0);
+        assertThat(asAdmin.has("totalCost")).as("the owner gets the same shape").isFalse();
 
         // The night's gross includes it. This is the whole point: the sale was invisible before.
         JsonNode report = dailyReport(null);
@@ -550,6 +555,12 @@ class LeaveUnpaidTest {
     private AppUserDetails principal() {
         return new AppUserDetails(userId, branchId, "unpaid-tester",
                 "unused", "Unpaid Tester", UserRole.EMPLOYEE, true);
+    }
+
+    // The same branch, the other role: this list must not grow a cost field for the owner.
+    private AppUserDetails adminPrincipal() {
+        return new AppUserDetails(userId, branchId, "unpaid-tester",
+                "unused", "Unpaid Tester", UserRole.ADMIN, true);
     }
 
     private AppUserDetails admin() {

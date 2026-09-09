@@ -107,10 +107,23 @@ class LoginHardeningTest {
                         .content(loginBody(username, "correct-pass")))
                 .andExpect(status().isTooManyRequests());
 
-        // The same username from a DIFFERENT address is not locked — nobody can lock the till
-        // out of its own account by hammering it from somewhere else. A wrong password here is
-        // a plain 401, not a lockout.
+        /*
+         * The same username from a DIFFERENT address is not locked -- nobody can lock the till
+         * out of its own account by hammering it from somewhere else.
+         *
+         * THE CORRECT PASSWORD, and a 200. This test only ever sent a WRONG one and asserted
+         * 401, which distinguishes a lockout from a rejection but never once showed that the
+         * account can actually be reached -- while the name promised exactly that. Anything
+         * else that blocked genuine logins from an unseen address would have gone unnoticed.
+         */
         mockMvc.perform(post("/api/v1/auth/login").with(fromAddress("198.51.100.42"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(loginBody(username, "correct-pass")))
+                .andExpect(status().isOk());
+
+        // And a wrong password from that address is a plain 401, not a lockout inherited from
+        // the attacker's.
+        mockMvc.perform(post("/api/v1/auth/login").with(fromAddress("198.51.100.43"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(loginBody(username, "wrong-pass")))
                 .andExpect(status().isUnauthorized());

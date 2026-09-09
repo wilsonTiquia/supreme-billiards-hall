@@ -16,6 +16,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
+import org.springframework.core.NestedExceptionUtils;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.security.web.firewall.RequestRejectedException;
+
 import java.net.URI;
 import java.util.UUID;
 
@@ -157,19 +161,41 @@ class PasswordChangeGateTest {
                 .contains("PASSWORD_CHANGE_REQUIRED");
     }
 
-    // Refused by something — the gate, the firewall, or the router. The security claim is
-    // only that the API did not answer, so that is what is asserted.
+    /*
+     * Refused by something -- the gate, the firewall, or the router. The security claim is only
+     * that the API did not answer, so that is what is asserted.
+     *
+     * The catch is narrowed to the ONE exception that means "the firewall refused this", and
+     * anything else is rethrown. It used to be `catch (Exception) { return; }`, which turned
+     * every possible failure into a pass: an unrelated error anywhere in the filter chain read
+     * as proof of safety, and the test would have reported a broken application as a secure
+     * one. A test that cannot go red is worse than no test, and one that absorbs OTHER tests'
+     * failures is worse again.
+     */
     private void assertNoApiPayload(String rawTarget, MockHttpSession session) throws Exception {
-        String body;
+        MockHttpServletResponse response;
         try {
-            body = mockMvc.perform(get(URI.create(rawTarget)).session(session))
-                    .andReturn().getResponse().getContentAsString();
-        } catch (Exception rejectedOutright) {
-            // Spring Security's HttpFirewall rejects some of these before any handler runs.
-            return;
+            response = mockMvc.perform(get(URI.create(rawTarget)).session(session))
+                    .andReturn().getResponse();
+        } catch (Exception thrown) {
+            if (NestedExceptionUtils.getMostSpecificCause(thrown) instanceof RequestRejectedException) {
+                // Spring Security's HttpFirewall rejects some of these before any handler runs.
+                return;
+            }
+            throw thrown;
         }
-        assertThat(body)
-                .as("%s must not reach the API", rawTarget)
+
+        /*
+         * A 200 is NOT by itself a bypass here, and asserting otherwise was wrong: the SPA
+         * shell is public and answers any unmatched path, so //api/v1/tables comes back 200
+         * with index.html. That is the behaviour SecurityConfig documents -- the shell carries
+         * no data and every figure comes from /api/v1.
+         *
+         * What must never come back is a served API call. Every controller answers through
+         * APIResponse, so a success envelope is the signature of one having run.
+         */
+        assertThat(response.getContentAsString())
+                .as("%s must not reach the API (status was %d)", rawTarget, response.getStatus())
                 .doesNotContain("\"success\":true");
     }
 

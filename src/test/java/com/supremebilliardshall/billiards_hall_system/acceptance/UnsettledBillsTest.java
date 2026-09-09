@@ -137,9 +137,24 @@ class UnsettledBillsTest {
         assertThat(bill.get("tableNames").get(0).asText()).isEqualTo("Table 3");
         assertThat(bill.get("customerTypeName").asText()).isEqualTo("Regular");
         assertThat(bill.get("sessionEndedAt").isNull()).isFalse();
-        // Carries no cost or profit: one shape serves both roles.
+        /*
+         * Carries no cost or profit: ONE SHAPE SERVES BOTH ROLES.
+         *
+         * Asserted as an ADMIN as well, and that is the half that was missing. Checking only as
+         * an EMPLOYEE proves nothing about the shape: cost is stripped for that role anyway, so
+         * the assertion would hold just as well against a DTO that hands the owner a cost
+         * field. This service already switches to an admin subclass three times over
+         * (BillAdminResponseDTO, BillLineAdminResponseDTO, StockMovementAdminResponseDTO), so
+         * a fourth is the obvious thing for someone to add here by pattern-matching.
+         */
         assertThat(bill.has("totalCost")).isFalse();
         assertThat(bill.has("grossProfit")).isFalse();
+
+        JsonNode asAdmin = body(mockMvc.perform(get("/api/v1/bills/unsettled")
+                .with(user(adminPrincipal()))).andExpect(status().isOk())).get("data").get(0);
+        assertThat(asAdmin.get("id").asText()).isEqualTo(billId.toString());
+        assertThat(asAdmin.has("totalCost")).as("the owner gets the same shape").isFalse();
+        assertThat(asAdmin.has("grossProfit")).isFalse();
     }
 
     @Test
@@ -288,5 +303,11 @@ class UnsettledBillsTest {
     private AppUserDetails principal() {
         return new AppUserDetails(userId, branchId, "unsettled-tester",
                 "unused", "Unsettled Tester", UserRole.EMPLOYEE, true);
+    }
+
+    // The same branch, the other role: this list must not grow a cost field for the owner.
+    private AppUserDetails adminPrincipal() {
+        return new AppUserDetails(userId, branchId, "unsettled-tester",
+                "unused", "Unsettled Tester", UserRole.ADMIN, true);
     }
 }
