@@ -216,6 +216,42 @@ class PeriodReportTest {
     }
 
     /*
+     * Each night carries its operating cost BY CATEGORY, so the Every-night table can say
+     * "rent" beside the figure instead of leaving the owner to guess why a Wednesday lost
+     * money. Two categories on one night, largest first, summing to the row's own
+     * operatingExpenses; a night with nothing paid out carries an empty list, not a null; and
+     * the voided expense is out of it, exactly as it is out of the total.
+     */
+    @Test
+    void everyNightCarriesItsOperatingExpensesByCategory() throws Exception {
+        seedThreeNights();
+
+        ExpenseCategory rent = new ExpenseCategory();
+        rent.setBranchId(branchId);
+        rent.setName("Rent");
+        rent.setSortOrder(2);
+        UUID rentId = expenseCategoryRepository.saveAndFlush(rent).getId();
+        expense(NIGHT_3, rentId, "5000.00", false);
+
+        JsonNode byDay = period(NIGHT_1, NIGHT_3).get("byDay");
+
+        assertThat(byDay.get(0).get("expenses")).isEmpty();
+
+        JsonNode second = byDay.get(1).get("expenses");
+        assertThat(second).hasSize(1);
+        assertThat(second.get(0).get("category").asText()).isEqualTo("Water");
+        assertThat(money(second.get(0), "amount")).isEqualByComparingTo("400.00");
+
+        JsonNode third = byDay.get(2).get("expenses");
+        assertThat(third).hasSize(2);
+        assertThat(third.get(0).get("category").asText()).isEqualTo("Rent");
+        assertThat(money(third.get(0), "amount")).isEqualByComparingTo("5000.00");
+        assertThat(third.get(1).get("category").asText()).isEqualTo("Water");
+        assertThat(money(third.get(1), "amount")).isEqualByComparingTo("850.00");
+        assertThat(money(byDay.get(2), "operatingExpenses")).isEqualByComparingTo("5850.00");
+    }
+
+    /*
      * Like for like. A month-to-date of five days compares against the first five days of the
      * month before -- not against the whole of it, and not against the five days immediately
      * before the 1st.
@@ -532,9 +568,13 @@ class PeriodReportTest {
     }
 
     private void expense(LocalDate night, String amount, boolean voided) {
+        expense(night, waterId, amount, voided);
+    }
+
+    private void expense(LocalDate night, UUID categoryId, String amount, boolean voided) {
         Expense expense = new Expense();
         expense.setBranchId(branchId);
-        expense.setExpenseCategoryId(waterId);
+        expense.setExpenseCategoryId(categoryId);
         expense.setAmount(new BigDecimal(amount));
         expense.setPaidFromDrawer(true);
         expense.setIncurredAt(at(night, 20, 0));

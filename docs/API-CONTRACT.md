@@ -1154,12 +1154,13 @@ threshold (10), which sweeps up anything negative.
 | GET | `/api/v1/audit/feed?action=&actor=&entity=&from=&to=&page=&size=` | ADMIN |
 | GET | `/api/v1/audit/filters` | ADMIN |
 
-**`/reports/daily`** — omit `date` for the night currently running.
+**`/reports/daily`** — omit `date` for the night currently running. `comparedTo` is the
+**same weekday a week earlier** (a Saturday against last Saturday), never the night before.
 
 ```json
-{ "businessDate": "2026-08-31", "comparedTo": "2026-08-30",
+{ "businessDate": "2026-08-31", "comparedTo": "2026-08-24",
   "totals":         { "bills", "gross", "cost", "profit", "timeRevenue", "itemRevenue" },
-  "previousTotals": { ...same shape, zeros when there is no previous day... },
+  "previousTotals": { ...same shape, zeros when that night did not trade... },
   "salesByHour":      [ { "hour": 20, "bills": 5, "amount": 1310.00 } ],
   "timeRevenueByMode":[ { "mode": "STANDARD", "sessions": 6, "amount": 2880.00 },
                         { "mode": "PROMO",    "sessions": 3, "amount": 450.00  },
@@ -1255,7 +1256,8 @@ null — so the nights of a range sum to the range, to the centavo. Reads only.
   "previousHeadline": { ...same shape... },
   "breakEven":        { "requiredGrossPerTradingDay", "actualGrossPerTradingDay", "computable" },
   "byDay":            [ { "businessDate", "trading", "bills", "gross", "costOfGoods", "grossProfit",
-                          "operatingExpenses", "net" } ],
+                          "operatingExpenses", "net",
+                          "expenses": [ { "category", "amount" } ] } ],
   "byDayOfWeek":      [ { "isoDay": 1, "tradingDays", "avgGross", "avgBills", "avgNet" } ],
   "byHour":           [ { "hour", "bills", "amount" } ],
   "expensesByCategory": [ { "category", "amount", "previousAmount", "percentOfGross" } ],

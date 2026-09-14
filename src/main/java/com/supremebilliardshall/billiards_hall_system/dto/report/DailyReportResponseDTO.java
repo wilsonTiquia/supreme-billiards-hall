@@ -14,7 +14,7 @@ import java.util.List;
 public class DailyReportResponseDTO {
 
     private LocalDate businessDate;
-    // The previous business day, which every headline figure is reported against.
+    // The same weekday a week earlier, which every headline figure is reported against.
     private LocalDate comparedTo;
 
     private DailyTotalsDTO totals;

@@ -21,7 +21,10 @@ public class ReportRepository {
 
     private static final String DAILY_REPORT_SQL = """
             WITH params AS (
-              SELECT cast(:branchId as uuid) AS branch_id, cast(:reportDate as date) AS d, (cast(:reportDate as date) - 1) AS prev_d
+              -- prev_d is the SAME WEEKDAY A WEEK EARLIER, not the night before. A Saturday
+              -- against a Friday is two different nights being compared, and every Sunday
+              -- read as a collapse. Seven days back is the night that actually resembles it.
+              SELECT cast(:branchId as uuid) AS branch_id, cast(:reportDate as date) AS d, (cast(:reportDate as date) - 7) AS prev_d
             ),
             closed_bills AS (
               -- UNSETTLED counts as a sale. The regular who plays tonight and pays next month
@@ -1037,6 +1040,15 @@ public class ReportRepository {
                                               'costOfGoods',       dy.cogs,
                                               'grossProfit',       dy.gross - dy.cogs,
                                               'operatingExpenses', dy.opex,
+                                              -- What the night's opex was, by category, so a
+                                              -- rent night reads as "rent" and not as a loss.
+                                              -- Sums to operatingExpenses on the same row.
+                                              'expenses',          coalesce((SELECT jsonb_agg(jsonb_build_object('category', ec.name, 'amount', xc.amount)
+                                                                                              ORDER BY xc.amount DESC, ec.name)
+                                                                             FROM (SELECT e.expense_category_id, sum(e.amount) AS amount
+                                                                                   FROM live_expenses e WHERE e.business_date = dy.bd
+                                                                                   GROUP BY e.expense_category_id) xc
+                                                                             JOIN expense_category ec ON ec.id = xc.expense_category_id), '[]'::jsonb),
                                               'net',               dy.gross - dy.cogs - dy.opex)
                                             ORDER BY dy.bd)
                                             FROM days dy WHERE dy.bd BETWEEN p.from_d AND p.to_d), '[]'::jsonb),

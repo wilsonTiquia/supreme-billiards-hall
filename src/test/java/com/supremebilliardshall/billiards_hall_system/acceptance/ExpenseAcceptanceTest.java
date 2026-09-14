@@ -274,14 +274,15 @@ class ExpenseAcceptanceTest {
 
     /*
      * The dashboard tile equals the sum of the day's live expenses, and the delta is against the
-     * night before.
+     * SAME WEEKDAY A WEEK EARLIER -- a Saturday against last Saturday, never against Friday.
      *
      * Asserted through the report itself rather than by re-running the CTE, because the thing
      * that can silently break is the SQL: a voided row left in, or the previous day read off the
-     * wrong date, would both still return a number.
+     * wrong date, would both still return a number. The night before carries its own expense
+     * here precisely so that reading it would produce a different figure, not the same one.
      */
     @Test
-    void theDashboardTotalsTheDaysLiveExpensesAndComparesToTheNightBefore() throws Exception {
+    void theDashboardTotalsTheDaysLiveExpensesAndComparesToTheSameWeekdayLastWeek() throws Exception {
         recordExpense(employee(), "850.00", true).andExpect(status().isOk());
         recordExpense(employee(), "1200.00", false).andExpect(status().isOk());
 
@@ -293,12 +294,15 @@ class ExpenseAcceptanceTest {
                         .content("{\"reason\":\"Rang it up twice\"}"))
                 .andExpect(status().isOk());
 
-        // Last night: PHP 500, written straight to the previous business date.
-        expenseOn(businessDate.minusDays(1), new BigDecimal("500.00"));
+        // Same weekday last week: PHP 500. Last night: PHP 700, which must NOT be the comparison.
+        expenseOn(businessDate.minusDays(7), new BigDecimal("500.00"));
+        expenseOn(businessDate.minusDays(1), new BigDecimal("700.00"));
 
-        JsonNode expenses = data(mockMvc.perform(get("/api/v1/reports/daily?businessDate=" + businessDate)
-                .with(user(admin()))).andExpect(status().isOk())).get("expenses");
+        JsonNode report = data(mockMvc.perform(get("/api/v1/reports/daily?businessDate=" + businessDate)
+                .with(user(admin()))).andExpect(status().isOk()));
+        JsonNode expenses = report.get("expenses");
 
+        assertThat(report.get("comparedTo").asText()).isEqualTo(businessDate.minusDays(7).toString());
         assertThat(money(expenses, "total")).isEqualByComparingTo("2050.00");
         assertThat(money(expenses, "previousTotal")).isEqualByComparingTo("500.00");
 
