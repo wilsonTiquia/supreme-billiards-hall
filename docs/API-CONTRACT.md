@@ -1149,6 +1149,7 @@ threshold (10), which sweeps up anything negative.
 | Method | Path | Who |
 |---|---|---|
 | GET | `/api/v1/reports/daily?date=YYYY-MM-DD` | ADMIN |
+| GET | `/api/v1/reports/period?from=YYYY-MM-DD&to=YYYY-MM-DD` | ADMIN |
 | GET | `/api/v1/audit?entity=&actor=&from=&to=&page=&size=` | ADMIN |
 | GET | `/api/v1/audit/feed?action=&actor=&entity=&from=&to=&page=&size=` | ADMIN |
 | GET | `/api/v1/audit/filters` | ADMIN |
@@ -1238,6 +1239,78 @@ threshold (10), which sweeps up anything negative.
   − flatAmount` — **clamped at zero per session**. A flat fee above what the meter would have
   charged is not a loss and contributes zero rather than netting off against a real giveaway
   elsewhere, so this figure never understates the night.
+
+**`/reports/period`** — the owner's month. Any range of business dates, inclusive, against the
+equivalent range before it. Both parameters required; `to` before `from`, or a range over 366
+days, is a **400**. Built from the SAME definitions as `/reports/daily` — a sale is a bill in
+`CLOSED` or `UNSETTLED` by its `business_date`, live lines and live expenses have `voided_at`
+null — so the nights of a range sum to the range, to the centavo. Reads only.
+
+```json
+{ "from": "2026-09-01", "to": "2026-09-14",
+  "previousFrom": "2026-08-01", "previousTo": "2026-08-14",
+  "comparison": "SAME_DAYS_OF_PREVIOUS_MONTH",
+  "headline":         { "bills", "gross", "costOfGoods", "grossProfit", "operatingExpenses", "net",
+                        "tradingDays", "grossPerTradingDay", "netPerTradingDay", "grossMarginPercent" },
+  "previousHeadline": { ...same shape... },
+  "breakEven":        { "requiredGrossPerTradingDay", "actualGrossPerTradingDay", "computable" },
+  "byDay":            [ { "businessDate", "trading", "bills", "gross", "costOfGoods", "grossProfit",
+                          "operatingExpenses", "net" } ],
+  "byDayOfWeek":      [ { "isoDay": 1, "tradingDays", "avgGross", "avgBills", "avgNet" } ],
+  "byHour":           [ { "hour", "bills", "amount" } ],
+  "expensesByCategory": [ { "category", "amount", "previousAmount", "percentOfGross" } ],
+  "expensesByMonth":  { "months": [ "2026-04", "…", "2026-09" ],
+                        "rows": [ { "category", "amounts": [ 0, 0, 0, 0, 45000.00, 45000.00 ], "total" } ] },
+  "tables":           [ { "tableName", "occupiedMinutes", "utilisationPercent", "timeRevenue",
+                          "revenuePerOccupiedHour" } ],
+  "products":         [ { "name", "quantity", "revenue", "cost", "margin", "marginPercent" } ],
+  "unsoldProducts":   [ { "name", "qtyOnHand", "avgCost", "capitalOnShelf" } ],
+  "givenAway":        { ...the sixteen `losses` fields of /reports/daily..., "total", "percentOfGross" },
+  "cash":             { "varianceTotal", "nightsWithVariance", "countedNights", "uncountedTradingDays",
+                        "unsettled": { "thisPeriod":           { "count", "amount" },
+                                       "oneToFourWeeksBefore": { "count", "amount" },
+                                       "older":                { "count", "amount" } } } }
+```
+
+- **Two words, used precisely.** `grossProfit` is gross less cost of goods — what `/reports/daily`
+  calls `profit`. `net` is gross profit less operating expenses, and exists only here.
+- **A trading day is a business date with at least one sale or a `cash_count` row.** Every per-day
+  figure divides by `tradingDays`, never by calendar days. `grossPerTradingDay`, `netPerTradingDay`
+  and `grossMarginPercent` are **null**, not zero, when undefined (no trading days; gross of zero).
+- **The previous period is the server's decision**, returned as `previousFrom`/`previousTo` so the
+  client never computes a date. `comparison` says which rule chose it, by the shape of the range:
+  `SAME_DAYS_OF_PREVIOUS_MONTH` when `from` is the 1st and `to` is in the same month (1–14 Sep
+  against 1–14 Aug; a complete month against the complete month before it, so September is
+  against all 31 days of August); `SAME_DAYS_OF_PREVIOUS_WEEK` when `from`
+  is a Monday and the range is within that week; otherwise `PRECEDING_DAYS`, the same number of
+  days immediately before `from`. A bookmarked `from`/`to` therefore always reproduces the same
+  comparison.
+- `breakEven.requiredGrossPerTradingDay` is `operatingExpenses ÷ (grossProfit ÷ gross) ÷ tradingDays`
+  — the gross a trading day must take for the margin on it to cover the period's operating cost.
+  `computable` is false, and both figures null, when there are no sales or the margin is not
+  positive; the page says "not enough sales to compute" rather than dividing.
+- `byDay` has a row for **every calendar night** in the range, `trading: false` and zeros on a
+  night the hall did not trade, so the trend line shows a closed Tuesday as a gap.
+- `byDayOfWeek` is always seven rows, Monday first, averaged over the trading days of that weekday
+  only; null averages where the weekday never traded.
+- `byHour` is the same `extract()` as `salesByHour`, summed across the period.
+- `expensesByCategory` covers both windows: a category paid in only one of them still appears,
+  with zero on the other side. `expensesByMonth` is the six calendar months ending in the month
+  `to` falls in; the last column runs only to `to` and is partial unless `to` is a month end.
+  Voided expenses excluded throughout; archived categories kept, as on the daily.
+- `tables` is sorted **weakest first** — ascending `revenuePerOccupiedHour`, tables nobody played
+  (null) before all. `occupiedMinutes` is the daily's definition (wall clock, pauses included);
+  `utilisationPercent` is over 19 hours × trading days. `timeRevenue` is what the time on that
+  table was charged — the sessions' TIME lines, a moved session split between its tables by
+  minutes — and sums across tables to the period's time revenue.
+- `products` is sorted **thinnest margin first**, from the prices and costs snapshotted on the
+  lines. `unsoldProducts` is every unarchived product with stock on hand that sold nothing in the
+  period, `capitalOnShelf` = `qtyOnHand × avgCost` at the current average cost, most first.
+- `givenAway` is the daily's eight loss lines from the same CTEs with the date widened, plus their
+  `total` and the total as `percentOfGross`. The comps estimate is inside the total.
+- `cash.unsettled` is **live** by bill status like the daily's `outstanding`, aged by the night
+  the bill was played: inside the period, in the 28 days before `from`, or older. Bills dated
+  after `to` are excluded.
 
 **`/audit`** — all filters optional. `entity` is a table name (`bill_line`, `product`,
 `pool_table_rate`, `table_session`, `cash_count`); `actor` is a user UUID; `from`/`to` are business
@@ -1329,7 +1402,9 @@ Do not code against these; they do not exist:
 
 - `POST /sessions/{id}/transfer` — table transfer
 - `POST /bills/{id}/merge`, `/unmerge`
-- `GET /reports/daily.pdf`
+- `GET /reports/daily.pdf` — there is no server-side PDF. The period report page
+  (`/admin/reports`) carries a print stylesheet, and the browser's Print → Save as PDF is the
+  export.
 - Branches CRUD (`/api/v1/branches`) **exists and is ADMIN-only**, but is not in the product spec
   and has no UI need today.
 

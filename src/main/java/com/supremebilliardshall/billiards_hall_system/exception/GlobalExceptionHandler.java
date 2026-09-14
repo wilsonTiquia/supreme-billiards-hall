@@ -91,6 +91,14 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 
+    // A report range the caller got wrong: `to` before `from`, or more than a year. Input, not
+    // a conflict, so 400 with the message saying which.
+    @ExceptionHandler(InvalidDateRangeException.class)
+    public ResponseEntity<APIResponse<Object>> handleInvalidDateRange(InvalidDateRangeException ex) {
+        return ResponseEntity.badRequest()
+                .body(new APIResponse<>(null, ex.getMessage(), false));
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<APIResponse<Object>> handleValidationErrors(MethodArgumentNotValidException ex) {
         String errors = ex.getBindingResult()

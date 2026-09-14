@@ -633,6 +633,439 @@ public class ReportRepository {
             FROM params p
             """;
 
+    /*
+     * The owner's month, in one statement, and it has to agree with the nightly report to the
+     * centavo -- so the CTEs that decide what a sale is (closed_bills), what a live line is
+     * (live_lines), what an expense is (live_expenses) and each of the seven giveaway rows are
+     * the daily ones with the single-date predicate widened to a range, not rewritten. A test
+     * asserts that the sum of dailyReport() over each night of a range equals this report for
+     * the range, and the widening is the only thing that makes that hold.
+     *
+     * Two windows: the period asked for, and the previous one the service computed (the
+     * like-for-like rule lives in ReportServiceImpl.previousPeriod). closed_bills spans both,
+     * and every figure below says which window it reads with an explicit BETWEEN rather than
+     * assuming the two are contiguous -- for a month-to-date they are not.
+     *
+     * A TRADING DAY is a business_date with at least one sale or a cash_count row. Every "per
+     * day" figure divides by trading days, never by calendar days: a hall closed on Tuesdays
+     * would otherwise report a fifth of its takings as missing.
+     *
+     * Aliases are deliberately never `d`, `p` (other than params itself) or `prev_d`, and the
+     * params columns are from_d / to_d / prev_from / prev_to, for the reason on the daily SQL: an
+     * unqualified name inside to_jsonb() that happens to match a params column binds to the
+     * column and silently turns a section into a string.
+     */
+    private static final String PERIOD_REPORT_SQL = """
+            WITH params AS (
+              SELECT cast(:branchId as uuid) AS branch_id,
+                     cast(:fromDate as date) AS from_d,
+                     cast(:toDate as date)   AS to_d,
+                     cast(:prevFrom as date) AS prev_from,
+                     cast(:prevTo as date)   AS prev_to,
+                     -- First month of the expense grid: the month `to` falls in and the five before it.
+                     (date_trunc('month', cast(:toDate as date)) - interval '5 months')::date AS grid_from
+            ),
+            windows AS (
+              SELECT 'current' AS which, p.from_d AS win_from, p.to_d AS win_to FROM params p
+              UNION ALL
+              SELECT 'previous', p.prev_from, p.prev_to FROM params p
+            ),
+            closed_bills AS (
+              -- The daily CTE, widened. UNSETTLED counts as a sale here for the same reason it
+              -- does there: the night the table was played is the night the sale belongs to.
+              SELECT b.* FROM bill b, params p
+              WHERE b.branch_id = p.branch_id AND b.status IN ('CLOSED', 'UNSETTLED')
+                AND b.business_date BETWEEN p.prev_from AND p.to_d
+            ),
+            live_lines AS (
+              SELECT l.*, b.business_date FROM bill_line l
+              JOIN closed_bills b ON b.id = l.bill_id
+              WHERE l.voided_at IS NULL
+            ),
+            live_expenses AS (
+              -- Dated by the expense's OWN business_date, voided rows excluded, as on the daily.
+              -- Reaches back to the start of the six-month grid, which is earlier than the
+              -- previous window; every reader below narrows to the window it wants.
+              SELECT e.* FROM expense e, params p
+              WHERE e.branch_id = p.branch_id AND e.voided_at IS NULL
+                AND e.business_date BETWEEN LEAST(p.prev_from, p.grid_from) AND p.to_d
+            ),
+            trading_days AS (
+              SELECT b.business_date AS bd FROM closed_bills b
+              UNION
+              SELECT cc.business_date FROM cash_count cc, params p
+              WHERE cc.branch_id = p.branch_id AND cc.business_date BETWEEN p.prev_from AND p.to_d
+            ),
+            day_sales AS (
+              SELECT b.business_date                    AS bd,
+                     count(*)::int                      AS bills,
+                     coalesce(sum(b.total_amount), 0)   AS gross,
+                     coalesce(sum(b.total_cost), 0)     AS cogs
+              FROM closed_bills b GROUP BY b.business_date
+            ),
+            day_opex AS (
+              SELECT e.business_date AS bd, coalesce(sum(e.amount), 0) AS opex
+              FROM live_expenses e GROUP BY e.business_date
+            ),
+            days AS (
+              -- One row per calendar night from the earlier window's start to `to`, trading or
+              -- not, so byDay has a slot for every night and a closed Tuesday shows as a gap
+              -- rather than vanishing from the trend.
+              SELECT cal.bd,
+                     (cal.bd IN (SELECT td.bd FROM trading_days td)) AS trading,
+                     coalesce(ds.bills, 0) AS bills,
+                     coalesce(ds.gross, 0) AS gross,
+                     coalesce(ds.cogs, 0)  AS cogs,
+                     coalesce(dx.opex, 0)  AS opex
+              FROM (SELECT generate_series(p.prev_from, p.to_d, interval '1 day')::date AS bd FROM params p) cal
+              LEFT JOIN day_sales ds ON ds.bd = cal.bd
+              LEFT JOIN day_opex  dx ON dx.bd = cal.bd
+            ),
+            window_totals AS (
+              SELECT w.which,
+                     coalesce(sum(dy.bills), 0)::int                     AS bills,
+                     coalesce(sum(dy.gross), 0)                          AS gross,
+                     coalesce(sum(dy.cogs), 0)                           AS "costOfGoods",
+                     coalesce(sum(dy.gross - dy.cogs), 0)                AS "grossProfit",
+                     coalesce(sum(dy.opex), 0)                           AS "operatingExpenses",
+                     coalesce(sum(dy.gross - dy.cogs - dy.opex), 0)      AS net,
+                     count(*) FILTER (WHERE dy.trading)::int             AS "tradingDays"
+              FROM windows w LEFT JOIN days dy ON dy.bd BETWEEN w.win_from AND w.win_to
+              GROUP BY w.which
+            ),
+            headline AS (
+              -- NULL, not zero, where the figure is undefined: a gross of 0.00 per trading day
+              -- across zero trading days would be a number the owner could compare against.
+              SELECT wt.*,
+                     CASE WHEN wt."tradingDays" > 0 THEN round(wt.gross / wt."tradingDays", 2) END AS "grossPerTradingDay",
+                     CASE WHEN wt."tradingDays" > 0 THEN round(wt.net / wt."tradingDays", 2) END   AS "netPerTradingDay",
+                     CASE WHEN wt.gross > 0 THEN round(wt."grossProfit" / wt.gross * 100, 1) END    AS "grossMarginPercent"
+              FROM window_totals wt
+            ),
+            break_even AS (
+              -- opex / gross margin ratio / trading days: the gross a trading day must take for
+              -- the margin on it to cover the period's operating cost. Undefined without sales,
+              -- and equally undefined when the margin is not positive -- no level of sales
+              -- covers costs when every peso sold costs more than a peso -- so both are the
+              -- `computable = false` case rather than a division.
+              SELECT CASE WHEN h.gross > 0 AND h."grossProfit" > 0 AND h."tradingDays" > 0
+                          THEN round(h."operatingExpenses" / (h."grossProfit" / h.gross) / h."tradingDays", 2)
+                     END                                                 AS "requiredGrossPerTradingDay",
+                     h."grossPerTradingDay"                              AS "actualGrossPerTradingDay",
+                     (h.gross > 0 AND h."grossProfit" > 0 AND h."tradingDays" > 0) AS computable
+              FROM headline h WHERE h.which = 'current'
+            ),
+            day_of_week AS (
+              -- Averages over TRADING days of that weekday only. Seven rows always, Monday
+              -- first, and NULL where the weekday never traded: "no Tuesdays" and "Tuesdays
+              -- averaged zero" are different answers to "should we open on Tuesdays".
+              SELECT dow.iso                                             AS "isoDay",
+                     count(dy.bd) FILTER (WHERE dy.trading)::int         AS "tradingDays",
+                     CASE WHEN count(dy.bd) FILTER (WHERE dy.trading) > 0
+                          THEN round(sum(dy.gross) FILTER (WHERE dy.trading)
+                                     / count(dy.bd) FILTER (WHERE dy.trading), 2) END AS "avgGross",
+                     CASE WHEN count(dy.bd) FILTER (WHERE dy.trading) > 0
+                          THEN round(sum(dy.bills) FILTER (WHERE dy.trading)::numeric
+                                     / count(dy.bd) FILTER (WHERE dy.trading), 1) END AS "avgBills",
+                     CASE WHEN count(dy.bd) FILTER (WHERE dy.trading) > 0
+                          THEN round(sum(dy.gross - dy.cogs - dy.opex) FILTER (WHERE dy.trading)
+                                     / count(dy.bd) FILTER (WHERE dy.trading), 2) END AS "avgNet"
+              FROM (VALUES (1), (2), (3), (4), (5), (6), (7)) AS dow(iso)
+              CROSS JOIN params p
+              LEFT JOIN days dy ON extract(isodow FROM dy.bd) = dow.iso
+                               AND dy.bd BETWEEN p.from_d AND p.to_d
+              GROUP BY dow.iso
+            ),
+            sales_by_hour AS (
+              -- The daily's extract(), summed across the period.
+              SELECT extract(hour FROM (b.closed_at AT TIME ZONE INTERVAL '+08:00'))::int AS hour,
+                     count(*)::int AS bills, coalesce(sum(b.total_amount), 0) AS amount
+              FROM closed_bills b, params p
+              WHERE b.business_date BETWEEN p.from_d AND p.to_d GROUP BY 1
+            ),
+            expenses_by_category AS (
+              -- Both windows in one pass, so a category that was paid last month and not this
+              -- one still appears, with this month's zero beside last month's figure. Grouped
+              -- on the name and not filtered on archived_at, as on the daily.
+              SELECT ec.name AS category,
+                     coalesce(sum(e.amount) FILTER (WHERE e.business_date BETWEEN p.from_d AND p.to_d), 0)       AS amount,
+                     coalesce(sum(e.amount) FILTER (WHERE e.business_date BETWEEN p.prev_from AND p.prev_to), 0) AS "previousAmount"
+              FROM live_expenses e
+              JOIN expense_category ec ON ec.id = e.expense_category_id, params p
+              GROUP BY ec.name
+              HAVING coalesce(sum(e.amount) FILTER (WHERE e.business_date BETWEEN p.from_d AND p.to_d), 0) > 0
+                  OR coalesce(sum(e.amount) FILTER (WHERE e.business_date BETWEEN p.prev_from AND p.prev_to), 0) > 0
+            ),
+            expenses_by_category_pct AS (
+              SELECT ebc.category, ebc.amount, ebc."previousAmount",
+                     CASE WHEN h.gross > 0 THEN round(ebc.amount / h.gross * 100, 1) END AS "percentOfGross"
+              FROM expenses_by_category ebc, headline h WHERE h.which = 'current'
+            ),
+            grid_months AS (
+              SELECT generate_series(p.grid_from, date_trunc('month', p.to_d)::date, interval '1 month')::date AS month_start
+              FROM params p
+            ),
+            grid_cells AS (
+              -- Through `to` and no further: the last column is the month `to` falls in, and it
+              -- is partial when `to` is not a month end. The page says so.
+              SELECT ec.name AS category,
+                     date_trunc('month', e.business_date)::date AS month_start,
+                     sum(e.amount) AS amount
+              FROM live_expenses e
+              JOIN expense_category ec ON ec.id = e.expense_category_id, params p
+              WHERE e.business_date BETWEEN p.grid_from AND p.to_d
+              GROUP BY 1, 2
+            ),
+            grid_rows AS (
+              -- One row per category, the six months as a positional array in month order
+              -- (zeros filled) so the client draws a grid rather than pivoting one.
+              SELECT cat.category,
+                     (SELECT jsonb_agg(coalesce(gc.amount, 0) ORDER BY gm.month_start)
+                      FROM grid_months gm
+                      LEFT JOIN grid_cells gc ON gc.month_start = gm.month_start AND gc.category = cat.category) AS amounts,
+                     (SELECT coalesce(sum(gc.amount), 0) FROM grid_cells gc WHERE gc.category = cat.category) AS total
+              FROM (SELECT DISTINCT gc.category FROM grid_cells gc) cat
+            ),
+            segment_shares AS (
+              /*
+               * The daily's segment_minutes -- WALL CLOCK, PAUSES INCLUDED, see the long comment
+               * there for why -- with the charge attached.
+               *
+               * The charge is the session's live TIME line total, which is the finalised figure
+               * the customer paid for the time: it already reflects a rate override, a flat fee
+               * or a reduced-minutes rewrite, none of which a segment's own rate_per_minute
+               * carries (a flat session's segments say zero). It is apportioned across the
+               * session's segments by minutes, so a session moved between tables credits each
+               * with its share and the tables sum to the period's time revenue.
+               */
+              SELECT sg.pool_table_id,
+                     extract(epoch FROM (coalesce(sg.ended_at, now()) - sg.started_at)) / 60.0 AS minutes,
+                     sum(extract(epoch FROM (coalesce(sg.ended_at, now()) - sg.started_at)) / 60.0)
+                       OVER (PARTITION BY sg.session_id)                                       AS session_minutes,
+                     coalesce((SELECT sum(l.line_total) FROM live_lines l
+                               WHERE l.session_id = ts.id AND l.line_kind = 'TIME'), 0)        AS time_charged
+              FROM session_segment sg
+              JOIN table_session ts ON ts.id = sg.session_id
+              JOIN closed_bills b   ON b.id = ts.bill_id, params p
+              WHERE b.business_date BETWEEN p.from_d AND p.to_d
+            ),
+            table_stats AS (
+              SELECT ss.pool_table_id,
+                     sum(ss.minutes) AS minutes,
+                     sum(CASE WHEN ss.session_minutes > 0
+                              THEN ss.time_charged * ss.minutes / ss.session_minutes ELSE 0 END) AS time_revenue
+              FROM segment_shares ss GROUP BY ss.pool_table_id
+            ),
+            tables AS (
+              -- Live tables always; an archived one only if it was played in the period, or its
+              -- revenue would be attributed to nothing. Utilisation is over the period's
+              -- TRADING days of 19 hours each, and NULL when there were none.
+              SELECT t.name                                                       AS "tableName",
+                     round(coalesce(st.minutes, 0))::int                          AS "occupiedMinutes",
+                     CASE WHEN h."tradingDays" > 0
+                          THEN round(coalesce(st.minutes, 0) / (19 * 60 * h."tradingDays") * 100, 1) END
+                                                                                  AS "utilisationPercent",
+                     round(coalesce(st.time_revenue, 0), 2)                       AS "timeRevenue",
+                     CASE WHEN coalesce(st.minutes, 0) > 0
+                          THEN round(coalesce(st.time_revenue, 0) / (st.minutes / 60.0), 2) END
+                                                                                  AS "revenuePerOccupiedHour",
+                     t.table_number, t.name
+              FROM pool_table t
+              LEFT JOIN table_stats st ON st.pool_table_id = t.id
+              CROSS JOIN (SELECT h1."tradingDays" FROM headline h1 WHERE h1.which = 'current') h, params p
+              WHERE t.branch_id = p.branch_id AND (t.archived_at IS NULL OR st.pool_table_id IS NOT NULL)
+            ),
+            products_sold AS (
+              -- Snapshotted line figures -- the money is never read off product -- grouped on
+              -- the product (every PRODUCT line carries one, by constraint) so the unsold list
+              -- below can be its complement. Only the name is the product's current one.
+              SELECT pr.name,
+                     sum(l.quantity)                                          AS quantity,
+                     sum(l.line_total)                                        AS revenue,
+                     sum(l.line_cost)                                         AS cost,
+                     sum(l.line_total - l.line_cost)                          AS margin,
+                     CASE WHEN sum(l.line_total) > 0
+                          THEN round(sum(l.line_total - l.line_cost) / sum(l.line_total) * 100, 1) END
+                                                                              AS "marginPercent",
+                     pr.id                                                    AS product_id
+              FROM live_lines l
+              JOIN product pr ON pr.id = l.product_id, params p
+              WHERE l.business_date BETWEEN p.from_d AND p.to_d AND l.line_kind = 'PRODUCT'
+              GROUP BY pr.id, pr.name
+            ),
+            unsold_products AS (
+              -- Capital on the shelf: stock that did not move once in the period, valued at
+              -- the product's current average cost.
+              SELECT pr.name,
+                     pr.qty_on_hand                            AS "qtyOnHand",
+                     pr.avg_cost                               AS "avgCost",
+                     round(pr.qty_on_hand * pr.avg_cost, 2)    AS "capitalOnShelf"
+              FROM product pr, params p
+              WHERE pr.branch_id = p.branch_id AND pr.archived_at IS NULL AND pr.qty_on_hand > 0
+                AND NOT EXISTS (SELECT 1 FROM products_sold ps WHERE ps.product_id = pr.id)
+            ),
+            voids AS (
+              SELECT count(*)::int AS "voidCount", coalesce(sum(l.line_total), 0) AS "voidAmount"
+              FROM bill_line l JOIN bill b ON b.id = l.bill_id, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date BETWEEN p.from_d AND p.to_d
+                AND l.voided_at IS NOT NULL
+            ),
+            overrides AS (
+              -- The daily's overrides CTE, widened. FILTER rather than GROUP BY for the reason
+              -- given there: a zero-row CTE would take the whole givenAway object with it.
+              SELECT count(*) FILTER (WHERE ts.rate_override_kind = 'PROMO')::int
+                       AS "promoSessions",
+                     coalesce(sum((ts.standard_rate_per_minute - ts.rate_override_per_minute)
+                                  * coalesce(ts.billed_minutes, 0))
+                              FILTER (WHERE ts.rate_override_kind = 'PROMO'), 0)
+                       AS "promoForgone",
+                     count(*) FILTER (WHERE ts.rate_override_kind IS DISTINCT FROM 'PROMO')::int
+                       AS "friendSessions",
+                     coalesce(sum((ts.standard_rate_per_minute - ts.rate_override_per_minute)
+                                  * coalesce(ts.billed_minutes, 0))
+                              FILTER (WHERE ts.rate_override_kind IS DISTINCT FROM 'PROMO'), 0)
+                       AS "friendForgone"
+              FROM table_session ts JOIN bill b ON b.id = ts.bill_id, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date BETWEEN p.from_d AND p.to_d
+                AND ts.rate_override_per_minute IS NOT NULL
+            ),
+            flats AS (
+              SELECT count(*)::int AS "flatSessions",
+                     coalesce(sum(GREATEST(
+                       coalesce(ts.standard_rate_per_minute, 0) * coalesce(ts.billed_minutes, 0)
+                         - ts.flat_amount, 0)), 0) AS "flatForgone"
+              FROM table_session ts JOIN bill b ON b.id = ts.bill_id, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date BETWEEN p.from_d AND p.to_d
+                AND ts.flat_amount IS NOT NULL
+            ),
+            time_reductions AS (
+              SELECT count(*)::int AS "reducedSessions",
+                     coalesce(sum((ts.billed_minutes - ts.billed_minutes_override)
+                                  * coalesce(ts.rate_override_per_minute, ts.standard_rate_per_minute)), 0)
+                       AS "timeReductionForgone"
+              FROM table_session ts JOIN bill b ON b.id = ts.bill_id, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date BETWEEN p.from_d AND p.to_d
+                AND ts.billed_minutes_override IS NOT NULL
+            ),
+            discounts AS (
+              SELECT count(*)::int AS "discountBills",
+                     coalesce(sum(b.discount_amount), 0) AS "discountAmount"
+              FROM bill b, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date BETWEEN p.from_d AND p.to_d
+                AND b.discount_amount > 0
+            ),
+            vouchers AS (
+              SELECT count(*)::int AS "voucherCount",
+                     coalesce(sum(b.voucher_amount), 0) AS "voucherAmount"
+              FROM bill b, params p
+              WHERE b.branch_id = p.branch_id AND b.business_date BETWEEN p.from_d AND p.to_d
+                AND b.voucher_amount > 0
+            ),
+            comps AS (
+              -- Dated by the MOVEMENT's business_date, as on the daily, and valued at the
+              -- product's current average cost: an estimate, unlike the seven exact rows.
+              SELECT coalesce(sum(-sm.quantity_delta), 0) AS "compQuantity",
+                     coalesce(sum(-sm.quantity_delta * pr.avg_cost), 0) AS "compEstimatedCost"
+              FROM stock_movement sm JOIN product pr ON pr.id = sm.product_id, params p
+              WHERE sm.branch_id = p.branch_id AND sm.business_date BETWEEN p.from_d AND p.to_d
+                AND sm.reason = 'STAFF_COMP'
+            ),
+            given_away AS (
+              -- The eight rows the daily carries, plus their sum and the sum as a share of gross.
+              -- The comps estimate is inside the total; the page labels it as an estimate.
+              SELECT to_jsonb(v) || to_jsonb(o) || to_jsonb(c) || to_jsonb(r) || to_jsonb(f)
+                       || to_jsonb(disc) || to_jsonb(vch)                              AS lines,
+                     (v."voidAmount" + o."promoForgone" + o."friendForgone" + f."flatForgone"
+                       + r."timeReductionForgone" + disc."discountAmount" + vch."voucherAmount"
+                       + c."compEstimatedCost")                                        AS total
+              FROM voids v, overrides o, comps c, time_reductions r, flats f, discounts disc, vouchers vch
+            ),
+            cash AS (
+              -- The generated variance column, summed. A night that balanced contributes zero
+              -- and is not "a night with a variance".
+              SELECT coalesce(sum(cc.variance), 0)                      AS "varianceTotal",
+                     count(*) FILTER (WHERE cc.variance <> 0)::int      AS "nightsWithVariance",
+                     count(*)::int                                      AS "countedNights"
+              FROM cash_count cc, params p
+              WHERE cc.branch_id = p.branch_id AND cc.business_date BETWEEN p.from_d AND p.to_d
+            ),
+            uncounted AS (
+              -- Trading days in the period nobody counted the drawer on.
+              SELECT count(*)::int AS "uncountedTradingDays"
+              FROM days dy, params p
+              WHERE dy.trading AND dy.bd BETWEEN p.from_d AND p.to_d
+                AND NOT EXISTS (SELECT 1 FROM cash_count cc
+                                WHERE cc.branch_id = p.branch_id AND cc.business_date = dy.bd)
+            ),
+            unsettled_aging AS (
+              -- Debts still open, LIVE by status like the daily's `outstanding`, aged by the
+              -- night they were played relative to the period. Bills dated after `to` are left
+              -- out: a debt from this week is not a fact about last month.
+              SELECT jsonb_build_object(
+                       'count',  count(*) FILTER (WHERE b.business_date BETWEEN p.from_d AND p.to_d)::int,
+                       'amount', coalesce(sum(b.total_amount) FILTER (WHERE b.business_date BETWEEN p.from_d AND p.to_d), 0))
+                       AS "thisPeriod",
+                     jsonb_build_object(
+                       'count',  count(*) FILTER (WHERE b.business_date < p.from_d AND b.business_date >= p.from_d - 28)::int,
+                       'amount', coalesce(sum(b.total_amount) FILTER (WHERE b.business_date < p.from_d AND b.business_date >= p.from_d - 28), 0))
+                       AS "oneToFourWeeksBefore",
+                     jsonb_build_object(
+                       'count',  count(*) FILTER (WHERE b.business_date < p.from_d - 28)::int,
+                       'amount', coalesce(sum(b.total_amount) FILTER (WHERE b.business_date < p.from_d - 28), 0))
+                       AS older
+              FROM bill b, params p
+              WHERE b.branch_id = p.branch_id AND b.status = 'UNSETTLED' AND b.business_date <= p.to_d
+            )
+            SELECT jsonb_build_object(
+              'from',              p.from_d,
+              'to',                p.to_d,
+              'previousFrom',      p.prev_from,
+              'previousTo',        p.prev_to,
+              'headline',          (SELECT to_jsonb(h) - 'which' FROM headline h WHERE h.which = 'current'),
+              'previousHeadline',  (SELECT to_jsonb(h) - 'which' FROM headline h WHERE h.which = 'previous'),
+              'breakEven',         (SELECT to_jsonb(be) FROM break_even be),
+              'byDay',             coalesce((SELECT jsonb_agg(jsonb_build_object(
+                                              'businessDate',      dy.bd,
+                                              'trading',           dy.trading,
+                                              'bills',             dy.bills,
+                                              'gross',             dy.gross,
+                                              'costOfGoods',       dy.cogs,
+                                              'grossProfit',       dy.gross - dy.cogs,
+                                              'operatingExpenses', dy.opex,
+                                              'net',               dy.gross - dy.cogs - dy.opex)
+                                            ORDER BY dy.bd)
+                                            FROM days dy WHERE dy.bd BETWEEN p.from_d AND p.to_d), '[]'::jsonb),
+              'byDayOfWeek',       (SELECT jsonb_agg(to_jsonb(dw) ORDER BY dw."isoDay") FROM day_of_week dw),
+              'byHour',            coalesce((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.hour) FROM sales_by_hour s), '[]'::jsonb),
+              'expensesByCategory', coalesce((SELECT jsonb_agg(to_jsonb(ebc) ORDER BY ebc.amount DESC, ebc.category)
+                                              FROM expenses_by_category_pct ebc), '[]'::jsonb),
+              'expensesByMonth',   jsonb_build_object(
+                                     'months', coalesce((SELECT jsonb_agg(to_char(gm.month_start, 'YYYY-MM') ORDER BY gm.month_start)
+                                                         FROM grid_months gm), '[]'::jsonb),
+                                     'rows',   coalesce((SELECT jsonb_agg(to_jsonb(gr) ORDER BY gr.total DESC, gr.category)
+                                                         FROM grid_rows gr), '[]'::jsonb)),
+              -- Weakest table first: lowest revenue per occupied hour, and a table nobody
+              -- played (NULL) is the weakest of all. The two sort columns are dropped.
+              'tables',            coalesce((SELECT jsonb_agg(to_jsonb(tb) - 'table_number' - 'name'
+                                                              ORDER BY tb."revenuePerOccupiedHour" ASC NULLS FIRST,
+                                                                       tb.table_number, tb.name)
+                                             FROM tables tb), '[]'::jsonb),
+              -- Thinnest margin first, so anything sold at or below cost is at the top.
+              'products',          coalesce((SELECT jsonb_agg(to_jsonb(ps) - 'product_id'
+                                                              ORDER BY ps.margin ASC, ps.revenue DESC, ps.name)
+                                             FROM products_sold ps), '[]'::jsonb),
+              'unsoldProducts',    coalesce((SELECT jsonb_agg(to_jsonb(up) ORDER BY up."capitalOnShelf" DESC, up.name)
+                                             FROM unsold_products up), '[]'::jsonb),
+              'givenAway',         (SELECT ga.lines || jsonb_build_object(
+                                              'total',          ga.total,
+                                              'percentOfGross', CASE WHEN h.gross > 0 THEN round(ga.total / h.gross * 100, 1) END)
+                                    FROM given_away ga, headline h WHERE h.which = 'current'),
+              'cash',              (SELECT to_jsonb(c) || to_jsonb(u) || jsonb_build_object('unsettled', to_jsonb(ua))
+                                    FROM cash c, uncounted u, unsettled_aging ua)
+            )::text AS report
+            FROM params p
+            """;
+
     @PersistenceContext
     private EntityManager entityManager;
 
@@ -647,6 +1080,19 @@ public class ReportRepository {
         return (String) entityManager.createNativeQuery(LOSSES_DETAIL_SQL, String.class)
                 .setParameter("branchId", branchId.toString())
                 .setParameter("reportDate", reportDate.toString())
+                .getSingleResult();
+    }
+
+    // The previous window is the service's decision (see ReportServiceImpl.previousPeriod); the
+    // SQL only reads both.
+    public String periodReport(UUID branchId, LocalDate from, LocalDate to,
+                               LocalDate previousFrom, LocalDate previousTo) {
+        return (String) entityManager.createNativeQuery(PERIOD_REPORT_SQL, String.class)
+                .setParameter("branchId", branchId.toString())
+                .setParameter("fromDate", from.toString())
+                .setParameter("toDate", to.toString())
+                .setParameter("prevFrom", previousFrom.toString())
+                .setParameter("prevTo", previousTo.toString())
                 .getSingleResult();
     }
 }

@@ -8,6 +8,7 @@ import type {
   DailyReport,
   LossesDetail,
   Paged,
+  PeriodReport,
 } from '../types';
 
 /**
@@ -23,6 +24,15 @@ export function fetchLossesDetail(businessDate?: string): Promise<LossesDetail> 
 /** ADMIN only. One call for the whole dashboard, so the sections cannot drift apart. */
 export function fetchDailyReport(date?: string): Promise<DailyReport> {
   return request<DailyReport>('/reports/daily', { query: { date } });
+}
+
+/**
+ * ADMIN only. Any range of business dates, inclusive, against the equivalent range before it
+ * — the server picks the previous period and returns its dates, so nothing here computes one.
+ * `to` before `from`, or over 366 days, is a 400.
+ */
+export function fetchPeriodReport(from: string, to: string): Promise<PeriodReport> {
+  return request<PeriodReport>('/reports/period', { query: { from, to } });
 }
 
 /** ADMIN only. Newest first; `size` is capped at 200 server-side. */

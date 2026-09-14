@@ -311,3 +311,28 @@
     line-height: 1.15;
   }
 }
+
+/* ── Print ──────────────────────────────────────────────────────────────────────────
+   The period report is the page that gets printed: the browser's Print → Save as PDF is the
+   PDF export. Navigation, the business-day header and the controls go; every section stays,
+   on white, and a section that opts in (print:break-before-page) starts a new sheet. */
+@media print {
+  nav[aria-label='Main'],
+  header {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+  main {
+    padding: 0 !important;
+  }
+  .overflow-x-auto {
+    overflow: visible !important;
+  }
+  svg {
+    min-width: 0 !important;
+  }
+}

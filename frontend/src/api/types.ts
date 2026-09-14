@@ -1298,6 +1298,153 @@ export interface ExpenseCategoryTotal {
   amount: Money;
 }
 
+/* ── Period report (ADMIN) ───────────────────────────────────────────────────────── */
+
+/**
+ * Which rule chose the previous period. The server decides from the shape of the range, so a
+ * bookmarked from/to always reproduces the same comparison.
+ */
+export type PeriodComparison =
+  | 'SAME_DAYS_OF_PREVIOUS_MONTH'
+  | 'SAME_DAYS_OF_PREVIOUS_WEEK'
+  | 'PRECEDING_DAYS';
+
+/**
+ * The headline for one window. GROSS PROFIT is gross less cost of goods — what the dashboard
+ * calls profit. NET is gross profit less operating expenses. A TRADING DAY is a business date
+ * with at least one sale or a cash count; every per-day figure divides by trading days.
+ */
+export interface PeriodTotals {
+  bills: number;
+  gross: Money;
+  costOfGoods: Money;
+  grossProfit: Money;
+  operatingExpenses: Money;
+  net: Money;
+  tradingDays: number;
+  /** Null when there were no trading days. */
+  grossPerTradingDay: Money | null;
+  netPerTradingDay: Money | null;
+  /** (gross − cost of goods) / gross, one decimal. Null when gross is zero. */
+  grossMarginPercent: number | null;
+}
+
+export interface BreakEven {
+  /** opex ÷ gross margin ratio ÷ trading days. Null when not computable. */
+  requiredGrossPerTradingDay: Money | null;
+  actualGrossPerTradingDay: Money | null;
+  /** False when there are no sales or the margin is not positive. */
+  computable: boolean;
+}
+
+export interface PeriodDay {
+  businessDate: BusinessDate;
+  /** False on a calendar night the hall did not trade — the row is still present, at zero. */
+  trading: boolean;
+  bills: number;
+  gross: Money;
+  costOfGoods: Money;
+  grossProfit: Money;
+  operatingExpenses: Money;
+  net: Money;
+}
+
+export interface DayOfWeekAverage {
+  /** ISO: 1 is Monday, 7 is Sunday. */
+  isoDay: number;
+  tradingDays: number;
+  /** Null when that weekday never traded in the period. */
+  avgGross: Money | null;
+  avgBills: number | null;
+  avgNet: Money | null;
+}
+
+export interface PeriodExpenseCategory {
+  category: string;
+  amount: Money;
+  previousAmount: Money;
+  /** Null when gross is zero. */
+  percentOfGross: number | null;
+}
+
+export interface ExpenseMonthGrid {
+  /** "YYYY-MM", six of them, oldest first. The last runs only to `to`. */
+  months: string[];
+  rows: { category: string; amounts: Money[]; total: Money }[];
+}
+
+export interface PeriodTable {
+  tableName: string;
+  /** Wall clock, pauses included — the dashboard's definition. */
+  occupiedMinutes: number;
+  /** Over 19 hours × the period's trading days. Null when there were none. */
+  utilisationPercent: number | null;
+  /** What the time on this table was charged, a moved session split by minutes. */
+  timeRevenue: Money;
+  /** Null for a table nobody played. */
+  revenuePerOccupiedHour: Money | null;
+}
+
+export interface PeriodProduct {
+  name: string;
+  quantity: Quantity;
+  revenue: Money;
+  cost: Money;
+  margin: Money;
+  marginPercent: number | null;
+}
+
+export interface UnsoldProduct {
+  name: string;
+  qtyOnHand: Quantity;
+  avgCost: Money;
+  capitalOnShelf: Money;
+}
+
+/** The dashboard's eight giveaway lines summed over the period, with their total. */
+export interface PeriodLosses extends Losses {
+  total: Money;
+  /** Null when gross is zero. */
+  percentOfGross: number | null;
+}
+
+export interface CashDiscipline {
+  varianceTotal: Money;
+  nightsWithVariance: number;
+  countedNights: number;
+  uncountedTradingDays: number;
+  /** Debts still open, live by status, aged by the night they were played. */
+  unsettled: {
+    thisPeriod: BillCountAndAmount;
+    oneToFourWeeksBefore: BillCountAndAmount;
+    older: BillCountAndAmount;
+  };
+}
+
+export interface PeriodReport {
+  from: BusinessDate;
+  to: BusinessDate;
+  previousFrom: BusinessDate;
+  previousTo: BusinessDate;
+  comparison: PeriodComparison;
+  headline: PeriodTotals;
+  previousHeadline: PeriodTotals;
+  breakEven: BreakEven;
+  byDay: PeriodDay[];
+  /** Seven rows, Monday first. */
+  byDayOfWeek: DayOfWeekAverage[];
+  byHour: HourlySales[];
+  expensesByCategory: PeriodExpenseCategory[];
+  expensesByMonth: ExpenseMonthGrid;
+  /** Weakest first. */
+  tables: PeriodTable[];
+  /** Thinnest margin first. */
+  products: PeriodProduct[];
+  unsoldProducts: UnsoldProduct[];
+  givenAway: PeriodLosses;
+  cash: CashDiscipline;
+}
+
 export interface AuditEntry {
   id: UUID;
   action: string;

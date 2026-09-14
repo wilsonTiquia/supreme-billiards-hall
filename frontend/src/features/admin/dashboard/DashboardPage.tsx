@@ -23,17 +23,45 @@ import { formatMoney } from '@/lib/money';
  * comparison of two figures the server already computed, it is never sent anywhere, and the
  * API ships `previousTotals` for exactly this. Nothing billable is derived here.
  */
-function Delta({ now, before }: { now: number; before: number }) {
+export function Delta({
+  now,
+  before,
+  against = 'previous day',
+  none = 'No trading the night before',
+  kind = 'money',
+  goodWhen = 'up',
+}: {
+  now: number;
+  before: number;
+  /** What `before` is — "previous day" here, "previous period" on the period report. */
+  against?: string;
+  /** What to say when there is nothing to compare against. */
+  none?: string;
+  /** A count moves by a number, a percentage by points; only money is a peso figure. */
+  kind?: 'money' | 'count' | 'percent';
+  /** Which direction is the good one. Takings up is good; an expense up is not. */
+  goodWhen?: 'up' | 'down';
+}) {
   if (before === 0) {
-    return <p className="mt-1 text-label text-text-dim">No trading the night before</p>;
+    return <p className="mt-1 text-label text-text-dim">{none}</p>;
   }
   const change = now - before;
-  const percent = (change / before) * 100;
   const up = change > 0;
+  const good = goodWhen === 'down' ? change < 0 : up;
+  const magnitude =
+    kind === 'money'
+      ? formatMoney(Math.abs(change))
+      : kind === 'count'
+        ? Math.abs(change).toLocaleString('en-PH')
+        : `${Math.abs(change).toFixed(1)} pts`;
+  // A percentage of a negative base is a number that means nothing — a net that went from
+  // -2,000 to +50,000 is not "up 2600%". Points are already a difference, so none there either.
+  const percent = kind !== 'percent' && before > 0 ? ` (${((change / before) * 100).toFixed(1)}%)` : '';
   return (
-    <p className={`mt-1 text-label ${up ? 'text-green' : change < 0 ? 'text-danger' : 'text-text-dim'}`}>
-      {up ? '▲' : change < 0 ? '▼' : '–'} {formatMoney(Math.abs(change))} ({percent.toFixed(1)}%)
-      <span className="text-text-dim"> vs previous day</span>
+    <p className={`mt-1 text-label ${change === 0 ? 'text-text-dim' : good ? 'text-green' : 'text-danger'}`}>
+      {up ? '▲' : change < 0 ? '▼' : '–'} {magnitude}
+      {percent}
+      <span className="text-text-dim"> vs {against}</span>
     </p>
   );
 }
@@ -46,12 +74,14 @@ function Headline({
   now,
   before,
   kind = 'money',
+  goodWhen = 'up',
 }: {
   label: string;
   value: number;
   now: number;
   before: number;
   kind?: 'money' | 'count';
+  goodWhen?: 'up' | 'down';
 }) {
   return (
     <Card>
@@ -59,7 +89,7 @@ function Headline({
       <div className="tabular mt-2 text-amount text-text">
         {kind === 'money' ? formatMoney(value) : value}
       </div>
-      <Delta now={now} before={before} />
+      <Delta now={now} before={before} kind={kind} goodWhen={goodWhen} />
     </Card>
   );
 }
@@ -72,7 +102,7 @@ function Headline({
  * the first band on a good night and know exactly where to look on a bad one — which only works
  * if the bands are labelled, so nobody has to infer the grouping from adjacency.
  */
-function Group({ title, children }: { title: string; children: React.ReactNode }) {
+export function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="flex flex-col gap-4">
       <h2 className="text-label uppercase tracking-wide text-text-dim">{title}</h2>
@@ -81,7 +111,7 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
-function Tile({ title, children }: { title: string; children: React.ReactNode }) {
+export function Tile({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <Card>
       <h3 className="text-heading text-text">{title}</h3>
@@ -214,7 +244,7 @@ function Attention({
   );
 }
 
-function Row({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
+export function Row({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
   return (
     <div className="flex justify-between gap-3 py-1">
       <span className={`text-body ${dim ? 'text-text-dim' : 'text-text'}`}>{label}</span>
@@ -422,6 +452,7 @@ export function DashboardPage() {
                 value={data.expenses.total}
                 now={data.expenses.total}
                 before={data.expenses.previousTotal}
+                goodWhen="down"
               />
               <Headline
                 label="Bills settled"

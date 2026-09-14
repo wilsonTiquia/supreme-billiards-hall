@@ -33,12 +33,15 @@ const COUNTER: NavGroup[] = [
   },
 ];
 
-/** The owner's eight, in the three groups they actually fall into. */
+/** The owner's nine, in the three groups they actually fall into. */
 const ADMIN: NavGroup[] = [
   {
     emphasis: 'primary',
     items: [
       { to: '/dashboard', label: 'Dashboard', short: 'Db' },
+      // Beside the dashboard, because it is the same question over a longer span: the
+      // dashboard answers "how did last night go", this answers "is the business making money".
+      { to: '/admin/reports', label: 'Reports', short: 'Rp' },
       { to: '/admin/products', label: 'Products', short: 'Pr' },
       { to: '/admin/stock', label: 'Stock', short: 'St' },
     ],

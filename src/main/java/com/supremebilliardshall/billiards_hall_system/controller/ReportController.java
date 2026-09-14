@@ -3,6 +3,7 @@ package com.supremebilliardshall.billiards_hall_system.controller;
 import com.supremebilliardshall.billiards_hall_system.dto.APIResponse;
 import com.supremebilliardshall.billiards_hall_system.dto.report.DailyReportResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.report.LossesDetailResponseDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.report.PeriodReportResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.service.ReportService;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.ResponseEntity;
@@ -44,6 +45,19 @@ public class ReportController {
                 ok(APIResponse.success(
                         losses,
                         "Losses detail fetched successfully"));
+    }
+
+    // The owner's month. Inclusive business dates, both required; `to` before `from` or a
+    // range over a year is a 400. Reads only -- nothing on the page it feeds is billable.
+    @GetMapping("/period")
+    public ResponseEntity<APIResponse<PeriodReportResponseDTO>> getPeriodReport(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        PeriodReportResponseDTO report = reportService.getPeriodReport(from, to);
+        return ResponseEntity.
+                ok(APIResponse.success(
+                        report,
+                        "Period report fetched successfully"));
     }
 
 }

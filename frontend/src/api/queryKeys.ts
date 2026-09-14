@@ -50,6 +50,7 @@ export const queryKeys = {
 
   dailyReport: (date?: BusinessDate) => ['reports', 'daily', date ?? 'current'] as const,
   lossesDetail: (date?: BusinessDate) => ['reports', 'losses', date ?? 'current'] as const,
+  periodReport: (from: BusinessDate, to: BusinessDate) => ['reports', 'period', from, to] as const,
   audit: (query: AuditQuery) => ['audit', query] as const,
   auditFeed: (query: AuditFeedQuery) => ['audit', 'feed', query] as const,
   auditFilters: ['audit', 'filters'] as const,

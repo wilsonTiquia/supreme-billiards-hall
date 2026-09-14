@@ -337,7 +337,10 @@ Do all of this on the day the app first answers on a public address, not before:
 - **No refunds** against a settled bill
 - **Employees can set any friend rate**, with no limit and no approval. Fully logged
 - **A stock correction cannot be undone** — post another correction; the ledger is append-only
-- **No PDF export yet.** Read the dashboard, or take a screenshot
+- **No PDF export from the dashboard.** The period report (Admin → Reports) prints cleanly —
+  Print → Save as PDF in the browser gives the month as a PDF, navigation and controls left out,
+  with page breaks before the expenses and products sections. The nightly dashboard still has no
+  print layout: read it, or take a screenshot
 - **Recovery from a dead Mac is untested**, and the scripts that would perform it exist in one
   place. See "Rebuilding on new hardware" above
 

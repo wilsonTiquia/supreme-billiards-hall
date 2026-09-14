@@ -14,6 +14,7 @@ import { EndOfDayPage } from '@/features/endofday/EndOfDayPage';
 import { UnsettledPage } from '@/features/unsettled/UnsettledPage';
 import { ExpensesPage } from '@/features/expenses/ExpensesPage';
 import { DashboardPage } from '@/features/admin/dashboard/DashboardPage';
+import { ReportsPage } from '@/features/admin/reports/ReportsPage';
 import { ProductsPage } from '@/features/admin/catalog/ProductsPage';
 import { CategoriesPage } from '@/features/admin/catalog/CategoriesPage';
 import { TablesPage } from '@/features/admin/catalog/TablesPage';
@@ -51,6 +52,7 @@ export function AppRoutes() {
 
             <Route element={<RequireAdmin />}>
               <Route path="dashboard" element={<DashboardPage />} />
+              <Route path="admin/reports" element={<ReportsPage />} />
               <Route path="admin/products" element={<ProductsPage />} />
               <Route path="admin/categories" element={<CategoriesPage />} />
               <Route path="admin/tables" element={<TablesPage />} />
