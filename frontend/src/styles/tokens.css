@@ -25,12 +25,13 @@
      ones from the spec; no new colour is invented. */
   --amount:    #F2C230;
 
-  /* Chart marks. Same trick as --amount, extended to SVG: gold reads at 11.18:1 on the dark
-     ground, so it is the bar colour here — but on the admin screen's white it is 1.68:1 and
-     effectively invisible, so the light theme swaps it for the darkened green. A chart drawn
-     with fill-chart-bar is legible in both themes by construction, and .fill-gold stays for
-     the wordmark, where gold sits on a brand-green disc rather than on paper. */
-  --chart-bar: #F2C230;
+  /* Chart marks. NEUTRAL by design: green means better and red means attention, and a bar
+     cannot mean either, so the bars are gold in both themes — full gold here, where it reads
+     at 11.18:1, and a darkened gold on the light ground where the real thing is 1.68:1 and
+     effectively invisible. --chart-bar-strong is the second shade, for the bars that carry
+     the rhythm (weekends, the busiest hour); the plain one is the quiet weekday shade. */
+  --chart-bar:        color-mix(in oklab, #F2C230 62%, #171C19);
+  --chart-bar-strong: #F2C230;
 }
 
 /* ── Light: the admin dashboard, read in daylight and sometimes printed. ────────────── */
@@ -51,7 +52,10 @@
 
   /* Gold would be 1.68:1 here. Amounts fall back to full-strength text. */
   --amount:    #14201A;
-  --chart-bar: #14702E;  /* 6.20:1 on white */
+  /* Gold darkened until it passes AA for a graphic on white: 3.82:1 and 6.25:1. Never the
+     green — a chart drawn in the brand colour reads as good news whatever it shows. */
+  --chart-bar:        #A67C00;
+  --chart-bar-strong: #7A5C00;
 }
 
 /* ── Mapping into Tailwind ──────────────────────────────────────────────────────────
@@ -77,6 +81,7 @@
   --color-ink:      var(--ink);
   --color-amount:   var(--amount);
   --color-chart-bar: var(--chart-bar);
+  --color-chart-bar-strong: var(--chart-bar-strong);
 
   /* System stack, no webfonts: the venue machine may have no internet, and system faces
      are the most legible at small sizes anyway. */

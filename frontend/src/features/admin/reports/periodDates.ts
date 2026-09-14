@@ -81,9 +81,23 @@ export function presetOf(from: BusinessDate, to: BusinessDate, current: Business
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** "Sat 1" — how a night is named in the every-night table. The month is in the heading. */
+export function shortNight(date: BusinessDate): string {
+  const d = parse(date);
+  return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()}`;
+}
+
+/** Friday and Saturday nights carry the hall; they are shaded apart on the chart and the table. */
+export function isWeekendNight(date: BusinessDate): boolean {
+  const day = parse(date).getUTCDay();
+  return day === 5 || day === 6;
+}
+
 // Day before month, always — "31 Aug", never "Aug 31". Built by hand because Intl's en-PH
 // short form puts the month first, and the label has to read as a date range at a glance.
-function dayMonth(date: BusinessDate): string {
+export function dayMonth(date: BusinessDate): string {
   const d = parse(date);
   return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }

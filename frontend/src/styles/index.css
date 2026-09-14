@@ -43,6 +43,9 @@
   .border-gold  { border-color: var(--gold); }
   .fill-brand   { fill: var(--brand); }
   .fill-chart-bar { fill: var(--chart-bar); }
+  .fill-chart-bar-strong { fill: var(--chart-bar-strong); }
+  .stroke-text-dim { stroke: var(--text-dim); }
+  .fill-surface   { fill: var(--surface); }
   .fill-text-dim  { fill: var(--text-dim); }
   .fill-gold    { fill: var(--gold); }
   .stroke-gold  { stroke: var(--gold); }
@@ -288,6 +291,16 @@
     font-weight: 700;
     line-height: 1;
     letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums;
+  }
+  /* The second-rank figures on the owner's reading pages. A named utility rather than
+     `text-amount`, which is ALSO a colour token and resolves to the colour — which is how
+     every headline on the dashboard came out at body size. */
+  .figure-large {
+    font-size: 1.75rem;
+    font-weight: 650;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
     font-variant-numeric: tabular-nums;
   }
   .figure-timer {

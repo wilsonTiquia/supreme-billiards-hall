@@ -1346,6 +1346,8 @@ export interface PeriodDay {
   costOfGoods: Money;
   grossProfit: Money;
   operatingExpenses: Money;
+  /** The night's operating cost by category, largest first. Sums to `operatingExpenses`. */
+  expenses: ExpenseCategoryTotal[];
   net: Money;
 }
 

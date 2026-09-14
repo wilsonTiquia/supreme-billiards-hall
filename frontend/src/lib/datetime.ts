@@ -47,6 +47,21 @@ export function formatBusinessDate(date: BusinessDate): string {
   return longDate.format(new Date(`${date}T12:00:00Z`));
 }
 
+const weekdayName = new Intl.DateTimeFormat('en-PH', { timeZone: MANILA, weekday: 'long' });
+
+/** "Saturday" from a business date — for "vs last Saturday". Parsed as midday UTC, as above. */
+export function weekdayOf(date: BusinessDate): string {
+  return weekdayName.format(new Date(`${date}T12:00:00Z`));
+}
+
+/**
+ * Minutes as hours to one decimal — "10.1 h". For the reading pages, where "12,098 min" is
+ * not a unit anybody thinks in. A duration for the eye; nothing is billed from it.
+ */
+export function formatHours(minutes: number): string {
+  return `${(minutes / 60).toLocaleString('en-PH', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} h`;
+}
+
 /**
  * A whole number of minutes said the way the hall says it: "2 hours", "1h 30m", "45 min".
  *

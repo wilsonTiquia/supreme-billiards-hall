@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { LossesDetail, type LossKind } from './LossesDetail';
-import { NightRail } from './NightRail';
 import { useQuery } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import { LossesDetail, type LossKind } from './LossesDetail';
+import { HourChart } from './HourChart';
 import { fetchDailyReport } from '@/api/endpoints/reports';
 import {
   fetchCashCount,
@@ -9,253 +10,26 @@ import {
   fetchUncountedDays,
 } from '@/api/endpoints/businessDay';
 import { fetchUnsettledBills } from '@/api/endpoints/bills';
-import { Link } from 'react-router-dom';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
-import type { DailyTotals, Money, TimeRevenueByMode } from '@/api/types';
+import type { DailyReport, Losses, TimeRevenueByMode } from '@/api/types';
 import { AdminPage } from '../AdminPage';
-import { Card } from '@/components/Card';
+import { BigFigure, comparedClause, describeChange } from '../Comparison';
+import { Disclosure } from '@/components/Disclosure';
 import { Spinner } from '@/components/Spinner';
-import { formatMoney } from '@/lib/money';
+import { formatPesos } from '@/lib/money';
+import { formatBusinessDate, formatHours, weekdayOf } from '@/lib/datetime';
 
 /**
- * The one place the browser does arithmetic on money, and deliberately so: a delta is a
- * comparison of two figures the server already computed, it is never sent anywhere, and the
- * API ships `previousTotals` for exactly this. Nothing billable is derived here.
- */
-export function Delta({
-  now,
-  before,
-  against = 'previous day',
-  none = 'No trading the night before',
-  kind = 'money',
-  goodWhen = 'up',
-}: {
-  now: number;
-  before: number;
-  /** What `before` is — "previous day" here, "previous period" on the period report. */
-  against?: string;
-  /** What to say when there is nothing to compare against. */
-  none?: string;
-  /** A count moves by a number, a percentage by points; only money is a peso figure. */
-  kind?: 'money' | 'count' | 'percent';
-  /** Which direction is the good one. Takings up is good; an expense up is not. */
-  goodWhen?: 'up' | 'down';
-}) {
-  if (before === 0) {
-    return <p className="mt-1 text-label text-text-dim">{none}</p>;
-  }
-  const change = now - before;
-  const up = change > 0;
-  const good = goodWhen === 'down' ? change < 0 : up;
-  const magnitude =
-    kind === 'money'
-      ? formatMoney(Math.abs(change))
-      : kind === 'count'
-        ? Math.abs(change).toLocaleString('en-PH')
-        : `${Math.abs(change).toFixed(1)} pts`;
-  // A percentage of a negative base is a number that means nothing — a net that went from
-  // -2,000 to +50,000 is not "up 2600%". Points are already a difference, so none there either.
-  const percent = kind !== 'percent' && before > 0 ? ` (${((change / before) * 100).toFixed(1)}%)` : '';
-  return (
-    <p className={`mt-1 text-label ${change === 0 ? 'text-text-dim' : good ? 'text-green' : 'text-danger'}`}>
-      {up ? '▲' : change < 0 ? '▼' : '–'} {magnitude}
-      {percent}
-      <span className="text-text-dim"> vs {against}</span>
-    </p>
-  );
-}
-
-/* Secondary to the night band above it, and sized to say so. These were Display-size when
-   they were the top of the page; the hero owns that weight now. */
-function Headline({
-  label,
-  value,
-  now,
-  before,
-  kind = 'money',
-  goodWhen = 'up',
-}: {
-  label: string;
-  value: number;
-  now: number;
-  before: number;
-  kind?: 'money' | 'count';
-  goodWhen?: 'up' | 'down';
-}) {
-  return (
-    <Card>
-      <div className="text-label uppercase text-text-dim">{label}</div>
-      <div className="tabular mt-2 text-amount text-text">
-        {kind === 'money' ? formatMoney(value) : value}
-      </div>
-      <Delta now={now} before={before} kind={kind} goodWhen={goodWhen} />
-    </Card>
-  );
-}
-
-/**
- * A band of the page, with the question it answers as its heading.
+ * The owner's morning. Ten seconds, on a phone, without scrolling: how much was made, is that
+ * better or worse than usual, is there anything to do. Everything else is a detail and lives
+ * below, collapsed, with its one key figure showing.
  *
- * The order is the order the questions get asked: how did the night go, where did it come from,
- * what did it cost, what needs doing, who did it. An owner should be able to stop reading after
- * the first band on a good night and know exactly where to look on a bad one — which only works
- * if the bands are labelled, so nobody has to infer the grouping from adjacency.
+ * "Usual" is the same weekday last week. A Saturday against the Friday before it was a
+ * comparison of two different nights, and made every Sunday read as a collapse.
  */
-export function Group({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="flex flex-col gap-4">
-      <h2 className="text-label uppercase tracking-wide text-text-dim">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-export function Tile({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <Card>
-      <h3 className="text-heading text-text">{title}</h3>
-      <div className="mt-3">{children}</div>
-    </Card>
-  );
-}
-
-/**
- * The actionable band.
- *
- * Each row names the thing to do and links to where it gets done, because a count with nowhere
- * to click is a nag rather than a control. When everything is clear the band still renders —
- * one green line — so that "nothing outstanding" is a fact the owner read, not an absence they
- * have to infer from a missing section.
- */
-function Attention({
-  lowStock,
-  unsettledCount,
-  outstanding,
-  uncountedCount,
-  variance,
-  counted,
-}: {
-  lowStock: { name: string; qtyOnHand: number }[];
-  unsettledCount: number;
-  /** Every debt still open, across all dates. A live figure, not a fact about this night. */
-  outstanding: { count: number; amount: number };
-  uncountedCount: number;
-  variance: number | null;
-  counted: boolean;
-}) {
-  // Only a non-zero variance is worth surfacing here; a drawer that balanced is not an action.
-  const varianceOff = counted && variance !== null && variance !== 0;
-  const clear =
-    lowStock.length === 0 &&
-    unsettledCount === 0 &&
-    outstanding.count === 0 &&
-    uncountedCount === 0 &&
-    !varianceOff;
-
-  if (clear) {
-    return (
-      <Card>
-        <p className="text-body text-green">
-          Nothing outstanding. Stock is fine, nobody owes anything, and the drawer balanced.
-        </p>
-      </Card>
-    );
-  }
-
-  return (
-    <div className="grid items-start gap-4 2xl:grid-cols-2">
-      {varianceOff ? (
-        <Tile title="Drawer variance">
-          <p className="flex items-baseline justify-between gap-3">
-            <span className="text-body text-text">
-              {variance! < 0 ? 'The drawer was short.' : 'The drawer was over.'}
-            </span>
-            <span className={`tabular text-amount ${variance! < 0 ? 'text-danger' : 'text-amount'}`}>
-              {variance! > 0 ? '+' : ''}
-              {formatMoney(variance!)}
-            </span>
-          </p>
-          <Link to="/end-of-day" className="hit mt-2 inline-flex items-center text-body text-info underline">
-            Open the count
-          </Link>
-        </Tile>
-      ) : null}
-
-      {uncountedCount > 0 ? (
-        <Tile title="Uncounted nights">
-          <p className="text-body text-text">
-            {uncountedCount} {uncountedCount === 1 ? 'night traded' : 'nights traded'} and{' '}
-            {uncountedCount === 1 ? 'was' : 'were'} never counted.
-          </p>
-          <Link to="/end-of-day" className="hit mt-2 inline-flex items-center text-body text-info underline">
-            Count {uncountedCount === 1 ? 'it' : 'them'}
-          </Link>
-        </Tile>
-      ) : null}
-
-      {/* Two different problems, never one row. A bill nobody checked out is a miss to be
-          fixed tonight; a debt is money somebody agreed to wait for, and it is chased on a
-          different screen and a different timescale. */}
-      {unsettledCount > 0 ? (
-        <Tile title="Not checked out">
-          <p className="text-body text-text">
-            {unsettledCount} {unsettledCount === 1 ? 'bill was' : 'bills were'} never checked out
-            — most likely a miss.
-          </p>
-          <Link to="/end-of-day" className="hit mt-2 inline-flex items-center text-body text-info underline">
-            See them
-          </Link>
-        </Tile>
-      ) : null}
-
-      {outstanding.count > 0 ? (
-        <Tile title="Owed to the hall">
-          <p className="flex items-baseline justify-between gap-3">
-            <span className="text-body text-text">
-              {outstanding.count} unpaid {outstanding.count === 1 ? 'bill' : 'bills'}, all dates.
-            </span>
-            <span className="tabular text-amount">{formatMoney(outstanding.amount)}</span>
-          </p>
-          <Link to="/unsettled" className="hit mt-2 inline-flex items-center text-body text-info underline">
-            Chase them
-          </Link>
-        </Tile>
-      ) : null}
-
-      {lowStock.length > 0 ? (
-        <Tile title="Low or negative stock">
-          {lowStock.map((line) => (
-            <div key={line.name} className="flex justify-between gap-3 py-1">
-              <span className="text-body text-text">{line.name}</span>
-              <span
-                className={`tabular text-body ${line.qtyOnHand <= 0 ? 'text-danger' : 'text-text'}`}
-              >
-                {line.qtyOnHand}
-              </span>
-            </div>
-          ))}
-          <Link to="/admin/stock" className="hit mt-2 inline-flex items-center text-body text-info underline">
-            Record a delivery
-          </Link>
-        </Tile>
-      ) : null}
-    </div>
-  );
-}
-
-export function Row({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
-  return (
-    <div className="flex justify-between gap-3 py-1">
-      <span className={`text-body ${dim ? 'text-text-dim' : 'text-text'}`}>{label}</span>
-      <span className="tabular text-body text-text">{value}</span>
-    </div>
-  );
-}
-
 export function DashboardPage() {
   const [date, setDate] = useState<string>('');
-  // Which loss figure the owner clicked into, if any.
   const [openLoss, setOpenLoss] = useState<LossKind | null>(null);
 
   // Defaults to the business day the server says is current — never one worked out here.
@@ -271,12 +45,9 @@ export function DashboardPage() {
   });
 
   /*
-   * The three things that need doing, which the daily report does not carry.
-   *
-   * They live on other endpoints because they are not report figures — an unsettled bill and an
-   * uncounted night are states, not takings. Gathering them here is the whole point of the
-   * band: the owner should not have to visit three screens to find out whether anything is
-   * outstanding, because the answer is usually "no" and nobody checks three screens for a no.
+   * The things that need doing, which the daily report does not carry. They live on other
+   * endpoints because they are states rather than takings, and they are gathered here so
+   * the owner does not have to visit three screens to learn that nothing is outstanding.
    */
   const unsettled = useQuery({
     queryKey: queryKeys.unsettledBills,
@@ -290,42 +61,43 @@ export function DashboardPage() {
     staleTime: 60_000,
   });
 
-  const shownDateForCount = date || currentDay.data?.businessDate || '';
+  const shownDate = date || currentDay.data?.businessDate || '';
   const cashCount = useQuery({
-    queryKey: queryKeys.cashCount(shownDateForCount),
-    queryFn: () => fetchCashCount(shownDateForCount),
-    enabled: Boolean(shownDateForCount),
+    queryKey: queryKeys.cashCount(shownDate),
+    queryFn: () => fetchCashCount(shownDate),
+    enabled: Boolean(shownDate),
     staleTime: 60_000,
   });
 
-  const shownDate = date || currentDay.data?.businessDate || '';
   const data = report.data;
+  const tonight = !date || date === currentDay.data?.businessDate;
 
   return (
-    <AdminPage
-      title="Dashboard"
-      intro="One call, one night. Every figure here is the server's; nothing on this screen is recomputed."
-      error={report.isError ? messageOf(report.error) : null}
-    >
-      <div className="mb-6 flex flex-wrap items-end gap-3">
-        <label className="flex flex-col gap-2">
-          <span className="text-label uppercase text-text-dim">Business day</span>
+    <AdminPage title="Dashboard" error={report.isError ? messageOf(report.error) : null}>
+      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        {/* The report can arrive before the business day does; an empty string used to reach
+            formatBusinessDate and take the page down to the error boundary. */}
+        <p className="text-label uppercase text-text-dim">
+          {shownDate ? formatBusinessDate(shownDate) : ''}
+        </p>
+        <div className="flex items-center gap-2">
+          {date ? (
+            <button
+              type="button"
+              onClick={() => setDate('')}
+              className="hit rounded-lg border border-border bg-surface px-3 text-label text-text"
+            >
+              Tonight
+            </button>
+          ) : null}
           <input
             type="date"
+            aria-label="Business day"
             value={shownDate}
             onChange={(event) => setDate(event.target.value)}
-            className="hit rounded-lg border border-border bg-raised px-3 text-body text-text"
+            className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
           />
-        </label>
-        {date ? (
-          <button
-            type="button"
-            onClick={() => setDate('')}
-            className="hit rounded-lg border border-border bg-surface px-4 text-body text-text"
-          >
-            Back to tonight
-          </button>
-        ) : null}
+        </div>
       </div>
 
       {report.isPending ? (
@@ -333,372 +105,356 @@ export function DashboardPage() {
           <Spinner label="Loading the night…" />
         </div>
       ) : !data ? null : (
-        <div className="flex flex-col gap-10">
-          {/* 1 — HOW DID THE NIGHT GO.
-              The hero stays exactly as approved, hour band included. Sales by hour belongs to
-              this question as much as to the next one, and putting the same chart on screen
-              twice would be worse than either placement. */}
-          <Group title="How did the night go">
-            <NightRail
-              businessDate={shownDate}
-              totals={data.totals}
-              previous={data.previousTotals}
-              hours={data.salesByHour}
-            />
-            {/* Beneath the rail rather than inside it, and only when there is something to say.
-                Gross ALREADY contains this figure — the sale counted on the night it was
-                played — so this is a qualification of the number above, not a second number
-                beside it. Silent on a night when everyone paid, because a permanent "₱0.00
-                unsettled" tile would train the eye to skip exactly the row that matters. */}
-            {data.unsettledTonight.count > 0 ? (
-              <div className="mt-4">
-                <Tile title="Unsettled tonight">
-                  <p className="flex items-baseline justify-between gap-3">
-                    <span className="text-body text-text">
-                      {data.unsettledTonight.count}{' '}
-                      {data.unsettledTonight.count === 1 ? 'bill was' : 'bills were'} left owed.
-                      Counted in gross above; not in the drawer.
-                    </span>
-                    <span className="tabular text-amount">
-                      {formatMoney(data.unsettledTonight.amount)}
-                    </span>
-                  </p>
-                  <Link
-                    to="/unsettled"
-                    className="hit mt-2 inline-flex items-center text-body text-info underline"
-                  >
-                    Who owes it
-                  </Link>
-                </Tile>
-              </div>
-            ) : null}
-          </Group>
-
-          {/* 2 — WHERE IT CAME FROM. */}
-          <Group title="Where it came from">
-            <div className="grid items-start gap-4 2xl:grid-cols-2">
-              <Tile title="Table time vs products">
-                <Split totals={data.totals} />
-              </Tile>
-
-              {/* What the time half of that split was sold under. Beside it rather than inside
-                  it: the bar answers "time or drinks", this answers "at what price". */}
-              <Tile title="How table time was priced">
-                <PricingModes rows={data.timeRevenueByMode} timeRevenue={data.totals.timeRevenue} />
-              </Tile>
-
-              <Tile title="Payment mix">
-                {data.paymentMix.map((method) => (
-                  <Row
-                    key={method.method}
-                    label={`${method.method} (${method.payments})`}
-                    value={formatMoney(method.amount)}
-                  />
-                ))}
-              </Tile>
-
-              {/* Money that arrived tonight against an earlier night. It is in the payment mix
-                  above and in tonight's drawer, but deliberately NOT in tonight's gross: that
-                  revenue was recognised on the night it was earned, and counting it again here
-                  would invent a sale that never happened. */}
-              {data.collectedToday.count > 0 ? (
-                <Tile title="Old debts collected">
-                  <p className="flex items-baseline justify-between gap-3">
-                    <span className="text-body text-text">
-                      {data.collectedToday.count}{' '}
-                      {data.collectedToday.count === 1 ? 'debt' : 'debts'} from earlier nights.
-                      In the drawer, not in tonight&rsquo;s gross.
-                    </span>
-                    <span className="tabular text-amount">
-                      {formatMoney(data.collectedToday.amount)}
-                    </span>
-                  </p>
-                </Tile>
-              ) : null}
-
-              <Tile title="Top items">
-                {data.topItems.length === 0 ? (
-                  <p className="text-body text-text-dim">Nothing sold.</p>
-                ) : (
-                  data.topItems.map((item) => (
-                    <Row
-                      key={item.description}
-                      label={`${item.quantity} × ${item.description}`}
-                      value={formatMoney(item.revenue)}
-                    />
-                  ))
-                )}
-              </Tile>
-            </div>
-          </Group>
-
-          {/* 3 — WHAT IT COST.
-              Cost of goods and the three giveaway routes in one band, because they are the same
-              question: what did the night take out. Separating "cost" from "given away" would
-              let someone read the first and think they had the answer. */}
-          <Group title="What it cost">
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Headline
-                label="Cost of goods"
-                value={data.totals.cost}
-                now={data.totals.cost}
-                before={data.previousTotals.cost}
-              />
-              {/* Beside cost of goods, never added to it: that figure is what the drinks cost,
-                  this one is what the building cost, and a single "cost" number that mixed them
-                  would put the rent inside the margin on a beer. */}
-              <Headline
-                label="Operating expenses"
-                value={data.expenses.total}
-                now={data.expenses.total}
-                before={data.expenses.previousTotal}
-                goodWhen="down"
-              />
-              <Headline
-                label="Bills settled"
-                kind="count"
-                value={data.totals.bills}
-                now={data.totals.bills}
-                before={data.previousTotals.bills}
-              />
-            </div>
-
-            <Tile title="What it went on">
-              {data.expenses.byCategory.length === 0 ? (
-                <p className="text-body text-text-dim">Nothing paid out tonight.</p>
-              ) : (
-                data.expenses.byCategory.map((line) => (
-                  <Row
-                    key={line.category}
-                    label={line.category}
-                    value={formatMoney(line.amount)}
-                  />
-                ))
-              )}
-            </Tile>
-
-            <Tile title="Given away">
-              <p className="mb-3 text-label text-text-dim">
-                Click a figure to see who, when, and why.
-              </p>
-              <div className="grid gap-4 md:grid-cols-2">
-                {/* Promos first, then friend rates. Same arithmetic, different facts: a promo
-                    is a decision about the night and a friend rate is a decision about one
-                    person, and the owner cannot manage either while they are one number. */}
-                <LossFigure
-                  label="Promos"
-                  amount={formatMoney(data.losses.promoForgone)}
-                  note={`${data.losses.promoSessions} ${
-                    data.losses.promoSessions === 1 ? 'session' : 'sessions'
-                  } · exact`}
-                  onOpen={() => setOpenLoss('promos')}
-                />
-                <LossFigure
-                  label="Friend rates"
-                  amount={formatMoney(data.losses.friendForgone)}
-                  note={`${data.losses.friendSessions} ${
-                    data.losses.friendSessions === 1 ? 'session' : 'sessions'
-                  } · exact`}
-                  onOpen={() => setOpenLoss('friendRates')}
-                />
-                <LossFigure
-                  label="Flat rate"
-                  amount={formatMoney(data.losses.flatForgone)}
-                  note={`${data.losses.flatSessions} ${
-                    data.losses.flatSessions === 1 ? 'session' : 'sessions'
-                  } · exact`}
-                  onOpen={() => setOpenLoss('flatRates')}
-                />
-                <LossFigure
-                  label="Time not charged"
-                  amount={formatMoney(data.losses.timeReductionForgone)}
-                  note={`${data.losses.reducedSessions} ${
-                    data.losses.reducedSessions === 1 ? 'session' : 'sessions'
-                  } · exact`}
-                  onOpen={() => setOpenLoss('timeReductions')}
-                />
-                {/* The one figure in this tile that is not about table time: it reaches the
-                    beer as well. Beside "Time not charged" rather than folded into it — a bill
-                    can carry both, and they do not overlap. */}
-                <LossFigure
-                  label="Discounts"
-                  amount={formatMoney(data.losses.discountAmount)}
-                  note={`${data.losses.discountBills} ${
-                    data.losses.discountBills === 1 ? 'bill' : 'bills'
-                  } · exact`}
-                  onOpen={() => setOpenLoss('discounts')}
-                />
-                {/* Prize table time. Like the discount it reaches the whole bill rather than a
-                    session's pricing, and like the discount it EXPLAINS gross rather than being
-                    subtracted from it — the drawer holds what was actually collected. */}
-                <LossFigure
-                  label="Vouchers"
-                  amount={formatMoney(data.losses.voucherAmount)}
-                  note={`${data.losses.voucherCount} ${
-                    data.losses.voucherCount === 1 ? 'voucher' : 'vouchers'
-                  } · exact`}
-                  onOpen={() => setOpenLoss('vouchers')}
-                />
-                <LossFigure
-                  label="Voids"
-                  amount={formatMoney(data.losses.voidAmount)}
-                  note={`${data.losses.voidCount} ${data.losses.voidCount === 1 ? 'line' : 'lines'} · exact`}
-                  onOpen={() => setOpenLoss('voids')}
-                />
-                {/* The difference matters: this one is valued at today's average cost, so it
-                    moves when costs move. Every figure above it is exact, from the ledger. */}
-                <LossFigure
-                  label="Comps"
-                  amount={formatMoney(data.losses.compEstimatedCost)}
-                  note={`${data.losses.compQuantity} units · ESTIMATE at current average cost`}
-                  noteTone="estimate"
-                  onOpen={() => setOpenLoss('comps')}
-                />
-              </div>
-            </Tile>
-          </Group>
-
-          {openLoss ? (
-            <LossesDetail
-              kind={openLoss}
-              businessDate={shownDate}
-              summary={data.losses}
-              onClose={() => setOpenLoss(null)}
-            />
-          ) : null}
-
-          {/* 4 — WHAT NEEDS ATTENTION.
-              Everything actionable in one place, and each item says what to do rather than
-              only that something is wrong. When all four are clear the band says so in one
-              line, because a band that is usually empty still has to be worth glancing at. */}
-          <Group title="What needs attention">
-            <Attention
-              lowStock={data.lowStock}
-              unsettledCount={unsettled.data?.length ?? 0}
-              outstanding={data.outstanding}
-              uncountedCount={uncounted.data?.length ?? 0}
-              variance={cashCount.data ? cashCount.data.variance : null}
-              counted={Boolean(cashCount.data)}
-            />
-          </Group>
-
-          {/* 5 — WHO. */}
-          <Group title="Who">
-            <Tile title="Per employee">
-              {/* Below md each person is a block. Five columns in 294px is a scrollbar per
-                  employee on the screen the owner actually opens from home. */}
-              <ul className="flex flex-col gap-3 md:hidden">
-                {data.perEmployee.map((employee) => (
-                  <li key={employee.username} className="rounded-lg border border-border p-3">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="text-body text-text">{employee.fullName}</span>
-                      <span className="tabular text-body text-text">
-                        {formatMoney(employee.profit)}
-                      </span>
-                    </div>
-                    <p className="mt-1 text-label uppercase text-text-dim">
-                      {employee.bills} {employee.bills === 1 ? 'bill' : 'bills'} · gross{' '}
-                      {formatMoney(employee.gross)} · cost {formatMoney(employee.cost)}
-                    </p>
-                  </li>
-                ))}
-              </ul>
-
-              <div className="hidden overflow-x-auto md:block">
-                <table className="w-full min-w-[520px] text-left">
-                  <thead>
-                    <tr className="border-b border-border text-label uppercase text-text-dim">
-                      <th className="py-2">Who</th>
-                      <th className="py-2 text-right">Bills</th>
-                      <th className="py-2 text-right">Gross</th>
-                      <th className="py-2 text-right">Cost</th>
-                      <th className="py-2 text-right">Profit</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.perEmployee.map((employee) => (
-                      <tr key={employee.username} className="border-b border-border">
-                        <td className="py-2 text-body text-text">
-                          {employee.fullName}
-                          <span className="text-text-dim"> · {employee.username}</span>
-                        </td>
-                        <td className="tabular py-2 text-right text-body text-text">
-                          {employee.bills}
-                        </td>
-                        <td className="tabular py-2 text-right text-body text-text">
-                          {formatMoney(employee.gross)}
-                        </td>
-                        <td className="tabular py-2 text-right text-body text-text-dim">
-                          {formatMoney(employee.cost)}
-                        </td>
-                        <td className="tabular py-2 text-right text-body text-text">
-                          {formatMoney(employee.profit)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-3 text-label text-text-dim">
-                Attributed to whoever took the payment, and sums to the branch total above.
-              </p>
-            </Tile>
-
-            <Tile title="Table utilisation">
-              <ul>
-                {/* One line per table instead of three: the share is drawn behind the row, so
-                    the bar and the figure occupy the same space rather than stacking. */}
-                {data.tableUtilisation.map((table) => (
-                  <li key={table.tableName} className="relative overflow-hidden rounded-md">
-                    <div
-                      className="absolute inset-y-0 left-0 bg-chart-bar/20"
-                      style={{ width: `${Math.min(table.utilisationPercent, 100)}%` }}
-                      aria-hidden
-                    />
-                    <div className="relative flex items-baseline justify-between gap-3 px-3 py-2">
-                      <span className="text-body text-text">{table.tableName}</span>
-                      <span className="tabular text-body text-text-dim">
-                        {table.occupiedMinutes} min ·{' '}
-                        <span className="text-text">{table.utilisationPercent}%</span>
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <p className="mt-3 text-label text-text-dim">
-                Time the table was held, pauses included, against a 19-hour trading day. Not what
-                was charged — a paused table is still nobody else's.
-              </p>
-            </Tile>
-          </Group>
-
-          <p className="text-label text-text-dim">
-            {data.businessDate}
-            {data.comparedTo ? ` · compared against ${data.comparedTo}` : ''} · {data.totals.bills}{' '}
-            bills
-          </p>
-        </div>
+        <Night
+          data={data}
+          tonight={tonight}
+          notCheckedOut={unsettled.data?.length ?? 0}
+          uncountedNights={uncounted.data?.length ?? 0}
+          variance={cashCount.data ? cashCount.data.variance : null}
+          onOpenLoss={setOpenLoss}
+        />
       )}
+
+      {openLoss && data ? (
+        <LossesDetail
+          kind={openLoss}
+          businessDate={shownDate}
+          summary={data.losses}
+          onClose={() => setOpenLoss(null)}
+        />
+      ) : null}
     </AdminPage>
   );
 }
 
-function Split({ totals }: { totals: DailyTotals }) {
-  const time = totals.timeRevenue;
-  const items = totals.itemRevenue;
-  const total = totals.gross;
-  // Widths only — a proportion of a bar, not a peso figure.
-  const timePercent = total > 0 ? (time / total) * 100 : 0;
+function Night({
+  data,
+  tonight,
+  notCheckedOut,
+  uncountedNights,
+  variance,
+  onOpenLoss,
+}: {
+  data: DailyReport;
+  tonight: boolean;
+  notCheckedOut: number;
+  uncountedNights: number;
+  variance: number | null;
+  onOpenLoss: (kind: LossKind) => void;
+}) {
+  const { totals, previousTotals: previous } = data;
+  const against = data.comparedTo ? `last ${weekdayOf(data.comparedTo)}` : 'last week';
+  const started = totals.bills > 0 || data.expenses.total > 0;
+
+  const attention = (
+    <Attention
+      lowStock={data.lowStock}
+      notCheckedOut={notCheckedOut}
+      uncountedNights={uncountedNights}
+      outstanding={data.outstanding}
+      unsettledTonight={data.unsettledTonight}
+      variance={variance}
+    />
+  );
+
+  // A night that has not started says so and nothing else — no zeros, no "-100%". What still
+  // needs doing is shown, because uncounted nights are exactly what a 9am glance is for.
+  if (!started) {
+    return (
+      <div className="flex flex-col gap-6">
+        <p className="text-heading text-text">
+          {tonight ? 'Nothing yet tonight.' : 'The hall did not trade on this night.'}
+        </p>
+        {attention}
+      </div>
+    );
+  }
+
+  const clause = comparedClause(
+    describeChange({ now: totals.gross, before: previous.gross, against }),
+    against,
+  );
 
   return (
+    <div className="flex flex-col gap-6">
+      {/* 1 — THE ANSWER. */}
+      <section className="flex flex-col gap-5">
+        {/* The answer first and full width; the two beneath share a row on a phone and all
+            three share one from sm up. */}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:flex sm:items-end sm:gap-x-12">
+          <div className="col-span-2">
+            <BigFigure
+              label="Sales"
+              size="hero"
+              value={formatPesos(totals.gross)}
+              comparison={{ now: totals.gross, before: previous.gross, against }}
+            />
+          </div>
+          <BigFigure
+            label="After cost of goods"
+            value={formatPesos(totals.profit)}
+            comparison={{ now: totals.profit, before: previous.profit, against }}
+          />
+          <BigFigure
+            label="Bills"
+            value={totals.bills.toLocaleString('en-PH')}
+            comparison={{ now: totals.bills, before: previous.bills, against, kind: 'count' }}
+          />
+        </div>
+        <p className="max-w-prose text-body text-text">
+          {formatPesos(totals.gross)} taken, {formatPesos(totals.profit)} after cost of goods
+          {clause ? `, ${clause}.` : '.'}
+        </p>
+      </section>
+
+      {attention}
+
+      <section className="rounded-2xl border border-border bg-surface p-5 sm:p-8">
+        <h2 className="mb-3 text-label uppercase text-text-dim">Sales by hour</h2>
+        <HourChart hours={data.salesByHour} />
+      </section>
+
+      {/* 2 — DETAILS. Collapsed, each with its key figure showing. */}
+      <section>
+        <h2 className="mb-2 text-label uppercase tracking-wide text-text-dim">Details</h2>
+        <Disclosure
+          title="Table time vs products"
+          summary={`${formatPesos(totals.timeRevenue)} · ${formatPesos(totals.itemRevenue)}`}
+        >
+          <Split time={totals.timeRevenue} items={totals.itemRevenue} total={totals.gross} />
+        </Disclosure>
+
+        <Disclosure
+          title="How table time was priced"
+          summary={`${formatPesos(data.timeRevenueByMode.find((row) => row.mode === 'STANDARD')?.amount ?? 0)} standard`}
+        >
+          <PricingModes rows={data.timeRevenueByMode} timeRevenue={totals.timeRevenue} />
+        </Disclosure>
+
+        <Disclosure
+          title="Payments"
+          summary={
+            data.paymentMix.length === 0
+              ? 'None'
+              : `${formatPesos(Math.max(...data.paymentMix.map((m) => m.amount)))} ${
+                  data.paymentMix.reduce((best, m) => (m.amount > best.amount ? m : best)).method.toLowerCase()
+                }`
+          }
+        >
+          {data.paymentMix.map((method) => (
+            <Row
+              key={method.method}
+              label={`${titleCase(method.method)} · ${method.payments} ${method.payments === 1 ? 'payment' : 'payments'}`}
+              value={formatPesos(method.amount)}
+            />
+          ))}
+          {/* Money that arrived tonight against an earlier night. In the drawer, not in
+              tonight's sales — that revenue was recognised on the night it was earned. */}
+          {data.collectedToday.count > 0 ? (
+            <Row
+              label={`Old debts collected · ${data.collectedToday.count} ${data.collectedToday.count === 1 ? 'bill' : 'bills'}`}
+              value={formatPesos(data.collectedToday.amount)}
+              dim
+            />
+          ) : null}
+        </Disclosure>
+
+        <Disclosure
+          title="Top items"
+          summary={
+            data.topItems.length === 0
+              ? 'Nothing sold'
+              : `${data.topItems[0].description} × ${data.topItems[0].quantity}`
+          }
+        >
+          {data.topItems.map((item) => (
+            <Row
+              key={item.description}
+              label={`${item.quantity} × ${item.description}`}
+              value={formatPesos(item.revenue)}
+            />
+          ))}
+        </Disclosure>
+
+        <Disclosure
+          title="Paid out"
+          summary={data.expenses.total === 0 ? 'Nothing' : formatPesos(data.expenses.total)}
+        >
+          {data.expenses.byCategory.length === 0 ? (
+            <p className="text-body text-text-dim">Nothing paid out on this night.</p>
+          ) : (
+            data.expenses.byCategory.map((line) => (
+              <Row key={line.category} label={line.category} value={formatPesos(line.amount)} />
+            ))
+          )}
+        </Disclosure>
+
+        <Disclosure title="Given away" summary={formatPesos(givenAwayTotal(data.losses))}>
+          <GivenAway losses={data.losses} onOpen={onOpenLoss} />
+        </Disclosure>
+
+        <Disclosure
+          title="Per employee"
+          summary={
+            data.perEmployee.length === 0
+              ? 'Nobody'
+              : data.perEmployee.length === 1
+                ? `${data.perEmployee[0].fullName} · ${formatPesos(data.perEmployee[0].gross)}`
+                : `${data.perEmployee.length} people`
+          }
+        >
+          <PerEmployee rows={data.perEmployee} />
+        </Disclosure>
+
+        <Disclosure
+          title="Table use"
+          summary={(() => {
+            const busiest = data.tableUtilisation.reduce(
+              (best, t) => (t.utilisationPercent > best.utilisationPercent ? t : best),
+              data.tableUtilisation[0],
+            );
+            return busiest ? `${busiest.tableName} · ${Math.round(busiest.utilisationPercent)}%` : 'No tables';
+          })()}
+        >
+          <ul>
+            {data.tableUtilisation.map((table) => (
+              <li key={table.tableName} className="relative overflow-hidden rounded-md">
+                <div
+                  className="absolute inset-y-0 left-0 bg-chart-bar/20"
+                  style={{ width: `${Math.min(table.utilisationPercent, 100)}%` }}
+                  aria-hidden
+                />
+                <div className="relative flex items-baseline justify-between gap-3 px-3 py-2">
+                  <span className="text-body text-text">{table.tableName}</span>
+                  <span className="tabular text-body text-text-dim">
+                    {formatHours(table.occupiedMinutes)} ·{' '}
+                    <span className="text-text">{Math.round(table.utilisationPercent)}%</span>
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Disclosure>
+      </section>
+
+      <HowWorkedOut against={against} />
+    </div>
+  );
+}
+
+/**
+ * The actionable band. Each row names the thing to do and links to where it gets done. When
+ * there is nothing, the band does not render — an empty band trains the eye to skip the
+ * place that matters on the night it is not empty.
+ */
+function Attention({
+  lowStock,
+  notCheckedOut,
+  uncountedNights,
+  outstanding,
+  unsettledTonight,
+  variance,
+}: {
+  lowStock: { name: string; qtyOnHand: number }[];
+  notCheckedOut: number;
+  uncountedNights: number;
+  /** Every debt still open, across all dates. A live figure, not a fact about this night. */
+  outstanding: { count: number; amount: number };
+  unsettledTonight: { count: number; amount: number };
+  variance: number | null;
+}) {
+  const items: { key: string; text: string; to: string; action: string }[] = [];
+
+  if (uncountedNights > 0) {
+    items.push({
+      key: 'uncounted',
+      text: `${uncountedNights} ${uncountedNights === 1 ? 'night was' : 'nights were'} never counted`,
+      to: '/end-of-day',
+      action: uncountedNights === 1 ? 'Count it' : 'Count them',
+    });
+  }
+  if (notCheckedOut > 0) {
+    items.push({
+      key: 'not-checked-out',
+      text: `${notCheckedOut} ${notCheckedOut === 1 ? 'bill was' : 'bills were'} never checked out`,
+      to: '/end-of-day',
+      action: 'See them',
+    });
+  }
+  if (outstanding.count > 0) {
+    items.push({
+      key: 'owed',
+      text: `${formatPesos(outstanding.amount)} owed across ${outstanding.count} ${outstanding.count === 1 ? 'bill' : 'bills'}${
+        unsettledTonight.count > 0 ? `, ${formatPesos(unsettledTonight.amount)} of it from this night` : ''
+      }`,
+      to: '/unsettled',
+      action: 'Chase it',
+    });
+  }
+  // Only a non-zero variance is worth surfacing; a drawer that balanced is not an action.
+  if (variance !== null && variance !== 0) {
+    items.push({
+      key: 'variance',
+      text: `The drawer was ${variance < 0 ? 'short' : 'over'} by ${formatPesos(Math.abs(variance))}`,
+      to: '/end-of-day',
+      action: 'Open the count',
+    });
+  }
+  if (lowStock.length > 0) {
+    items.push({
+      key: 'stock',
+      text: `Low stock: ${lowStock.map((line) => `${line.name} (${line.qtyOnHand})`).join(', ')}`,
+      to: '/admin/stock',
+      action: 'Record a delivery',
+    });
+  }
+
+  if (items.length === 0) return null;
+
+  return (
+    <section
+      aria-label="Needs attention"
+      className="rounded-xl border border-border border-l-4 border-l-danger bg-surface px-5 py-2"
+    >
+      <ul className="divide-y divide-border">
+        {items.map((item) => (
+          <li key={item.key} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
+            <span className="text-body text-danger">{item.text}</span>
+            <Link to={item.to} className="hit inline-flex items-center text-body text-info underline">
+              {item.action}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+export function Row({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
+  return (
+    <div className="flex justify-between gap-3 py-1">
+      <span className={`text-body ${dim ? 'text-text-dim' : 'text-text'}`}>{label}</span>
+      <span className={`tabular text-body ${dim ? 'text-text-dim' : 'text-text'}`}>{value}</span>
+    </div>
+  );
+}
+
+function titleCase(word: string): string {
+  return word.charAt(0) + word.slice(1).toLowerCase();
+}
+
+function Split({ time, items, total }: { time: number; items: number; total: number }) {
+  // Widths only — a proportion of a bar, not a peso figure.
+  const timePercent = total > 0 ? (time / total) * 100 : 0;
+  return (
     <div>
-      <div className="flex h-6 overflow-hidden rounded">
+      <div className="flex h-4 overflow-hidden rounded">
         <div className="bg-chart-bar" style={{ width: `${timePercent}%` }} />
         <div className="flex-1 bg-border" />
       </div>
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
-        <Row label="Table time" value={formatMoney(time)} />
-        <Row label="Products" value={formatMoney(items)} />
+      <div className="mt-3 grid gap-x-8 md:grid-cols-2">
+        <Row label="Table time" value={formatPesos(time)} />
+        <Row label="Products" value={formatPesos(items)} />
       </div>
     </div>
   );
@@ -712,77 +468,180 @@ const MODE_LABELS: Record<TimeRevenueByMode['mode'], string> = {
 };
 
 /**
- * Table revenue by how it was priced — and a check that it still adds up.
- *
- * The four amounts are the whole of `totals.timeRevenue` broken apart, so they must sum back to
- * it exactly. Asserted on screen rather than assumed: two figures that disagree about the same
- * money are worse than one figure alone, and the owner has no way to tell which is wrong. Same
- * rule the losses drill-down applies to its section totals.
+ * Table revenue by how it was priced — and a check that it still adds up. The four amounts
+ * are the whole of `totals.timeRevenue` broken apart, so they must sum back to it. Said on
+ * screen only when they do not: two figures that disagree about the same money are worse
+ * than one figure alone.
  */
-function PricingModes({
-  rows,
-  timeRevenue,
-}: {
-  rows: TimeRevenueByMode[];
-  timeRevenue: Money;
-}) {
+function PricingModes({ rows, timeRevenue }: { rows: TimeRevenueByMode[]; timeRevenue: number }) {
   const summed = rows.reduce((total, row) => total + row.amount, 0);
   // A tolerance, not identity: both sides are the database's own sums read back through JSON.
   const reconciles = Math.abs(summed - timeRevenue) < 0.005;
-
   return (
-    <div className="flex flex-col gap-2">
+    <div>
       {rows.map((row) => (
         <Row
           key={row.mode}
-          label={MODE_LABELS[row.mode]}
-          value={`${formatMoney(row.amount)} · ${row.sessions} ${
-            row.sessions === 1 ? 'session' : 'sessions'
-          }`}
+          label={`${MODE_LABELS[row.mode]} · ${row.sessions} ${row.sessions === 1 ? 'session' : 'sessions'}`}
+          value={formatPesos(row.amount)}
+          dim={row.sessions === 0}
         />
       ))}
-      {reconciles ? (
-        <p className="mt-1 text-label text-text-dim">
-          Adds up to the {formatMoney(timeRevenue)} of table time above.
-        </p>
-      ) : (
-        <p className="mt-1 text-label text-danger">
-          These add up to {formatMoney(summed)}, but table time above is{' '}
-          {formatMoney(timeRevenue)}. One of the two is wrong — do not act on either until it is
-          explained.
+      {reconciles ? null : (
+        <p className="mt-2 text-label text-danger">
+          These add up to {formatPesos(summed)}, but table time is {formatPesos(timeRevenue)}. One
+          of the two is wrong — do not act on either until it is explained.
         </p>
       )}
     </div>
   );
 }
 
-/** One clickable loss figure. A button, so it is reachable from the keyboard like everything else. */
-function LossFigure({
-  label,
-  amount,
-  note,
-  noteTone,
-  onOpen,
-}: {
-  label: string;
-  amount: string;
-  note: string;
-  noteTone?: 'estimate';
-  onOpen: () => void;
-}) {
+/**
+ * The eight figures summed for the section header. Display arithmetic on eight server figures
+ * that goes nowhere — the period report ships this total, the daily report does not, and the
+ * header is the only place the owner reads it.
+ */
+function givenAwayTotal(losses: Losses): number {
   return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="rounded-lg border border-transparent p-2 text-left transition hover:border-border hover:bg-raised"
-    >
-      <div className="text-label uppercase text-text-dim">{label}</div>
-      <div className="tabular text-amount text-danger underline decoration-dotted underline-offset-4">
-        {amount}
+    losses.promoForgone +
+    losses.friendForgone +
+    losses.flatForgone +
+    losses.timeReductionForgone +
+    losses.discountAmount +
+    losses.voucherAmount +
+    losses.voidAmount +
+    losses.compEstimatedCost
+  );
+}
+
+function GivenAway({ losses, onOpen }: { losses: Losses; onOpen: (kind: LossKind) => void }) {
+  const figures: { kind: LossKind; label: string; amount: number; count: number; noun: string }[] = [
+    { kind: 'promos', label: 'Promos', amount: losses.promoForgone, count: losses.promoSessions, noun: 'session' },
+    { kind: 'friendRates', label: 'Friend rates', amount: losses.friendForgone, count: losses.friendSessions, noun: 'session' },
+    { kind: 'flatRates', label: 'Flat rate', amount: losses.flatForgone, count: losses.flatSessions, noun: 'session' },
+    { kind: 'timeReductions', label: 'Time not charged', amount: losses.timeReductionForgone, count: losses.reducedSessions, noun: 'session' },
+    { kind: 'discounts', label: 'Discounts', amount: losses.discountAmount, count: losses.discountBills, noun: 'bill' },
+    { kind: 'vouchers', label: 'Vouchers', amount: losses.voucherAmount, count: losses.voucherCount, noun: 'voucher' },
+    { kind: 'voids', label: 'Voids', amount: losses.voidAmount, count: losses.voidCount, noun: 'line' },
+    { kind: 'comps', label: 'Comps', amount: losses.compEstimatedCost, count: losses.compQuantity, noun: 'unit' },
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+      {figures.map((figure) => (
+        /* A button, so it is reachable from the keyboard like everything else. Neutral —
+           a zero in red reads as an error, and a giveaway is a fact, not a fault. */
+        <button
+          key={figure.kind}
+          type="button"
+          onClick={() => onOpen(figure.kind)}
+          className="hit rounded-lg border border-transparent p-2 text-left transition hover:border-border hover:bg-raised"
+        >
+          <div
+            className={`tabular text-heading underline decoration-dotted underline-offset-4 ${
+              figure.amount === 0 ? 'text-text-dim' : 'text-text'
+            }`}
+          >
+            {formatPesos(figure.amount)}
+          </div>
+          <div className="text-label text-text-dim">
+            {figure.label} · {figure.count} {figure.count === 1 ? figure.noun : `${figure.noun}s`}
+          </div>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function PerEmployee({ rows }: { rows: DailyReport['perEmployee'] }) {
+  return (
+    <>
+      {/* Below md each person is a block. Four columns in 340px is a scrollbar per employee
+          on the screen the owner actually opens from home. */}
+      <ul className="flex flex-col gap-3 md:hidden">
+        {rows.map((employee) => (
+          <li key={employee.username} className="rounded-lg border border-border p-3">
+            <div className="flex items-baseline justify-between gap-3">
+              <span className="text-body text-text">{employee.fullName}</span>
+              <span className="tabular text-body text-text">{formatPesos(employee.gross)}</span>
+            </div>
+            <p className="mt-1 text-label text-text-dim">
+              {employee.bills} {employee.bills === 1 ? 'bill' : 'bills'} ·{' '}
+              {formatPesos(employee.profit)} after cost of goods
+            </p>
+          </li>
+        ))}
+      </ul>
+      <div className="hidden md:block">
+        <table className="w-full text-left">
+          <thead>
+            <tr className="border-b border-border text-label uppercase text-text-dim">
+              <th className="py-2">Who</th>
+              <th className="py-2 text-right">Bills</th>
+              <th className="py-2 text-right">Sales</th>
+              <th className="py-2 text-right">After cost of goods</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((employee) => (
+              <tr key={employee.username} className="border-b border-border">
+                <td className="py-2 text-body text-text">{employee.fullName}</td>
+                <td className="tabular py-2 text-right text-body text-text">{employee.bills}</td>
+                <td className="tabular py-2 text-right text-body text-text">{formatPesos(employee.gross)}</td>
+                <td className="tabular py-2 text-right text-body text-text">{formatPesos(employee.profit)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-      <div className={`text-label ${noteTone === 'estimate' ? 'text-amount' : 'text-text-dim'}`}>
-        {note}
-      </div>
-    </button>
+    </>
+  );
+}
+
+/** The one place a definition lives. Everything above shows a figure and nothing else. */
+function HowWorkedOut({ against }: { against: string }) {
+  return (
+    <Disclosure title="How these numbers are worked out">
+      <dl className="grid gap-x-8 gap-y-3 text-body md:grid-cols-[max-content_1fr]">
+        <Definition term="Sales">
+          Every bill closed on the night, including ones left unpaid. Voided lines are left out.
+        </Definition>
+        <Definition term="After cost of goods">
+          Sales less what the food and drink cost to buy, at the cost on the day it was sold.
+        </Definition>
+        <Definition term={`vs ${against}`}>
+          The same weekday a week earlier — a Saturday is compared to a Saturday, never to a
+          Friday. Under one per cent either way reads as about the same.
+        </Definition>
+        <Definition term="The night">
+          Runs from 10am to 5am. A sale at 2am belongs to the night before.
+        </Definition>
+        <Definition term="Paid out">
+          Rent, wages, water, electricity and the like recorded on the night. Not taken off the
+          figures above — those are the night's trading; this is the cost of being open.
+        </Definition>
+        <Definition term="Given away">
+          Table time and products sold below the standard price, and what was voided. Comps are
+          valued at today's average cost, so that one is an estimate; the rest are exact.
+        </Definition>
+        <Definition term="Per employee">Whoever took the payment.</Definition>
+        <Definition term="Table use">
+          Time the table was held, pauses included, out of the 19-hour night. Not what was
+          charged — a paused table is still nobody else's.
+        </Definition>
+        <Definition term="Money owed">
+          Every unpaid bill across all nights, as of right now.
+        </Definition>
+      </dl>
+    </Disclosure>
+  );
+}
+
+export function Definition({ term, children }: { term: string; children: React.ReactNode }) {
+  return (
+    <>
+      <dt className="text-text">{term}</dt>
+      <dd className="text-text-dim md:mb-0">{children}</dd>
+    </>
   );
 }

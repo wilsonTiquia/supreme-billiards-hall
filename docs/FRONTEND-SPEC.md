@@ -157,16 +157,21 @@ Deliveries (multi-line with unit costs), corrections (reason mandatory), comps, 
 ### K. Admin — dashboard
 `GET /reports/daily?date=`, one call. Layout by importance:
 
-1. **Headline row:** gross sales, cost, gross profit — Display size, each with the delta vs the
-   previous business day.
-2. **Split:** table-time vs product revenue.
-3. **Sales by hour** — bar chart across the 10:00–05:00 day, hand-authored SVG.
-4. **Table utilisation %.**
-5. **Secondary tiles:** top items, payment mix, low/negative stock.
-6. **Losses together:** voids, friend-rate forgone revenue, comps. Mark `compEstimatedCost` as an
-   estimate — the other two are exact.
-7. **Per-employee breakdown.**
+The ten-second test: without scrolling, on a phone, the page answers how much was made,
+whether that is better or worse than usual, and whether anything needs doing.
 
+1. **First screen:** Sales and After cost of goods — Display size, whole pesos, each with one
+   comparison line against the **same weekday last week** (`comparedTo`); Bills; one
+   sentence; the attention band (uncounted nights, money owed, drawer variance, low stock)
+   only when there is something in it; sales by hour — bar chart across the 10:00–05:00 day,
+   hand-authored SVG. A night not yet started shows "Nothing yet tonight" and nothing else.
+2. **Details**, each section collapsed with its key figure in the header: table time vs
+   products, how time was priced, payments, top items, paid out, given away (clickable
+   figures), per employee, table use.
+3. **How these numbers are worked out** — the one collapsed place any definition lives.
+
+Plain words throughout: "Sales", "After cost of goods", "After all costs" — never gross,
+net, COGS or opex. Green means better, red means attention, nothing else is coloured.
 Date picker defaults to the current business day. Light theme.
 
 ### L. Admin — audit

@@ -1,38 +1,39 @@
-import { useEffect } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { fetchPeriodReport } from '@/api/endpoints/reports';
 import { fetchCurrentBusinessDay } from '@/api/endpoints/businessDay';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
-import type { Money, PeriodComparison, PeriodReport } from '@/api/types';
+import type { PeriodReport } from '@/api/types';
 import { AdminPage } from '../AdminPage';
-import { Delta, Group, Row, Tile } from '../dashboard/DashboardPage';
-import { SalesByHour } from '../dashboard/SalesByHour';
-import { Card } from '@/components/Card';
+import { BigFigure, ComparisonLine, comparedClause, describeChange } from '../Comparison';
+import { Definition, Row } from '../dashboard/DashboardPage';
+import { HourChart } from '../dashboard/HourChart';
+import { Disclosure } from '@/components/Disclosure';
 import { Spinner } from '@/components/Spinner';
-import { formatMoney } from '@/lib/money';
-import { GrossByDay } from './GrossByDay';
+import { formatPesos } from '@/lib/money';
+import { formatHours } from '@/lib/datetime';
+import { SalesByNight } from './SalesByNight';
 import {
   PRESETS,
   WEEKDAYS,
   formatMonth,
   formatRange,
+  isWeekendNight,
   presetOf,
   presetRange,
+  shortNight,
 } from './periodDates';
 
 /**
- * The owner's month. Reads only — nothing on this page is editable and nothing is billable.
+ * The owner's month, on a laptop on the 1st. Reads only — nothing here is editable and nothing
+ * is billable. The same ten-second test as the dashboard: four figures, one sentence, and
+ * anything that needs doing, before anything else.
  *
  * The URL carries from/to so a report can be bookmarked, and the presets are calendar ranges
  * of the business date the SERVER says is current. The previous period is the server's
  * decision too, returned in the document; this page formats dates, it never chooses them.
- *
- * The sections are in the order the questions get asked, and the same order the brief lists
- * them: is it making money, what does it need to take, how did it trend, which nights and hours
- * carry it, what it cost to be open, which tables and products pull their weight, what was
- * given away, and how well the drawer was kept.
  */
 export function ReportsPage() {
   const [params, setParams] = useSearchParams();
@@ -65,12 +66,8 @@ export function ReportsPage() {
   const selected = current && from && to ? presetOf(from, to, current) : null;
 
   return (
-    <AdminPage
-      title="Reports"
-      intro="Any range of business dates against the equivalent range before it. Every figure is the server's; nothing here is recomputed."
-      error={report.isError ? messageOf(report.error) : null}
-    >
-      <div className="print:hidden mb-6 flex flex-wrap items-end gap-3">
+    <AdminPage title="Reports" error={report.isError ? messageOf(report.error) : null}>
+      <div className="print:hidden mb-6 flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-2" role="group" aria-label="Presets">
           {PRESETS.map((preset) => (
             <button
@@ -79,9 +76,9 @@ export function ReportsPage() {
               disabled={!current}
               onClick={() => current && setParams(presetRange(preset.key, current))}
               aria-pressed={selected === preset.key}
-              className={`hit rounded-full border px-4 text-body transition ${
+              className={`hit rounded-full border px-4 text-label transition ${
                 selected === preset.key
-                  ? 'border-green bg-green text-ink font-semibold'
+                  ? 'border-text bg-text text-bg'
                   : 'border-border bg-surface text-text hover:bg-raised'
               }`}
             >
@@ -89,39 +86,33 @@ export function ReportsPage() {
             </button>
           ))}
         </div>
-        <label className="flex flex-col gap-2">
-          <span className="text-label uppercase text-text-dim">From</span>
+        <div className="flex items-center gap-2">
           <input
             type="date"
+            aria-label="From"
             value={from}
             max={to || undefined}
             onChange={(event) => setParams({ from: event.target.value, to })}
-            className="hit rounded-lg border border-border bg-raised px-3 text-body text-text"
+            className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
           />
-        </label>
-        <label className="flex flex-col gap-2">
-          <span className="text-label uppercase text-text-dim">To</span>
+          <span className="text-label text-text-dim">to</span>
           <input
             type="date"
+            aria-label="To"
             value={to}
             min={from || undefined}
             onChange={(event) => setParams({ from, to: event.target.value })}
-            className="hit rounded-lg border border-border bg-raised px-3 text-body text-text"
+            className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
           />
-        </label>
-        <button
-          type="button"
-          onClick={() => window.print()}
-          disabled={!data}
-          className="hit rounded-lg border border-border bg-surface px-4 text-body text-text disabled:opacity-50"
-        >
-          Print
-        </button>
-        <p className="basis-full text-label text-text-dim">
-          Business dates, inclusive. The week starts Monday. A trading day is a business date
-          with at least one sale or a drawer count; every per-day figure divides by trading
-          days, not calendar days.
-        </p>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            disabled={!data}
+            className="hit rounded-lg border border-border bg-surface px-4 text-label text-text disabled:opacity-50"
+          >
+            Print
+          </button>
+        </div>
       </div>
 
       {!from || !to || report.isPending ? (
@@ -135,390 +126,520 @@ export function ReportsPage() {
   );
 }
 
-const COMPARISON_LABELS: Record<PeriodComparison, string> = {
-  SAME_DAYS_OF_PREVIOUS_MONTH: 'the same days of the previous month',
-  SAME_DAYS_OF_PREVIOUS_WEEK: 'the same days of the previous week',
-  PRECEDING_DAYS: 'the same number of days immediately before',
-};
-
 function Report({ data }: { data: PeriodReport }) {
-  const { headline, previousHeadline: previous, breakEven } = data;
+  const { headline, previousHeadline: previous, breakEven, cash } = data;
   const period = formatRange(data.from, data.to);
-  const previousPeriod = formatRange(data.previousFrom, data.previousTo);
-  const against = `${previousPeriod}`;
+  // "vs July", not "vs July 2026", when the year is the same one: the year is on the line
+  // above, and repeating it on every comparison is a word the eye has to skip eight times.
+  const against = formatRange(data.previousFrom, data.previousTo).replace(
+    data.previousFrom.slice(0, 4) === data.from.slice(0, 4) ? / \d{4}$/ : /$/,
+    '',
+  );
+
+  const net = describeChange({ now: headline.net, before: previous.net, against });
+  const clause = comparedClause(net, against);
+
+  const owed = cash.unsettled.thisPeriod.count + cash.unsettled.oneToFourWeeksBefore.count + cash.unsettled.older.count;
+  const owedAmount = cash.unsettled.thisPeriod.amount + cash.unsettled.oneToFourWeeksBefore.amount + cash.unsettled.older.amount;
+
+  const strongestDay = data.byDayOfWeek.reduce(
+    (best, day) => ((day.avgGross ?? -Infinity) > (best.avgGross ?? -Infinity) ? day : best),
+    data.byDayOfWeek[0],
+  );
+  const belowCost = data.products.filter((product) => product.margin <= 0).length;
+  const weakestTable = data.tables.find((table) => table.occupiedMinutes > 0) ?? data.tables[0];
 
   return (
-    <div className="flex flex-col gap-10">
-      {/* 1 — IS IT MAKING MONEY. */}
-      <Group title={`${period} vs ${previousPeriod}`}>
-        <p className="-mt-2 text-label text-text-dim">
-          Compared like for like against {COMPARISON_LABELS[data.comparison]}.
+    <div className="flex flex-col gap-8">
+      {/* 1 — THE ANSWER. */}
+      <section className="flex flex-col gap-6">
+        <p className="text-label uppercase text-text-dim">
+          {period} <span className="normal-case">vs {against}</span>
         </p>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
-          <Figure label="Gross" now={headline.gross} before={previous.gross} against={against} />
-          <Figure label="Cost of goods" now={headline.costOfGoods} before={previous.costOfGoods} against={against} />
-          <Figure label="Gross profit" now={headline.grossProfit} before={previous.grossProfit} against={against} />
-          <Figure label="Operating expenses" now={headline.operatingExpenses} before={previous.operatingExpenses} against={against} goodWhen="down" />
-          <Figure label="Net" now={headline.net} before={previous.net} against={against} emphasis />
-          <Figure label="Bills" now={headline.bills} before={previous.bills} against={against} kind="count" />
-          <Figure label="Trading days" now={headline.tradingDays} before={previous.tradingDays} against={against} kind="count" />
-          <Figure label="Gross per trading day" now={headline.grossPerTradingDay} before={previous.grossPerTradingDay} against={against} />
-          <Figure label="Net per trading day" now={headline.netPerTradingDay} before={previous.netPerTradingDay} against={against} />
-          <Figure label="Gross margin" now={headline.grossMarginPercent} before={previous.grossMarginPercent} against={against} kind="percent" />
+        <div className="grid grid-cols-2 gap-x-8 gap-y-6 lg:grid-cols-4">
+          <BigFigure
+            label="Sales"
+            value={formatPesos(headline.gross)}
+            comparison={{ now: headline.gross, before: previous.gross, against }}
+          />
+          <BigFigure
+            label="After cost of goods"
+            value={formatPesos(headline.grossProfit)}
+            comparison={{ now: headline.grossProfit, before: previous.grossProfit, against }}
+          />
+          <BigFigure
+            label="Expenses"
+            value={formatPesos(headline.operatingExpenses)}
+            comparison={{
+              now: headline.operatingExpenses,
+              before: previous.operatingExpenses,
+              against,
+              goodWhen: 'down',
+            }}
+          />
+          <BigFigure
+            label="After all costs"
+            value={formatPesos(headline.net)}
+            tone={headline.net < 0 ? 'danger' : undefined}
+            comparison={{ now: headline.net, before: previous.net, against }}
+          />
         </div>
-        <p className="text-label text-text-dim">
-          Gross profit is gross less cost of goods — what the dashboard calls profit. Net is gross
-          profit less operating expenses. Sales include bills left unsettled on the night; voided
-          lines and voided expenses are excluded.
+        <p className="max-w-prose text-body text-text">
+          {period}: you {headline.net < 0 ? 'lost' : 'made'} {formatPesos(Math.abs(headline.net))} after
+          all costs{clause ? `, ${clause}` : ''}.
         </p>
-      </Group>
+      </section>
 
-      {/* 2 — WHAT IT NEEDS TO TAKE. */}
-      <Group title="Break-even">
-        <Card>
-          {breakEven.computable &&
-          breakEven.requiredGrossPerTradingDay !== null &&
-          breakEven.actualGrossPerTradingDay !== null ? (
-            <>
-              <p className="text-heading text-text">
-                You need {formatMoney(breakEven.requiredGrossPerTradingDay)} a day to break even.
-                You averaged{' '}
-                <span
-                  className={
-                    breakEven.actualGrossPerTradingDay >= breakEven.requiredGrossPerTradingDay
-                      ? 'text-green'
-                      : 'text-danger'
-                  }
-                >
-                  {formatMoney(breakEven.actualGrossPerTradingDay)}
+      {/* 2 — ANYTHING TO DO. Only when there is. */}
+      {cash.uncountedTradingDays > 0 || owed > 0 ? (
+        <section
+          aria-label="Needs attention"
+          className="rounded-xl border border-border border-l-4 border-l-danger bg-surface px-5 py-2"
+        >
+          <ul className="divide-y divide-border">
+            {cash.uncountedTradingDays > 0 ? (
+              <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
+                <span className="text-body text-danger">
+                  {cash.uncountedTradingDays}{' '}
+                  {cash.uncountedTradingDays === 1 ? 'night was' : 'nights were'} never counted
                 </span>
-                .
-              </p>
-              <p className="mt-2 text-label text-text-dim">
-                Operating expenses for the period ÷ gross margin ÷ trading days: the gross a
-                trading day must take for the margin on it to cover the cost of being open.
-              </p>
-            </>
-          ) : (
-            <p className="text-body text-text-dim">
-              {headline.gross === 0
-                ? 'Not enough sales to compute a break-even.'
-                : 'Gross margin is not positive, so no level of sales covers costs.'}
+                <Link to="/end-of-day" className="hit inline-flex items-center text-body text-info underline">
+                  Count {cash.uncountedTradingDays === 1 ? 'it' : 'them'}
+                </Link>
+              </li>
+            ) : null}
+            {owed > 0 ? (
+              <li className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
+                <span className="text-body text-danger">
+                  {formatPesos(owedAmount)} still owed across {owed} {owed === 1 ? 'bill' : 'bills'}
+                </span>
+                <Link to="/unsettled" className="hit inline-flex items-center text-body text-info underline">
+                  Chase it
+                </Link>
+              </li>
+            ) : null}
+          </ul>
+        </section>
+      ) : null}
+
+      {/* 3 — WHAT IT NEEDS TO TAKE, AND THE TREND. */}
+      <section className="rounded-2xl border border-border bg-surface p-5 sm:p-8">
+        {breakEven.computable &&
+        breakEven.requiredGrossPerTradingDay !== null &&
+        breakEven.actualGrossPerTradingDay !== null ? (
+          <p className="mb-6 text-body text-text">
+            You need {formatPesos(breakEven.requiredGrossPerTradingDay)} a night to break even. You
+            averaged{' '}
+            <span
+              className={`tabular font-semibold ${
+                breakEven.actualGrossPerTradingDay >= breakEven.requiredGrossPerTradingDay
+                  ? 'text-green'
+                  : 'text-danger'
+              }`}
+            >
+              {formatPesos(breakEven.actualGrossPerTradingDay)}
+            </span>
+            .
+          </p>
+        ) : (
+          <p className="mb-6 text-body text-text-dim">
+            {headline.gross === 0
+              ? 'Not enough sales to work out a break-even.'
+              : 'Goods sold for less than they cost, so no level of sales covers costs.'}
+          </p>
+        )}
+        <h2 className="mb-3 text-label uppercase text-text-dim">Sales per night</h2>
+        <SalesByNight
+          days={data.byDay}
+          breakEven={breakEven.computable ? breakEven.requiredGrossPerTradingDay : null}
+        />
+      </section>
+
+      {/* 4 — DETAILS. Collapsed, each with its key figure showing. */}
+      <section>
+        <h2 className="mb-2 text-label uppercase tracking-wide text-text-dim">Details</h2>
+
+        <Disclosure
+          title="Bills and averages"
+          summary={`${headline.bills.toLocaleString('en-PH')} bills over ${headline.tradingDays} trading ${headline.tradingDays === 1 ? 'day' : 'days'}`}
+        >
+          <FigureRow label="Bills" value={headline.bills.toLocaleString('en-PH')}>
+            <ComparisonLine now={headline.bills} before={previous.bills} against={against} kind="count" />
+          </FigureRow>
+          <FigureRow label="Trading days" value={String(headline.tradingDays)}>
+            <ComparisonLine now={headline.tradingDays} before={previous.tradingDays} against={against} kind="count" />
+          </FigureRow>
+          <FigureRow label="Sales per trading day" value={formatPesos(headline.grossPerTradingDay)}>
+            <ComparisonLine now={headline.grossPerTradingDay} before={previous.grossPerTradingDay} against={against} />
+          </FigureRow>
+          <FigureRow label="After all costs per trading day" value={formatPesos(headline.netPerTradingDay)}>
+            <ComparisonLine now={headline.netPerTradingDay} before={previous.netPerTradingDay} against={against} />
+          </FigureRow>
+          <FigureRow
+            label="Kept after cost of goods"
+            value={headline.grossMarginPercent === null ? '—' : `${headline.grossMarginPercent}%`}
+          >
+            <p className="mt-1 text-label text-text-dim">
+              {previous.grossMarginPercent === null ? 'Nothing to compare' : `${previous.grossMarginPercent}% ${against}`}
             </p>
+          </FigureRow>
+        </Disclosure>
+
+        <Disclosure
+          title="Day of week"
+          summary={
+            strongestDay?.avgGross == null
+              ? 'No trading'
+              : `${WEEKDAYS[strongestDay.isoDay - 1]} strongest · ${formatPesos(strongestDay.avgGross)} a night`
+          }
+        >
+          {/* "vs break-even" rather than an average bottom line: rent and wages land on
+              whichever weekday they were paid, which made Wednesdays read as losing money
+              while their sales were fine. The break-even figure spreads the period's expenses
+              evenly, and it is the same figure the chart draws, so the two agree. */}
+          <Table
+            head={['Day', 'Trading days', 'Avg bills', 'Avg sales', 'vs break-even']}
+            rows={data.byDayOfWeek.map((day) => {
+              const gap =
+                day.avgGross === null || !breakEven.computable || breakEven.requiredGrossPerTradingDay === null
+                  ? null
+                  : day.avgGross - breakEven.requiredGrossPerTradingDay;
+              return {
+                key: String(day.isoDay),
+                dim: day.tradingDays === 0,
+                cells: [
+                  WEEKDAYS[day.isoDay - 1] ?? String(day.isoDay),
+                  String(day.tradingDays),
+                  day.avgBills === null ? '—' : day.avgBills.toFixed(1),
+                  formatPesos(day.avgGross),
+                  gap === null ? '—' : `${gap >= 0 ? '+' : '−'}${formatPesos(Math.abs(gap))}`,
+                ],
+                cellTone: gap === null ? undefined : { 4: gap >= 0 ? 'good' : 'bad' },
+              };
+            })}
+          />
+        </Disclosure>
+
+        <Disclosure title="Every night" summary={`${data.byDay.length} nights`}>
+          <EveryNight days={data.byDay} />
+        </Disclosure>
+
+        <Disclosure
+          title="Sales by hour"
+          summary={(() => {
+            const busiest = data.byHour.reduce((a, b) => (b.amount > a.amount ? b : a), data.byHour[0]);
+            return busiest ? `Busiest at ${hourLabel(busiest.hour)}` : 'No sales';
+          })()}
+        >
+          <HourChart hours={data.byHour} />
+        </Disclosure>
+      </section>
+
+      {/* 5 — WHAT IT COST TO BE OPEN, and the rest. A new page when printed. */}
+      <section className="-mt-6 print:break-before-page">
+        <Disclosure
+          title="Expenses"
+          summary={
+            data.expensesByCategory.length === 0
+              ? 'None'
+              : `${formatPesos(headline.operatingExpenses)} · ${data.expensesByCategory[0].category.toLowerCase()} ${formatPesos(data.expensesByCategory[0].amount)}`
+          }
+        >
+          {data.expensesByCategory.length === 0 ? (
+            <p className="text-body text-text-dim">Nothing paid out in either period.</p>
+          ) : (
+            <Table
+              head={['Category', period, against, '% of sales']}
+              rows={data.expensesByCategory.map((line) => ({
+                key: line.category,
+                cells: [line.category, formatPesos(line.amount), formatPesos(line.previousAmount), percent(line.percentOfGross)],
+              }))}
+              total={[
+                'Total',
+                formatPesos(headline.operatingExpenses),
+                formatPesos(previous.operatingExpenses),
+                percent(headline.gross > 0 ? (headline.operatingExpenses / headline.gross) * 100 : null),
+              ]}
+            />
           )}
-        </Card>
-      </Group>
-
-      {/* 3 — THE TREND. */}
-      <Group title="Day by day">
-        <Tile title="Gross per night, with the break-even line">
-          <GrossByDay
-            days={data.byDay}
-            breakEven={breakEven.computable ? breakEven.requiredGrossPerTradingDay : null}
-          />
-          <p className="mt-3 text-label text-text-dim">
-            Nights below the line did not take enough to cover their share of the period&rsquo;s
-            operating cost. Net per night is in the table, where a night&rsquo;s own expenses
-            belong.
-          </p>
-        </Tile>
-        <Tile title="Every night">
-          <Table
-            head={['Night', 'Bills', 'Gross', 'Cost of goods', 'Gross profit', 'Expenses', 'Net']}
-            rows={data.byDay.map((day) => ({
-              key: day.businessDate,
-              dim: !day.trading,
-              cells: [
-                day.businessDate,
-                String(day.bills),
-                formatMoney(day.gross),
-                formatMoney(day.costOfGoods),
-                formatMoney(day.grossProfit),
-                formatMoney(day.operatingExpenses),
-                formatMoney(day.net),
-              ],
-            }))}
-          />
-        </Tile>
-      </Group>
-
-      {/* 4 — WHICH NIGHTS CARRY IT. */}
-      <Group title="Day of week">
-        <Tile title="Average per trading day">
-          <Table
-            head={['Day', 'Trading days', 'Avg bills', 'Avg gross', 'Avg net']}
-            rows={data.byDayOfWeek.map((day) => ({
-              key: String(day.isoDay),
-              dim: day.tradingDays === 0,
-              cells: [
-                WEEKDAYS[day.isoDay - 1] ?? String(day.isoDay),
-                String(day.tradingDays),
-                day.avgBills === null ? '—' : day.avgBills.toFixed(1),
-                formatMoney(day.avgGross),
-                formatMoney(day.avgNet),
-              ],
-            }))}
-          />
-          <p className="mt-3 text-label text-text-dim">
-            Counting only the days that traded. A weekday that never opened shows a dash, not a
-            zero.
-          </p>
-        </Tile>
-      </Group>
-
-      {/* 5 — WHICH HOURS CARRY IT. */}
-      <Group title="Hour of day">
-        <Tile title="Bills and gross per hour, summed across the period">
-          <SalesByHour hours={data.byHour} />
-        </Tile>
-      </Group>
-
-      {/* 6 — WHAT IT COST TO BE OPEN. A new page when printed. */}
-      <div className="print:break-before-page flex flex-col gap-10">
-        <Group title="Operating expenses">
-          <Tile title="By category">
-            {data.expensesByCategory.length === 0 ? (
-              <p className="text-body text-text-dim">Nothing paid out in either period.</p>
-            ) : (
-              <Table
-                head={['Category', period, previousPeriod, '% of gross']}
-                rows={data.expensesByCategory.map((line) => ({
-                  key: line.category,
-                  cells: [
-                    line.category,
-                    formatMoney(line.amount),
-                    formatMoney(line.previousAmount),
-                    percent(line.percentOfGross),
-                  ],
-                }))}
-              />
-            )}
-          </Tile>
-          <Tile title="Six months, by category">
-            {data.expensesByMonth.rows.length === 0 ? (
-              <p className="text-body text-text-dim">No expenses recorded in the last six months.</p>
-            ) : (
+          {data.expensesByMonth.rows.length > 0 ? (
+            <div className="mt-8">
+              <h3 className="mb-2 text-label uppercase text-text-dim">Six months</h3>
               <Table
                 head={['Category', ...data.expensesByMonth.months.map(formatMonth), 'Total']}
                 rows={data.expensesByMonth.rows.map((row) => ({
                   key: row.category,
-                  cells: [row.category, ...row.amounts.map((amount) => formatMoney(amount)), formatMoney(row.total)],
+                  cells: [row.category, ...row.amounts.map((amount) => formatPesos(amount)), formatPesos(row.total)],
                 }))}
+                total={[
+                  'Total',
+                  ...data.expensesByMonth.months.map((_, index) =>
+                    formatPesos(data.expensesByMonth.rows.reduce((sum, row) => sum + row.amounts[index], 0)),
+                  ),
+                  formatPesos(data.expensesByMonth.rows.reduce((sum, row) => sum + row.total, 0)),
+                ]}
               />
-            )}
-            <p className="mt-3 text-label text-text-dim">
-              The last column runs only to {formatRange(data.to, data.to)}, so it is a partial
-              month unless that is a month end. Voided expenses excluded throughout.
-            </p>
-          </Tile>
-        </Group>
+            </div>
+          ) : null}
+        </Disclosure>
 
-        {/* 7 — WHICH TABLES PULL THEIR WEIGHT. */}
-        <Group title="Tables">
-          <Tile title="Weakest first">
+        <Disclosure
+          title="Tables"
+          summary={
+            weakestTable
+              ? `Weakest: ${weakestTable.tableName} · ${formatPesos(weakestTable.revenuePerOccupiedHour)} an hour`
+              : 'No tables'
+          }
+        >
+          <Table
+            head={['Table', 'Hours held', 'In use', 'Time sales', 'Per hour held']}
+            rows={data.tables.map((table) => ({
+              key: table.tableName,
+              dim: table.occupiedMinutes === 0,
+              marker: table === weakestTable ? 'weakest' : undefined,
+              cells: [
+                table.tableName,
+                formatHours(table.occupiedMinutes),
+                percent(table.utilisationPercent),
+                formatPesos(table.timeRevenue),
+                formatPesos(table.revenuePerOccupiedHour),
+              ],
+            }))}
+          />
+        </Disclosure>
+
+        <Disclosure
+          title="Products"
+          summary={
+            data.products.length === 0
+              ? 'Nothing sold'
+              : belowCost === 0
+                ? 'All sold above cost'
+                : `${belowCost} sold at or below cost`
+          }
+          tone={belowCost > 0 ? 'danger' : undefined}
+        >
+          {data.products.length === 0 ? (
+            <p className="text-body text-text-dim">Nothing sold.</p>
+          ) : (
             <Table
-              head={['Table', 'Occupied', 'Utilisation', 'Time revenue', 'Per occupied hour']}
-              rows={data.tables.map((table) => ({
-                key: table.tableName,
-                dim: table.occupiedMinutes === 0,
+              head={['Product', 'Qty', 'Sales', 'Cost', 'Margin', 'Margin %']}
+              rows={data.products.map((product) => ({
+                key: product.name,
+                danger: product.margin <= 0,
                 cells: [
-                  table.tableName,
-                  `${table.occupiedMinutes.toLocaleString('en-PH')} min`,
-                  percent(table.utilisationPercent),
-                  formatMoney(table.timeRevenue),
-                  formatMoney(table.revenuePerOccupiedHour),
+                  product.name,
+                  product.quantity.toLocaleString('en-PH'),
+                  formatPesos(product.revenue),
+                  formatPesos(product.cost),
+                  formatPesos(product.margin),
+                  percent(product.marginPercent),
                 ],
               }))}
             />
-            <p className="mt-3 text-label text-text-dim">
-              Occupied is wall clock, pauses included — a paused table is still nobody
-              else&rsquo;s. Utilisation is against 19 hours for each trading day. Time revenue is
-              what the time was charged, a moved session split between its tables by minutes. A
-              premium table earning less per hour than a standard one is a pricing question.
-            </p>
-          </Tile>
-        </Group>
-      </div>
-
-      {/* 8 — WHICH PRODUCTS PULL THEIR WEIGHT. A new page when printed. */}
-      <div className="print:break-before-page flex flex-col gap-10">
-        <Group title="Products">
-          <Tile title="Sold, thinnest margin first">
-            {data.products.length === 0 ? (
-              <p className="text-body text-text-dim">Nothing sold.</p>
-            ) : (
+          )}
+          {data.unsoldProducts.length > 0 ? (
+            <div className="mt-8">
+              <h3 className="mb-2 text-label uppercase text-text-dim">Not sold, still on the shelf</h3>
               <Table
-                head={['Product', 'Qty', 'Revenue', 'Cost', 'Margin', 'Margin %']}
-                rows={data.products.map((product) => ({
-                  key: product.name,
-                  danger: product.margin <= 0,
-                  cells: [
-                    product.name,
-                    product.quantity.toLocaleString('en-PH'),
-                    formatMoney(product.revenue),
-                    formatMoney(product.cost),
-                    formatMoney(product.margin),
-                    percent(product.marginPercent),
-                  ],
-                }))}
-              />
-            )}
-            <p className="mt-3 text-label text-text-dim">
-              From the prices and costs snapshotted at the moment of sale. Anything at or below
-              cost is at the top.
-            </p>
-          </Tile>
-          <Tile title="Not sold this period, still on the shelf">
-            {data.unsoldProducts.length === 0 ? (
-              <p className="text-body text-text-dim">Everything in stock sold at least once.</p>
-            ) : (
-              <Table
-                head={['Product', 'On hand', 'Avg cost', 'Capital on shelf']}
+                head={['Product', 'On hand', 'Avg cost', 'On the shelf']}
                 rows={data.unsoldProducts.map((product) => ({
                   key: product.name,
                   cells: [
                     product.name,
                     product.qtyOnHand.toLocaleString('en-PH'),
-                    formatMoney(product.avgCost),
-                    formatMoney(product.capitalOnShelf),
+                    formatPesos(product.avgCost),
+                    formatPesos(product.capitalOnShelf),
                   ],
                 }))}
               />
-            )}
-            <p className="mt-3 text-label text-text-dim">
-              Valued at current average cost. Cut-the-SKU candidates.
-            </p>
-          </Tile>
-        </Group>
-
-        {/* 9 — WHAT WAS GIVEN AWAY. */}
-        <Group title="Given away">
-          <Tile title={`${formatMoney(data.givenAway.total)} · ${percent(data.givenAway.percentOfGross)} of gross`}>
-            <div className="grid gap-x-8 md:grid-cols-2">
-              <Row label={`Promos · ${plural(data.givenAway.promoSessions, 'session')}`} value={formatMoney(data.givenAway.promoForgone)} />
-              <Row label={`Friend rates · ${plural(data.givenAway.friendSessions, 'session')}`} value={formatMoney(data.givenAway.friendForgone)} />
-              <Row label={`Flat rate · ${plural(data.givenAway.flatSessions, 'session')}`} value={formatMoney(data.givenAway.flatForgone)} />
-              <Row label={`Time not charged · ${plural(data.givenAway.reducedSessions, 'session')}`} value={formatMoney(data.givenAway.timeReductionForgone)} />
-              <Row label={`Discounts · ${plural(data.givenAway.discountBills, 'bill')}`} value={formatMoney(data.givenAway.discountAmount)} />
-              <Row label={`Vouchers · ${plural(data.givenAway.voucherCount, 'voucher')}`} value={formatMoney(data.givenAway.voucherAmount)} />
-              <Row label={`Voids · ${plural(data.givenAway.voidCount, 'line')}`} value={formatMoney(data.givenAway.voidAmount)} />
-              <Row label={`Comps · ${data.givenAway.compQuantity} units · estimate`} value={formatMoney(data.givenAway.compEstimatedCost)} />
             </div>
-            <p className="mt-3 text-label text-text-dim">
-              The dashboard&rsquo;s eight lines, summed over the period. Comps are valued at
-              current average cost and are an estimate; the other seven are exact. Discounts and
-              vouchers are already out of gross — they explain it rather than reduce it.
-            </p>
-          </Tile>
-        </Group>
+          ) : null}
+        </Disclosure>
 
-        {/* 10 — HOW WELL THE DRAWER WAS KEPT. */}
-        <Group title="Cash discipline">
-          <div className="grid items-start gap-4 2xl:grid-cols-2">
-            <Tile title="The drawer">
-              <Row
-                label="Variance over the period"
-                value={`${data.cash.varianceTotal > 0 ? '+' : ''}${formatMoney(data.cash.varianceTotal)}`}
-              />
-              <Row label="Nights with a variance" value={String(data.cash.nightsWithVariance)} />
-              <Row label="Nights counted" value={String(data.cash.countedNights)} />
-              <Row
-                label="Trading days never counted"
-                value={String(data.cash.uncountedTradingDays)}
-                dim={data.cash.uncountedTradingDays === 0}
-              />
-              <p className="mt-3 text-label text-text-dim">
-                Variance is counted cash less what the drawer should have held. Negative is short.
-              </p>
-            </Tile>
-            <Tile title="Still owed">
-              <Row
-                label={`From this period · ${plural(data.cash.unsettled.thisPeriod.count, 'bill')}`}
-                value={formatMoney(data.cash.unsettled.thisPeriod.amount)}
-              />
-              <Row
-                label={`1–4 weeks before it · ${plural(data.cash.unsettled.oneToFourWeeksBefore.count, 'bill')}`}
-                value={formatMoney(data.cash.unsettled.oneToFourWeeksBefore.amount)}
-              />
-              <Row
-                label={`Older · ${plural(data.cash.unsettled.older.count, 'bill')}`}
-                value={formatMoney(data.cash.unsettled.older.amount)}
-              />
-              <p className="mt-3 text-label text-text-dim">
-                Unsettled bills still open right now, by the night they were played. A live figure
-                — it moves when a debt is collected.
-              </p>
-            </Tile>
+        <Disclosure
+          title="Given away"
+          summary={`${formatPesos(data.givenAway.total)}${
+            data.givenAway.percentOfGross === null ? '' : ` · ${data.givenAway.percentOfGross}% of sales`
+          }`}
+        >
+          <div className="grid gap-x-8 md:grid-cols-2">
+            <Row label={`Promos · ${plural(data.givenAway.promoSessions, 'session')}`} value={formatPesos(data.givenAway.promoForgone)} />
+            <Row label={`Friend rates · ${plural(data.givenAway.friendSessions, 'session')}`} value={formatPesos(data.givenAway.friendForgone)} />
+            <Row label={`Flat rate · ${plural(data.givenAway.flatSessions, 'session')}`} value={formatPesos(data.givenAway.flatForgone)} />
+            <Row label={`Time not charged · ${plural(data.givenAway.reducedSessions, 'session')}`} value={formatPesos(data.givenAway.timeReductionForgone)} />
+            <Row label={`Discounts · ${plural(data.givenAway.discountBills, 'bill')}`} value={formatPesos(data.givenAway.discountAmount)} />
+            <Row label={`Vouchers · ${plural(data.givenAway.voucherCount, 'voucher')}`} value={formatPesos(data.givenAway.voucherAmount)} />
+            <Row label={`Voids · ${plural(data.givenAway.voidCount, 'line')}`} value={formatPesos(data.givenAway.voidAmount)} />
+            <Row label={`Comps · ${plural(data.givenAway.compQuantity, 'unit')}`} value={formatPesos(data.givenAway.compEstimatedCost)} />
           </div>
-        </Group>
-      </div>
+        </Disclosure>
 
-      <p className="text-label text-text-dim">
-        {data.from} to {data.to} · compared against {data.previousFrom} to {data.previousTo} ·{' '}
-        {headline.bills} bills over {headline.tradingDays}{' '}
-        {headline.tradingDays === 1 ? 'trading day' : 'trading days'}
-      </p>
+        <Disclosure
+          title="Drawer"
+          summary={`${cash.varianceTotal > 0 ? '+' : cash.varianceTotal < 0 ? '−' : ''}${formatPesos(Math.abs(cash.varianceTotal))} over ${cash.countedNights} counted ${cash.countedNights === 1 ? 'night' : 'nights'}`}
+          tone={cash.varianceTotal < 0 ? 'danger' : undefined}
+        >
+          <Row
+            label="Variance over the period"
+            value={`${cash.varianceTotal > 0 ? '+' : cash.varianceTotal < 0 ? '−' : ''}${formatPesos(Math.abs(cash.varianceTotal))}`}
+          />
+          <Row label="Nights with a variance" value={String(cash.nightsWithVariance)} />
+          <Row label="Nights counted" value={String(cash.countedNights)} />
+          <Row label="Trading days never counted" value={String(cash.uncountedTradingDays)} dim={cash.uncountedTradingDays === 0} />
+        </Disclosure>
+
+        <Disclosure
+          title="Still owed"
+          summary={owed === 0 ? 'Nothing' : `${formatPesos(owedAmount)} · ${plural(owed, 'bill')}`}
+          tone={owed > 0 ? 'danger' : undefined}
+        >
+          <Row label={`From this period · ${plural(cash.unsettled.thisPeriod.count, 'bill')}`} value={formatPesos(cash.unsettled.thisPeriod.amount)} />
+          <Row label={`1–4 weeks before it · ${plural(cash.unsettled.oneToFourWeeksBefore.count, 'bill')}`} value={formatPesos(cash.unsettled.oneToFourWeeksBefore.amount)} />
+          <Row label={`Older · ${plural(cash.unsettled.older.count, 'bill')}`} value={formatPesos(cash.unsettled.older.amount)} />
+        </Disclosure>
+      </section>
+
+      <Disclosure title="How these numbers are worked out">
+        <dl className="grid gap-x-8 gap-y-3 text-body md:grid-cols-[max-content_1fr]">
+          <Definition term="Sales">
+            Every bill closed in the period, including ones left unpaid. Voided lines are left out.
+          </Definition>
+          <Definition term="After cost of goods">
+            Sales less what the food and drink cost to buy, at the cost on the day it was sold.
+          </Definition>
+          <Definition term="Expenses">
+            Rent, wages, water, electricity and the like, dated by the night they were paid. Voided
+            expenses are left out.
+          </Definition>
+          <Definition term="After all costs">After cost of goods, less expenses.</Definition>
+          <Definition term={`vs ${against}`}>
+            Like for like: a whole month against the whole month before, a month to date against
+            the same days of the month before, a week against the same weekdays a week earlier.
+            Under one per cent either way reads as about the same.
+          </Definition>
+          <Definition term="Trading day">
+            A night with at least one sale or a drawer count. Every per-day figure divides by
+            trading days, not calendar days.
+          </Definition>
+          <Definition term="Break-even">
+            What a night must take for the margin on it to cover the period&rsquo;s expenses
+            spread evenly across its trading days. The day-of-week table measures against the
+            same figure.
+          </Definition>
+          <Definition term="Tables">
+            Hours held is wall clock, pauses included. In use is against 19 hours a trading day.
+            Time sales is what the time was charged, a moved session split between its tables
+            by minutes. Weakest is the table earning least per hour it was held — a premium
+            table earning less than a standard one is a pricing question.
+          </Definition>
+          <Definition term="Products">
+            From the prices and costs recorded at the moment of sale. Unsold stock is valued at
+            its current average cost.
+          </Definition>
+          <Definition term="Given away">
+            The dashboard&rsquo;s eight lines summed over the period. Comps are valued at current
+            average cost, so that one is an estimate; the rest are exact.
+          </Definition>
+          <Definition term="Drawer">
+            Variance is counted cash less what the drawer should have held. Negative is short.
+          </Definition>
+          <Definition term="Still owed">
+            Unpaid bills open right now, by the night they were played. It moves when a debt is
+            collected.
+          </Definition>
+        </dl>
+      </Disclosure>
+    </div>
+  );
+}
+
+/** A figure with its comparison, as a row: label left, number and comparison right. */
+function FigureRow({ label, value, children }: { label: string; value: string; children: ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-3 border-b border-border py-2 last:border-0">
+      <span className="text-body text-text">{label}</span>
+      <span className="text-right">
+        <span className="tabular block text-body text-text">{value}</span>
+        {children}
+      </span>
     </div>
   );
 }
 
 /**
- * One headline figure with its delta. Null in, dash out: a per-day figure across no trading
- * days is undefined, not zero, and the delta is left off rather than compared against a dash.
+ * Every night, reduced to what the owner reads: Night · Bills · Sales · Expenses · After all
+ * costs. "Show all columns" brings cost of goods and after cost of goods back for the
+ * accountant. An expense names its categories so a rent night reads as rent, not as a loss.
  */
-function Figure({
-  label,
-  now,
-  before,
-  against,
-  kind = 'money',
-  goodWhen = 'up',
-  emphasis = false,
-}: {
-  label: string;
-  now: Money | number | null;
-  before: Money | number | null;
-  against: string;
-  kind?: 'money' | 'count' | 'percent';
-  goodWhen?: 'up' | 'down';
-  emphasis?: boolean;
-}) {
-  const shown =
-    now === null
-      ? '—'
-      : kind === 'money'
-        ? formatMoney(now)
-        : kind === 'count'
-          ? now.toLocaleString('en-PH')
-          : `${now.toFixed(1)}%`;
+function EveryNight({ days }: { days: PeriodReport['byDay'] }) {
+  const [all, setAll] = useState(false);
+  const head = all
+    ? ['Night', 'Bills', 'Sales', 'Cost of goods', 'After cost of goods', 'Expenses', 'After all costs']
+    : ['Night', 'Bills', 'Sales', 'Expenses', 'After all costs'];
   return (
-    <Card className={emphasis ? 'border-green' : ''}>
-      <div className="text-label uppercase text-text-dim">{label}</div>
-      <div className={`tabular mt-2 text-amount ${emphasis && now !== null && now < 0 ? 'text-danger' : 'text-text'}`}>
-        {shown}
+    <div>
+      <div className="mb-2 flex justify-end print:hidden">
+        <button
+          type="button"
+          onClick={() => setAll((value) => !value)}
+          aria-pressed={all}
+          className="hit text-label text-info underline"
+        >
+          {all ? 'Fewer columns' : 'Show all columns'}
+        </button>
       </div>
-      {now === null || before === null ? (
-        <p className="mt-1 text-label text-text-dim">Nothing to compare</p>
-      ) : (
-        <Delta
-          now={now}
-          before={before}
-          against={against}
-          none={`No trading ${against}`}
-          kind={kind}
-          goodWhen={goodWhen}
-        />
-      )}
-    </Card>
+      <Table
+        head={head}
+        rows={days.map((day) => {
+          const expenses =
+            day.operatingExpenses === 0
+              ? ''
+              : `${formatPesos(day.operatingExpenses)} · ${day.expenses.map((line) => line.category.toLowerCase()).join(', ')}`;
+          const cells = all
+            ? [
+                shortNight(day.businessDate),
+                String(day.bills),
+                formatPesos(day.gross),
+                formatPesos(day.costOfGoods),
+                formatPesos(day.grossProfit),
+                expenses,
+                formatPesos(day.net),
+              ]
+            : [shortNight(day.businessDate), String(day.bills), formatPesos(day.gross), expenses, formatPesos(day.net)];
+          return {
+            key: day.businessDate,
+            dim: !day.trading,
+            shaded: isWeekendNight(day.businessDate),
+            cells,
+          };
+        })}
+      />
+    </div>
   );
 }
 
+/**
+ * Numbers right-aligned in tabular figures, the first column left. A `total` row is set off
+ * from the body; a `marker` row carries a word beside its name; a `shaded` row is the
+ * weekend, in the same shade as the chart.
+ */
 function Table({
   head,
   rows,
+  total,
 }: {
   head: string[];
-  rows: { key: string; cells: string[]; dim?: boolean; danger?: boolean }[];
+  rows: {
+    key: string;
+    cells: string[];
+    dim?: boolean;
+    danger?: boolean;
+    shaded?: boolean;
+    marker?: string;
+    cellTone?: Record<number, 'good' | 'bad'>;
+  }[];
+  total?: string[];
 }) {
   return (
     <div className="overflow-x-auto">
@@ -534,23 +655,53 @@ function Table({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.key} className="border-b border-border">
+            <tr key={row.key} className={`border-b border-border ${row.shaded ? 'bg-surface' : ''}`}>
               {row.cells.map((cell, index) => (
                 <td
                   key={index}
                   className={`py-2 text-body ${index === 0 ? '' : 'tabular pl-3 text-right'} ${
-                    row.danger ? 'text-danger' : row.dim ? 'text-text-dim' : 'text-text'
+                    row.cellTone?.[index] === 'good'
+                      ? 'text-green'
+                      : row.cellTone?.[index] === 'bad' || row.danger
+                        ? 'text-danger'
+                        : row.dim
+                          ? 'text-text-dim'
+                          : 'text-text'
                   }`}
                 >
                   {cell}
+                  {index === 0 && row.marker ? (
+                    <span className="ml-2 rounded-full border border-danger px-2 text-label text-danger">
+                      {row.marker}
+                    </span>
+                  ) : null}
                 </td>
               ))}
             </tr>
           ))}
         </tbody>
+        {total ? (
+          <tfoot>
+            <tr className="border-t-2 border-border">
+              {total.map((cell, index) => (
+                <td
+                  key={index}
+                  className={`py-2 text-body font-semibold text-text ${index === 0 ? '' : 'tabular pl-3 text-right'}`}
+                >
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        ) : null}
       </table>
     </div>
   );
+}
+
+function hourLabel(hour: number): string {
+  const twelve = hour % 12 === 0 ? 12 : hour % 12;
+  return `${twelve}${hour < 12 ? 'am' : 'pm'}`;
 }
 
 function percent(value: number | null): string {

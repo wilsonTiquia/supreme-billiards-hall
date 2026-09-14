@@ -112,20 +112,22 @@ test('a prize code closes a bill at nothing and lands in the night as given away
   // into one number — fifty two-hour codes is not fifty times two hours of lost revenue.
   await page.goto('/dashboard');
 
-  // Table utilisation, which no browser test had ever read. Thirty minutes were played on
-  // Table 1, and the figure is occupiedMinutes -- wall clock, pauses included -- which is what
-  // the line beneath it now says. It was called billedMinutes and was reported as a bug three
-  // times for looking like the session's charged figure.
-  const utilisation = page
-    .locator('div')
-    .filter({ has: page.getByRole('heading', { name: 'Table utilisation', exact: true }) })
-    .last();
-  // A figure, not a blank: a renamed field the client did not follow renders " min" with
-  // nothing in front of it. Scoped to the tile because "30 min" also matches a table NAMED
-  // "Table 3" followed by "0 min" on the row below.
-  await expect(utilisation.getByText(/^\d+ min ·/).first()).toBeVisible();
-  await expect(utilisation.getByText(/pauses included/)).toBeVisible();
+  // Table use, which no browser test had ever read. Thirty minutes were played on Table 1,
+  // and the figure is occupiedMinutes -- wall clock, pauses included -- shown as hours to one
+  // decimal. It was called billedMinutes and was reported as a bug three times for looking
+  // like the session's charged figure. The section is collapsed until opened, and its
+  // header carries the busiest table's share.
+  const tableUse = page.getByRole('button', { name: /^Table use/ });
+  await expect(tableUse).toHaveText(/Table 1 · \d+%/);
+  await tableUse.click();
+  const utilisation = page.locator('section').filter({ has: tableUse });
+  // A figure, not a blank: a renamed field the client did not follow renders " h" with
+  // nothing in front of it. Scoped to the section because "0.5 h" would also match a table
+  // NAMED "Table 3" followed by "0.0 h" on the row below.
+  await expect(utilisation.getByText(/^\d+\.\d h ·/).first()).toBeVisible();
 
+  // The giveaway section is collapsed too, and its header is the night's total.
+  await page.getByRole('button', { name: /^Given away/ }).click();
   await page.getByRole('button', { name: /Vouchers/ }).click();
   const detail = page.getByText(new RegExp(`^${code}`));
   await expect(detail).toBeVisible();

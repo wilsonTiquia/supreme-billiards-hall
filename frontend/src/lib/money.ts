@@ -17,6 +17,26 @@ export function formatMoney(amount: Money | null | undefined): string {
 }
 
 /**
+ * Whole pesos — "₱42,823", never "₱42,823.22" — for the owner's two reading pages.
+ *
+ * The dashboard and the period report are read for the shape of a night or a month, and
+ * centavos on a five-figure sum are precision nobody can use. Rounded for the eye only: the
+ * figure arrived from the server and goes nowhere. The till and the sales list keep
+ * formatMoney, because those are the screens that reconcile.
+ */
+const wholePeso = new Intl.NumberFormat('en-PH', {
+  style: 'currency',
+  currency: 'PHP',
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 0,
+});
+
+export function formatPesos(amount: Money | null | undefined): string {
+  if (amount === null || amount === undefined) return '—';
+  return wholePeso.format(amount);
+}
+
+/**
  * Rates are DISPLAYED at two decimals — "₱4.00 / min" — and stored at four.
  *
  * The four decimals in the data are not decoration: a ₱200/hour table is ₱3.3333/min, and
