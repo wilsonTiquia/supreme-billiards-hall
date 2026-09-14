@@ -842,11 +842,16 @@ public class ReportRepository {
                      extract(epoch FROM (coalesce(sg.ended_at, now()) - sg.started_at)) / 60.0 AS minutes,
                      sum(extract(epoch FROM (coalesce(sg.ended_at, now()) - sg.started_at)) / 60.0)
                        OVER (PARTITION BY sg.session_id)                                       AS session_minutes,
-                     coalesce((SELECT sum(l.line_total) FROM live_lines l
-                               WHERE l.session_id = ts.id AND l.line_kind = 'TIME'), 0)        AS time_charged
+                     coalesce(tl.time_charged, 0)                                              AS time_charged
               FROM session_segment sg
               JOIN table_session ts ON ts.id = sg.session_id
-              JOIN closed_bills b   ON b.id = ts.bill_id, params p
+              JOIN closed_bills b   ON b.id = ts.bill_id
+              -- Joined, not a correlated subquery: live_lines is a CTE with no index, and a
+              -- lookup per segment scanned every line of the period for every session --
+              -- eight seconds over six months of nights.
+              LEFT JOIN (SELECT l.session_id, sum(l.line_total) AS time_charged
+                         FROM live_lines l WHERE l.line_kind = 'TIME' GROUP BY l.session_id) tl
+                     ON tl.session_id = ts.id, params p
               WHERE b.business_date BETWEEN p.from_d AND p.to_d
             ),
             table_stats AS (
