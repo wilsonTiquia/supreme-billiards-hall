@@ -1,0 +1,98 @@
+# The VPS deployment: the database, the app, and the TLS-terminating proxy, on one private
+# network. Only the proxy publishes ports. The app's 8080 and the database's 5432 are reachable
+# from the other two containers and from nowhere else — that is requirement 2 of
+# application-prod.properties and GO-LIVE's "database never reachable from outside" satisfied
+# by construction, not by a firewall rule somebody has to remember.
+#
+# Everything with a value lives in .env (copy .env.example). The same file is read by
+# deploy/backup.sh and friends, so the password exists in exactly one place on the box.
+
+services:
+  db:
+    # 18, nothing older: V1__baseline.sql uses uuidv7() as a column default.
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: supreme
+      POSTGRES_USER: supreme
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      TZ: Asia/Manila
+    volumes:
+      # The 18 image keeps PGDATA at /var/lib/postgresql/18/docker and documents mounting the
+      # PARENT, /var/lib/postgresql. Mounting the pre-18 path /var/lib/postgresql/data here
+      # would leave the real data directory inside the container, lost on recreate.
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U supreme -d supreme"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    # No ports: entry, on purpose. See the note at the top.
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # The whole point. application-prod.properties turns on Secure/SameSite/HttpOnly cookies
+      # and forward-headers-strategy=framework; without this line none of it is on.
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://db:5432/supreme
+      DB_USERNAME: supreme
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      # Spring relaxed binding: supreme.payment-photo.path <- SUPREME_PAYMENTPHOTO_PATH
+      # (dots to underscores, dashes dropped, upper case). Both under /data, which is the
+      # bind mount below, so the photos are on the host where deploy/backup.sh can tar them.
+      SUPREME_PAYMENTPHOTO_PATH: /data/payment-photos
+      SUPREME_PRODUCTIMAGE_PATH: /data/product-images
+      # Set in .env for the FIRST boot only, to give the seeded (and V9-disabled) owner a
+      # password. Remove it from .env once the owner has logged in and changed it. Empty
+      # default, so an .env without it is an ordinary start.
+      SUPREME_BOOTSTRAP_ADMIN_PASSWORD: ${SUPREME_BOOTSTRAP_ADMIN_PASSWORD:-}
+      # Cosmetic: business_date_of() and the 05:00 auto-close carry their own Asia/Manila,
+      # so the host zone never moves the business day. This only makes the log read in hall time.
+      TZ: Asia/Manila
+    volumes:
+      - ./data:/data
+    healthcheck:
+      # /api/v1/time answers 401 to an anonymous caller. 401 means the app is up and
+      # Spring Security is answering; that is the health we want, not a login.
+      test: ["CMD-SHELL", "code=$$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/api/v1/time); [ \"$$code\" = 200 ] || [ \"$$code\" = 401 ]"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    # No ports: entry, on purpose. The app is reachable only through caddy.
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # The site address, from .env. Caddy issues a Let's Encrypt certificate for a public
+      # name, and an internal (self-signed) one for `localhost`, so the same Caddyfile serves
+      # the VPS and a laptop check.
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS in .env}
+      # Empty on the VPS. `local_certs` for a laptop check — see the Caddyfile.
+      CADDY_LOCAL_CERTS: ${CADDY_LOCAL_CERTS:-}
+      TZ: Asia/Manila
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates and the ACME account live here. Named volumes, so `docker compose up
+      # --build` and a recreate keep them; losing them means a fresh issuance, and Let's
+      # Encrypt rate-limits those.
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  db-data:
+  caddy-data:
+  caddy-config:

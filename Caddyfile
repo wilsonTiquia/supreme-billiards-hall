@@ -1,0 +1,31 @@
+# One site. The address comes from SITE_ADDRESS in .env (via compose.yaml) so this file holds
+# no hostname. DNS for billiards.frasi.tech is an A record on Cloudflare in DNS-only mode
+# (not proxied) — keep it that way: Caddy needs to answer the HTTP-01 challenge itself, and
+# the app needs Caddy to see the real client address, not Cloudflare's.
+{
+	# Empty on the VPS: Caddy asks Let's Encrypt for the certificate. `local_certs` for a
+	# laptop check (CADDY_LOCAL_CERTS=local_certs in .env): Caddy signs with its own CA
+	# instead — the global equivalent of `tls internal`, which cannot be made optional
+	# because `tls` refuses an empty argument.
+	{$CADDY_LOCAL_CERTS}
+}
+
+{$SITE_ADDRESS} {
+	# Stop an oversized body at the proxy, before a byte of it reaches the JVM. A little
+	# above spring.servlet.multipart.max-request-size (6MB) so the app's own limit, with its
+	# readable error, is the one a slightly-too-big photo hits; anything bigger gets a 413 here.
+	request_body {
+		max_size 7MB
+	}
+
+	# Caddy REPLACES X-Forwarded-For with the connecting client's address for any client
+	# that is not in trusted_proxies — and nothing is. That is requirement 1 of
+	# application-prod.properties. It is verified by the forged-header test in
+	# docs/DEPLOY-VPS.md, not by this comment.
+	reverse_proxy app:8080
+
+	# Health of the proxy itself, answered without touching the app.
+	handle /caddy-health {
+		respond "ok" 200
+	}
+}

@@ -1,0 +1,38 @@
+# What the image build is allowed to see. Everything else in the working tree stays on the
+# machine that runs `docker compose build`.
+
+# Build output — the image builds its own, from source, every time.
+target/
+frontend/dist/
+frontend/node_modules/
+frontend/test-results/
+frontend/playwright-report/
+*.tsbuildinfo
+
+# Runtime state written by the Mac install.
+logs/
+run/
+
+# The Mac tools: start/stop, launchd plists, both resets and the demo seed. They hold the
+# database password and the temporary logins, and none of them has any business on the VPS.
+scripts/
+
+# Documentation is read from git, not from inside a container.
+docs/
+
+# Machine-local state.
+.git/
+.idea/
+.vscode/
+.claude/
+*.iml
+.DS_Store
+
+# The deployment's own files live on the host beside compose.yaml, never in the image.
+.env
+.env.example
+data/
+backups/
+deploy/
+Caddyfile
+compose.yaml

@@ -73,3 +73,10 @@ frontend/playwright-report/
 /dist/
 /nbdist/
 /.nb-gradle/
+
+### VPS deployment (docker compose) ###
+# The passwords, the site address and the rclone remote. .env.example is the template.
+.env
+# The app's uploads (bind-mounted into the container) and the backups, on the VPS host.
+data/
+backups/
