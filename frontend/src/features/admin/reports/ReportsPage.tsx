@@ -464,13 +464,16 @@ function Report({ data }: { data: PeriodReport }) {
           }`}
         >
           <div className="grid gap-x-8 md:grid-cols-2">
+            <h3 className="col-span-full mt-3 text-label text-text-dim">Discounts we chose</h3>
             <Row label={`Promos · ${plural(data.givenAway.promoSessions, 'session')}`} value={formatPesos(data.givenAway.promoForgone)} />
             <Row label={`Friend rates · ${plural(data.givenAway.friendSessions, 'session')}`} value={formatPesos(data.givenAway.friendForgone)} />
             <Row label={`Flat rate · ${plural(data.givenAway.flatSessions, 'session')}`} value={formatPesos(data.givenAway.flatForgone)} />
             <Row label={`Time not charged · ${plural(data.givenAway.reducedSessions, 'session')}`} value={formatPesos(data.givenAway.timeReductionForgone)} />
             <Row label={`Discounts · ${plural(data.givenAway.discountBills, 'bill')}`} value={formatPesos(data.givenAway.discountAmount)} />
             <Row label={`Vouchers · ${plural(data.givenAway.voucherCount, 'voucher')}`} value={formatPesos(data.givenAway.voucherAmount)} />
+            <h3 className="col-span-full mt-3 text-label text-text-dim">Mistakes</h3>
             <Row label={`Voids · ${plural(data.givenAway.voidCount, 'line')}`} value={formatPesos(data.givenAway.voidAmount)} />
+            <h3 className="col-span-full mt-3 text-label text-text-dim">Comps · estimate</h3>
             <Row label={`Comps · ${plural(data.givenAway.compQuantity, 'unit')}`} value={formatPesos(data.givenAway.compEstimatedCost)} />
           </div>
         </Disclosure>

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { lastCompletedNight, nightHasEnded, validNight, cashStatus } from './morning';
 import { LossesDetail, type LossKind } from './LossesDetail';
 import { HourChart } from './HourChart';
 import { fetchDailyReport } from '@/api/endpoints/reports';
@@ -12,13 +13,13 @@ import {
 import { fetchUnsettledBills } from '@/api/endpoints/bills';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
-import type { DailyReport, Losses, TimeRevenueByMode } from '@/api/types';
+import type { CashCount, DailyReport, Losses, TimeRevenueByMode } from '@/api/types';
 import { AdminPage } from '../AdminPage';
 import { BigFigure, comparedClause, describeChange } from '../Comparison';
 import { Disclosure } from '@/components/Disclosure';
 import { Spinner } from '@/components/Spinner';
 import { formatPesos } from '@/lib/money';
-import { formatBusinessDate, formatHours, weekdayOf } from '@/lib/datetime';
+import { formatHours, weekdayOf } from '@/lib/datetime';
 
 /**
  * The owner's morning. Ten seconds, on a phone, without scrolling: how much was made, is that
@@ -29,19 +30,34 @@ import { formatBusinessDate, formatHours, weekdayOf } from '@/lib/datetime';
  * comparison of two different nights, and made every Sunday read as a collapse.
  */
 export function DashboardPage() {
-  const [date, setDate] = useState<string>('');
+  const [params, setParams] = useSearchParams();
+  const requestedDate = params.get('date') || '';
+  const setDate = (value: string) => {
+    setOpenLoss(null);
+    setParams((old) => { const next = new URLSearchParams(old); next.set('date', value); return next; });
+  };
   const [openLoss, setOpenLoss] = useState<LossKind | null>(null);
 
-  // Defaults to the business day the server says is current — never one worked out here.
+  // Use the server clock and date label, including the 5am–10am completed-night gap.
   const currentDay = useQuery({
     queryKey: queryKeys.businessDayCurrent,
     queryFn: fetchCurrentBusinessDay,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
+  const latestCompleted = currentDay.data ? lastCompletedNight(currentDay.data) : '';
+  const date = validNight(requestedDate) && requestedDate <= (currentDay.data?.businessDate || '')
+    ? requestedDate : latestCompleted;
+  useEffect(() => {
+    if (date && date !== requestedDate) {
+      setParams((old) => { const next = new URLSearchParams(old); next.set('date', date); return next; }, { replace: true });
+    }
+  }, [date, requestedDate, setParams]);
   const report = useQuery({
-    queryKey: queryKeys.dailyReport(date || undefined),
-    queryFn: () => fetchDailyReport(date || undefined),
+    queryKey: queryKeys.dailyReport(date),
+    queryFn: () => fetchDailyReport(date),
+    enabled: Boolean(date),
   });
 
   /*
@@ -70,35 +86,27 @@ export function DashboardPage() {
   });
 
   const data = report.data;
-  const tonight = !date || date === currentDay.data?.businessDate;
+  const tonight = Boolean(currentDay.data && !nightHasEnded(shownDate, currentDay.data.serverNow));
 
   return (
     <AdminPage title="Dashboard" error={report.isError ? messageOf(report.error) : null}>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        {/* The report can arrive before the business day does; an empty string used to reach
-            formatBusinessDate and take the page down to the error boundary. */}
-        <p className="text-label uppercase text-text-dim">
-          {shownDate ? formatBusinessDate(shownDate) : ''}
-        </p>
-        <div className="flex items-center gap-2">
-          {date ? (
-            <button
-              type="button"
-              onClick={() => setDate('')}
-              className="hit rounded-lg border border-border bg-surface px-3 text-label text-text"
-            >
-              Tonight
-            </button>
-          ) : null}
-          <input
-            type="date"
-            aria-label="Business day"
-            value={shownDate}
-            onChange={(event) => setDate(event.target.value)}
-            className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
-          />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-heading text-text">
+          {shownDate ? `${new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(`${shownDate}T12:00:00Z`))} · ${tonight ? 'in progress since 10am' : 'complete'}` : 'Loading business night…'}
+        </h2>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => setDate(tonight ? latestCompleted : currentDay.data!.businessDate)}
+            disabled={!currentDay.data || (!tonight && nightHasEnded(currentDay.data.businessDate, currentDay.data.serverNow))}
+            className="hit rounded-lg border border-border px-3 text-label">
+            {tonight ? 'Last completed night' : 'Tonight so far'}
+          </button>
+          <input type="date" aria-label="Business day" value={shownDate} max={currentDay.data?.businessDate}
+            onInput={(event) => setDate(event.currentTarget.value)}
+            className="hit rounded-lg border border-border bg-raised px-3 text-label text-text" />
+          <Link className="hit inline-flex items-center text-label underline" to={`/admin/reports?from=${shownDate}&to=${shownDate}`}>View report</Link>
         </div>
       </div>
+      {currentDay.isError && <p role="alert">The business clock is unavailable. Refresh to try again.</p>}
 
       {report.isPending ? (
         <div className="py-16 text-center">
@@ -110,7 +118,10 @@ export function DashboardPage() {
           tonight={tonight}
           notCheckedOut={unsettled.data?.length ?? 0}
           uncountedNights={uncounted.data?.length ?? 0}
-          variance={cashCount.data ? cashCount.data.variance : null}
+          cashCount={cashCount.data ?? null}
+          cashLoading={cashCount.isPending}
+          cashError={cashCount.isError}
+          checksError={unsettled.isError || uncounted.isError}
           onOpenLoss={setOpenLoss}
         />
       )}
@@ -132,19 +143,26 @@ function Night({
   tonight,
   notCheckedOut,
   uncountedNights,
-  variance,
+  cashCount,
+  cashLoading,
+  cashError,
+  checksError,
   onOpenLoss,
 }: {
   data: DailyReport;
   tonight: boolean;
   notCheckedOut: number;
   uncountedNights: number;
-  variance: number | null;
+  cashCount: CashCount | null;
+  cashLoading: boolean;
+  cashError: boolean;
+  checksError: boolean;
   onOpenLoss: (kind: LossKind) => void;
 }) {
   const { totals, previousTotals: previous } = data;
   const against = data.comparedTo ? `last ${weekdayOf(data.comparedTo)}` : 'last week';
-  const started = totals.bills > 0 || data.expenses.total > 0;
+  const payments = data.paymentMix.reduce((sum, row) => sum + row.amount, 0);
+  const cash = cashStatus(cashCount, tonight, cashLoading, cashError);
 
   const attention = (
     <Attention
@@ -153,22 +171,8 @@ function Night({
       uncountedNights={uncountedNights}
       outstanding={data.outstanding}
       unsettledTonight={data.unsettledTonight}
-      variance={variance}
     />
   );
-
-  // A night that has not started says so and nothing else — no zeros, no "-100%". What still
-  // needs doing is shown, because uncounted nights are exactly what a 9am glance is for.
-  if (!started) {
-    return (
-      <div className="flex flex-col gap-6">
-        <p className="text-heading text-text">
-          {tonight ? 'Nothing yet tonight.' : 'The hall did not trade on this night.'}
-        </p>
-        {attention}
-      </div>
-    );
-  }
 
   const clause = comparedClause(
     describeChange({ now: totals.gross, before: previous.gross, against }),
@@ -176,7 +180,7 @@ function Night({
   );
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-3">
       {/* 1 — THE ANSWER. */}
       <section className="flex flex-col gap-5">
         {/* The answer first and full width; the two beneath share a row on a phone and all
@@ -187,36 +191,38 @@ function Night({
               label="Sales"
               size="hero"
               value={formatPesos(totals.gross)}
-              comparison={{ now: totals.gross, before: previous.gross, against }}
+              comparison={tonight || totals.bills === 0 ? undefined : { now: totals.gross, before: previous.gross, against }}
             />
           </div>
           <BigFigure
             label="After cost of goods"
             value={formatPesos(totals.profit)}
-            comparison={{ now: totals.profit, before: previous.profit, against }}
+            comparison={tonight || totals.bills === 0 ? undefined : { now: totals.profit, before: previous.profit, against }}
           />
           <BigFigure
-            label="Bills"
-            value={totals.bills.toLocaleString('en-PH')}
-            comparison={{ now: totals.bills, before: previous.bills, against, kind: 'count' }}
+            label="Collected"
+            value={formatPesos(payments)}
           />
         </div>
-        <p className="max-w-prose text-body text-text">
-          {formatPesos(totals.gross)} taken, {formatPesos(totals.profit)} after cost of goods
-          {clause ? `, ${clause}.` : '.'}
-        </p>
       </section>
-
+      <Link to={`/end-of-day?date=${data.businessDate}`} className={`text-body ${cash.danger ? 'text-danger' : 'text-text'} underline decoration-dotted`}>
+        {cash.text}{cash.amount !== undefined ? formatPesos(cash.amount) : ''}
+      </Link>
       {attention}
-
-      <section className="rounded-2xl border border-border bg-surface p-5 sm:p-8">
-        <h2 className="mb-3 text-label uppercase text-text-dim">Sales by hour</h2>
-        <HourChart hours={data.salesByHour} />
-      </section>
+      {checksError && <p role="status" className="text-danger">Some unpaid-bill or close-out checks are unavailable.</p>}
+      <p className="max-w-prose text-body text-text">
+        {totals.bills} closed {totals.bills === 1 ? 'bill' : 'bills'}; {formatPesos(data.unsettledTonight.amount)} left unpaid on this night
+        {data.collectedToday.amount > 0 ? `; collections include ${formatPesos(data.collectedToday.amount)} from older bills` : ''}
+        {!tonight && totals.bills > 0 && clause ? `; sales ${clause}` : ''}.
+      </p>
+      <p className="text-body text-text">
+        Paid out {formatPesos(data.expenses.total)}{data.expenses.byCategory.length ? ` · ${data.expenses.byCategory.map(row => row.category).join(', ')}` : ''}
+      </p>
 
       {/* 2 — DETAILS. Collapsed, each with its key figure showing. */}
       <section>
         <h2 className="mb-2 text-label uppercase tracking-wide text-text-dim">Details</h2>
+        <Disclosure title="Sales by hour"><HourChart hours={data.salesByHour} /></Disclosure>
         <Disclosure
           title="Table time vs products"
           summary={`${formatPesos(totals.timeRevenue)} · ${formatPesos(totals.itemRevenue)}`}
@@ -353,7 +359,6 @@ function Attention({
   uncountedNights,
   outstanding,
   unsettledTonight,
-  variance,
 }: {
   lowStock: { name: string; qtyOnHand: number }[];
   notCheckedOut: number;
@@ -361,7 +366,6 @@ function Attention({
   /** Every debt still open, across all dates. A live figure, not a fact about this night. */
   outstanding: { count: number; amount: number };
   unsettledTonight: { count: number; amount: number };
-  variance: number | null;
 }) {
   const items: { key: string; text: string; to: string; action: string }[] = [];
 
@@ -391,21 +395,12 @@ function Attention({
       action: 'Chase it',
     });
   }
-  // Only a non-zero variance is worth surfacing; a drawer that balanced is not an action.
-  if (variance !== null && variance !== 0) {
-    items.push({
-      key: 'variance',
-      text: `The drawer was ${variance < 0 ? 'short' : 'over'} by ${formatPesos(Math.abs(variance))}`,
-      to: '/end-of-day',
-      action: 'Open the count',
-    });
-  }
   if (lowStock.length > 0) {
     items.push({
       key: 'stock',
       text: `Low stock: ${lowStock.map((line) => `${line.name} (${line.qtyOnHand})`).join(', ')}`,
       to: '/admin/stock',
-      action: 'Record a delivery',
+      action: 'View stock',
     });
   }
 
@@ -418,9 +413,9 @@ function Attention({
     >
       <ul className="divide-y divide-border">
         {items.map((item) => (
-          <li key={item.key} className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-2">
-            <span className="text-body text-danger">{item.text}</span>
-            <Link to={item.to} className="hit inline-flex items-center text-body text-info underline">
+          <li key={item.key} className="flex items-center justify-between gap-3 py-1">
+            <span className="min-w-0 flex-1 text-body text-danger">{item.text}</span>
+            <Link to={item.to} className="hit inline-flex shrink-0 items-center text-body text-info underline">
               {item.action}
             </Link>
           </li>
@@ -527,15 +522,16 @@ function GivenAway({ losses, onOpen }: { losses: Losses; onOpen: (kind: LossKind
     { kind: 'comps', label: 'Comps', amount: losses.compEstimatedCost, count: losses.compQuantity, noun: 'unit' },
   ];
   return (
-    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-      {figures.map((figure) => (
-        /* A button, so it is reachable from the keyboard like everything else. Neutral —
-           a zero in red reads as an error, and a giveaway is a fact, not a fault. */
+    <div className="grid gap-1">
+      {figures.map((figure, index) => (
+        <div key={figure.kind} className="w-full">
+        {(index === 0 || index >= 6) && <h3 className="mb-2 mt-3 text-label text-text-dim">{index === 0 ? 'Discounts we chose' : index === 6 ? 'Mistakes' : 'Comps · estimate'}</h3>}
+
         <button
           key={figure.kind}
           type="button"
           onClick={() => onOpen(figure.kind)}
-          className="hit rounded-lg border border-transparent p-2 text-left transition hover:border-border hover:bg-raised"
+          className="hit flex w-full items-center justify-between gap-3 rounded-lg border border-transparent p-2 text-left transition hover:border-border hover:bg-raised"
         >
           <div
             className={`tabular text-heading underline decoration-dotted underline-offset-4 ${
@@ -548,6 +544,7 @@ function GivenAway({ losses, onOpen }: { losses: Losses; onOpen: (kind: LossKind
             {figure.label} · {figure.count} {figure.count === 1 ? figure.noun : `${figure.noun}s`}
           </div>
         </button>
+        </div>
       ))}
     </div>
   );
@@ -607,7 +604,7 @@ function HowWorkedOut({ against }: { against: string }) {
           Every bill closed on the night, including ones left unpaid. Voided lines are left out.
         </Definition>
         <Definition term="After cost of goods">
-          Sales less what the food and drink cost to buy, at the cost on the day it was sold.
+          Sales less the recorded cost of products sold, using the cost saved with each sale.
         </Definition>
         <Definition term={`vs ${against}`}>
           The same weekday a week earlier — a Saturday is compared to a Saturday, never to a
@@ -616,6 +613,8 @@ function HowWorkedOut({ against }: { against: string }) {
         <Definition term="The night">
           Runs from 10am to 5am. A sale at 2am belongs to the night before.
         </Definition>
+        <Definition term="Collected">Payments taken on this business night. Includes collections of older debts; excludes sales still unpaid.</Definition>
+        <Definition term="Complete">The scheduled night has ended at 5am. The cash line separately shows whether it was counted.</Definition>
         <Definition term="Paid out">
           Rent, wages, water, electricity and the like recorded on the night. Not taken off the
           figures above — those are the night's trading; this is the cost of being open.
