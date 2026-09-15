@@ -275,6 +275,11 @@ Run these **in this order**. Two orderings matter and neither is obvious:
 
 ## Only when this moves off localhost — the hosting-day step
 
+For the Debian VPS deployment, follow [Deploying to the VPS](DEPLOY-VPS.md).
+After the server preparation in section 1, continue with section 2, **First boot**,
+as `pos`. The runbook covers the private repository's read-only deploy key, Docker
+Compose, Caddy, verification, and backups.
+
 **Not for opening.** The venue install runs on `http://localhost:8080` over plain HTTP, and the
 `prod` profile is the wrong thing there: `server.servlet.session.cookie.secure=true` tells the
 browser to send the session cookie only over HTTPS, so on plain HTTP it is never sent back and
