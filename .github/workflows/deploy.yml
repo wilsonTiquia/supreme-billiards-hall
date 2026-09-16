@@ -1,0 +1,61 @@
+# Updates the VPS. Runs ONLY from the button: Actions → Deploy → Run workflow, type `deploy`.
+# Nothing here fires on a push; merging into main changes GitHub, not the hall.
+#
+# The runner SSHes to the box as `pos` with a key whose authorized_keys line is restricted to
+# deploy/update.sh, so this workflow cannot run anything else there even if it wanted to. The
+# host key is pinned through VPS_KNOWN_HOSTS, so StrictHostKeyChecking stays on. Both secrets
+# are set once, by hand: docs/WORKFLOW.md, "Setting up the Deploy button".
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "deploy" to update billiards.frasi.tech. Mornings, before the first table.'
+        required: true
+        type: string
+
+# Two clicks in a row queue, they do not race.
+concurrency: deploy-vps
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse unless the box says deploy
+        if: inputs.confirm != 'deploy'
+        run: |
+          echo "::error::The confirm box must contain exactly: deploy"
+          exit 1
+
+      - name: Install the deploy key and the pinned host key
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          test -n "$VPS_SSH_KEY" || { echo "::error::secret VPS_SSH_KEY is not set"; exit 1; }
+          test -n "$VPS_KNOWN_HOSTS" || { echo "::error::secret VPS_KNOWN_HOSTS is not set"; exit 1; }
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key && chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts && chmod 644 ~/.ssh/known_hosts
+
+      # No command on purpose: the forced command on the VPS is deploy/update.sh, and that
+      # script refuses any connection that asks for something else.
+      - name: Run deploy/update.sh on the VPS
+        run: >-
+          ssh -T -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+          -o ConnectTimeout=20 pos@51.79.241.146 < /dev/null
+
+      # /api/v1/time answers 401 to an anonymous caller; 401 means the new app is up and Spring
+      # Security is answering. Anything else for 90 seconds — 502 from Caddy, 000 — is a failed
+      # deploy, and the job says so in red.
+      - name: Wait for 401 from the health URL
+        run: |
+          for attempt in $(seq 1 18); do
+            code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://billiards.frasi.tech/api/v1/time || true)"
+            echo "attempt $attempt: HTTP $code"
+            [ "$code" = "401" ] && { echo "healthy"; exit 0; }
+            sleep 5
+          done
+          echo "::error::billiards.frasi.tech/api/v1/time did not answer 401 within 90 seconds"
+          exit 1

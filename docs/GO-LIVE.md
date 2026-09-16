@@ -275,7 +275,9 @@ Run these **in this order**. Two orderings matter and neither is obvious:
 
 ## Only when this moves off localhost — the hosting-day step
 
-For the Debian VPS deployment, follow [Deploying to the VPS](DEPLOY-VPS.md).
+For the Debian VPS deployment, follow [Deploying to the VPS](DEPLOY-VPS.md). Once it is up,
+every later change reaches it through a pull request and the Deploy button —
+[How a change reaches the hall](WORKFLOW.md).
 After the server preparation in section 1, continue with section 2, **First boot**,
 as `pos`. The runbook covers the private repository's read-only deploy key, Docker
 Compose, Caddy, verification, and backups.
