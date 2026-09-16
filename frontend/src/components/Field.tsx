@@ -12,9 +12,10 @@ interface FieldProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'id'> {
    * arrow past or accidentally deletes is worse than no symbol at all.
    */
   prefix?: string;
+  trailing?: ReactNode;
 }
 
-export function Field({ label, hint, error, prefix, className = '', ...rest }: FieldProps) {
+export function Field({ label, hint, error, prefix, trailing, className = '', ...rest }: FieldProps) {
   const id = useId();
   const describedBy = error ? `${id}-error` : hint ? `${id}-hint` : undefined;
 
@@ -39,8 +40,9 @@ export function Field({ label, hint, error, prefix, className = '', ...rest }: F
           aria-describedby={describedBy}
           className={`hit w-full rounded-lg border bg-raised text-body text-text placeholder:text-text-dim/60 ${
             prefix ? 'pl-8 pr-3' : 'px-3'
-          } ${error ? 'border-danger' : 'border-border'} ${className}`}
+          } ${trailing ? 'pr-14' : ''} ${error ? 'border-danger' : 'border-border'} ${className}`}
         />
+        {trailing ? <div className="absolute inset-y-0 right-0 flex items-center">{trailing}</div> : null}
       </div>
       {hint && !error ? (
         <p id={`${id}-hint`} className="text-label text-text-dim">

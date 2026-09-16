@@ -1,21 +1,18 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/auth/useAuth';
-import { useScreenTheme } from '@/app/useTheme';
 import { queryKeys } from '@/api/queryKeys';
+import { Button } from '@/components/Button';
 import { Card } from '@/components/Card';
 import { Banner } from '@/components/Banner';
 import { ChangePasswordForm } from './ChangePasswordForm';
 
-/**
- * Changing your own password when you choose to, not because you are forced. Reachable from the
- * sidebar. Same form as the forced screen; only the frame and the after-state differ — here you
- * stay put and are told it worked, rather than being sent into the app.
+/** Shared account screen. The legacy /account/password URL also renders this page.
+ * Reuses the forced-password form without changing its validation or session behavior.
  */
 export function ChangePasswordPage() {
-  const { user } = useAuth();
-  // Follows the role's theme, like the screens on either side of it.
-  useScreenTheme(user?.role === 'ADMIN' ? 'admin' : 'pos');
+  const { user, logout } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
   const queryClient = useQueryClient();
   const [done, setDone] = useState(false);
 
@@ -27,7 +24,17 @@ export function ChangePasswordPage() {
 
   return (
     <div className="mx-auto max-w-lg">
-      <h1 className="text-heading text-text">Change password</h1>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-heading text-text">Your account</h1>
+          <p className="mt-1 text-body text-text-dim">{user?.fullName}</p>
+        </div>
+        <Button variant="secondary" pending={signingOut} onClick={() => {
+          setSigningOut(true);
+          void logout().catch(() => { /* AuthProvider always clears the local session. */ });
+        }}>Sign out</Button>
+      </div>
+      <h2 className="mt-8 text-heading text-text">Change password</h2>
       <p className="mt-1 text-body text-text-dim">
         Changing your password signs out your other devices. You stay signed in here.
       </p>

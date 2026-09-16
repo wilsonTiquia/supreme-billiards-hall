@@ -5,6 +5,7 @@ import { AppRoutes } from './app/router';
 import { AuthProvider } from './auth/AuthProvider';
 import { ClockProvider } from './time/ClockProvider';
 import { ThemeProvider } from './app/ThemeProvider';
+import { ToastProvider } from './components/Toast';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 /* Provider order matters: AuthProvider needs the router for its 401 redirect and the query
@@ -18,7 +19,9 @@ export function App() {
           <AuthProvider>
             <ClockProvider>
               <ThemeProvider>
-                <AppRoutes />
+                <ToastProvider>
+                  <AppRoutes />
+                </ToastProvider>
               </ThemeProvider>
             </ClockProvider>
           </AuthProvider>

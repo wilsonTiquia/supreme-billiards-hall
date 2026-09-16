@@ -1,202 +1,104 @@
+import { useEffect, useRef } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { Wordmark } from '@/components/Wordmark';
 import { ThemeIcon } from '@/components/ThemeIcon';
+import type { Theme } from './ThemeProvider';
 
-/**
- * Navigation down the side, treated as one composition rather than a stack of things that
- * happen to be there.
- *
- * Three problems this solves. Group labels used to sit at the same weight as the items under
- * them, so "Look up" and "Set up" read as two more links and the eye could not find where one
- * group ended — labels are now smaller, dimmer, letter-spaced and separated by a rule, and
- * items are inset from them. The current page used to be a tint; it now carries a solid fill
- * and a marker on the rail edge. And the bottom block used to be six similar rows crammed
- * under a void — the nav no longer stretches to push it down, so the two sit as one column
- * with real space between them instead of a gap that reads as something missing.
- */
+interface NavItem { to: string; label: string; short: string }
+export interface NavGroup { label: string; items: NavItem[] }
 
-export interface NavItem {
-  to: string;
-  label: string;
-  /** Shown when the rail is collapsed. One or two characters. */
-  short: string;
-}
-
-export interface NavGroup {
-  label?: string;
-  items: NavItem[];
-  emphasis?: 'primary' | 'quiet';
-}
-
-export function Sidebar({
-  groups,
-  collapsed,
-  onToggleCollapsed,
-  theme,
-  onToggleTheme,
-  user,
-  onSignOut,
-  drawer = false,
-  open = false,
-  onClose,
+export function Sidebar({ groups, collapsed, onToggleCollapsed, theme, onToggleTheme, user,
+  workspace, drawer = false, open = false, onClose,
 }: {
   groups: NavGroup[];
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  theme: 'dark' | 'light';
+  theme: Theme;
   onToggleTheme: () => void;
   user: { fullName?: string; role?: string; branchName?: string | null } | null;
-  onSignOut: () => void;
-  /** Below md the rail is an off-canvas panel rather than a column in the flow. */
+  workspace: 'floor' | 'admin';
   drawer?: boolean;
   open?: boolean;
-  onClose?: () => void;
+  onClose: () => void;
 }) {
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!drawer || !open) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const nav = navRef.current;
+    nav?.querySelector<HTMLButtonElement>('button[aria-label="Close the menu"]')?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab' || !nav) return;
+      const items = Array.from(nav.querySelectorAll<HTMLElement>('a[href], button:not([disabled])'));
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    nav?.addEventListener('keydown', trapFocus);
+    return () => { nav?.removeEventListener('keydown', trapFocus); if (previous?.isConnected) previous.focus(); };
+  }, [drawer, open]);
+  const toolStyle = 'hit flex w-11 shrink-0 items-center justify-center rounded-lg text-text-dim hover:bg-raised hover:text-text';
   return (
-    <nav
-      aria-label="Main"
-      // aria-hidden when closed so the whole menu is out of the tab order too, not merely
-      // pushed off the side of the screen where a keyboard could still walk into it.
-      aria-hidden={drawer && !open}
-      className={`flex shrink-0 flex-col border-r border-border bg-surface py-4 ${
-        drawer
-          ? `fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] overflow-y-auto px-3 transition-transform duration-200 ${
-              open ? 'translate-x-0' : '-translate-x-full'
-            }`
-          : `transition-[width] ${collapsed ? 'w-[4.5rem] px-2' : 'w-64 px-3'}`
-      }`}
-    >
-      {drawer ? (
-        <button
-          type="button"
-          onClick={onClose}
-          className="hit mb-2 self-end rounded-lg border border-border px-4 text-label uppercase text-text"
-        >
-          Close
+    <nav ref={navRef} aria-label="Main" aria-hidden={drawer && !open ? true : undefined} inert={drawer && !open ? true : undefined}
+      className={`flex h-dvh shrink-0 flex-col border-r border-border bg-surface p-3 ${drawer
+        ? `fixed inset-y-0 left-0 z-50 w-80 max-w-[85vw] overflow-y-auto transition-transform ${open ? 'translate-x-0' : '-translate-x-full'}`
+        : `sticky top-0 overflow-y-auto ${collapsed ? 'w-36 px-2' : 'w-80'}`}`}>
+      <div className="flex shrink-0 items-center">
+        <Link to={workspace === 'admin' ? '/dashboard' : '/floor'}
+          className="hit flex min-w-0 flex-1 items-center rounded-lg" aria-label="Supreme Billiard Hall">
+          <Wordmark compact={collapsed} />
+        </Link>
+        <button type="button" onClick={onToggleTheme} className={toolStyle}
+          aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}>
+          <ThemeIcon to={theme === 'dark' ? 'light' : 'dark'} />
         </button>
+        <button type="button" onClick={drawer ? onClose : onToggleCollapsed} className={toolStyle}
+          aria-label={drawer ? 'Close the menu' : collapsed ? 'Expand the menu' : 'Collapse the menu'}>
+          <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+            {drawer ? <path d="m6 6 12 12M6 18 18 6" /> : <><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /><path d={collapsed ? 'm13 9 3 3-3 3' : 'm16 9-3 3 3 3'} /></>}
+          </svg>
+        </button>
+      </div>
+
+      {user?.role === 'ADMIN' ? (
+        <div className="mt-4 grid shrink-0 grid-cols-2 rounded-xl bg-raised p-1" role="group" aria-label="Workspace">
+          {(['floor', 'admin'] as const).map((mode) => (
+            <Link key={mode} to={mode === 'admin' ? '/dashboard' : '/floor'} aria-current={workspace === mode ? 'true' : undefined}
+              className={`hit flex items-center justify-center rounded-lg text-body font-semibold ${workspace === mode ? 'bg-bg text-text shadow-sm' : 'text-text-dim hover:text-text'}`}>
+              {mode === 'admin' ? 'Admin' : 'Floor'}
+            </Link>
+          ))}
+        </div>
       ) : null}
-      <Link
-        to="/floor"
-        className={`hit flex items-center rounded-lg ${collapsed ? 'justify-center' : 'px-2'}`}
-        aria-label="Supreme Billiard Hall — the floor"
-      >
-        <Wordmark compact={collapsed} />
-      </Link>
 
-      {/* The nav takes only the height it needs. It used to stretch, which is what put a void
-          between the last link and everything below it. */}
-      <div className="mt-6 flex flex-col gap-5 overflow-y-auto">
-        {groups.map((group, index) => (
-          <div key={group.label ?? index}>
-            {group.label && !collapsed ? (
-              // A rule plus a smaller, wider-tracked label: the boundary is a line, not a
-              // guess about which row is a heading.
-              <div className="mb-2 flex items-center gap-2 px-2">
-                <span className="text-[0.6875rem] font-semibold uppercase tracking-[0.14em] text-text-dim">
-                  {group.label}
-                </span>
-                <span className="h-px flex-1 bg-border" aria-hidden />
-              </div>
-            ) : null}
-            {group.label && collapsed ? (
-              <div className="mx-2 mb-2 h-px bg-border" aria-hidden />
-            ) : null}
-
-            <div className={`flex flex-col gap-1 ${group.label && !collapsed ? 'pl-1' : ''}`}>
+      {/* Two columns keep all destinations and 44px targets visible on a 720px counter display. */}
+      <div className="my-4 flex shrink-0 flex-col gap-4">
+        {groups.map((group) => (
+          <section key={group.label} aria-label={group.label}>
+            <h2 className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-widest text-text-dim">{group.label}</h2>
+            <div className="grid grid-cols-2 gap-1">
               {group.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  title={collapsed ? item.label : undefined}
-                  className={({ isActive }) =>
-                    `hit relative flex items-center rounded-lg transition ${
-                      collapsed ? 'justify-center' : 'px-3'
-                    } ${
-                      isActive
-                        ? 'bg-green text-ink text-body font-semibold'
-                        : group.emphasis === 'primary'
-                          ? 'bg-raised text-text text-body font-semibold hover:brightness-110'
-                          : 'text-text-dim text-body hover:bg-raised hover:text-text'
-                    }`
-                  }
-                >
-                  {({ isActive }) => (
-                    <>
-                      {/* A marker on the rail edge, so the current page is findable without
-                          reading — the same trick the floor cards use. */}
-                      {isActive ? (
-                        <span
-                          className="absolute -left-3 top-1/2 h-6 w-1 -translate-y-1/2 rounded-r bg-green"
-                          aria-hidden
-                        />
-                      ) : null}
-                      {collapsed ? item.short : item.label}
-                    </>
-                  )}
+                <NavLink key={item.to} to={item.to} title={collapsed ? item.label : undefined} aria-label={item.label}
+                  className={({ isActive }) => `hit flex items-center rounded-lg px-3 py-1 text-body leading-5 transition ${collapsed ? 'justify-center' : ''} ${isActive ? 'bg-green font-semibold text-bg' : 'text-text-dim hover:bg-raised hover:text-text'}`}>
+                  {collapsed ? item.short : item.label}
                 </NavLink>
               ))}
             </div>
-          </div>
+          </section>
         ))}
       </div>
 
-      {/* Housekeeping. Pushed to the bottom by this spacer rather than by a stretched nav, so
-          the empty space belongs to the composition instead of appearing inside it. */}
-      <div className="flex-1" aria-hidden />
-
-      <div className="flex flex-col gap-1 border-t border-border pt-3">
-        {!collapsed && user ? (
-          // Also the way to the change-password screen — clicking who you are is where people
-          // look for their own account.
-          <Link
-            to="/account/password"
-            title="Change your password"
-            className="block rounded-lg px-2 pb-1 pt-1 transition hover:bg-raised"
-          >
-            <div className="truncate text-body text-text">{user.fullName}</div>
-            {/* Role and branch on their own lines: "ADMIN · Supreme Billiard Hall" on one line
-                truncated to "SUPREME BIL…" in a 256px rail. */}
-            <div className="text-label uppercase text-text-dim">{user.role}</div>
-            <div className="truncate text-label text-text-dim">{user.branchName ?? 'No branch'}</div>
-          </Link>
-        ) : null}
-
-        <div className={`flex gap-1 ${collapsed ? 'flex-col' : ''}`}>
-          <button
-            type="button"
-            onClick={onToggleTheme}
-            aria-label={theme === 'dark' ? 'Switch to the light theme' : 'Switch to the dark theme'}
-            className={`hit flex items-center justify-center rounded-lg text-text-dim transition hover:bg-raised hover:text-text ${
-              collapsed ? '' : 'w-11'
-            }`}
-          >
-            <ThemeIcon to={theme === 'dark' ? 'light' : 'dark'} />
-          </button>
-          {/* Collapsing is a desktop affordance. In the drawer there is nothing to collapse
-              into — the panel is already the whole menu, and a rail of initials inside an
-              overlay would be a control that does nothing useful. */}
-          {drawer ? null : (
-            <button
-              type="button"
-              onClick={onToggleCollapsed}
-              aria-label={collapsed ? 'Expand the menu' : 'Collapse the menu'}
-              className={`hit flex items-center justify-center rounded-lg text-label uppercase text-text-dim transition hover:bg-raised hover:text-text ${
-                collapsed ? '' : 'w-11'
-              }`}
-            >
-              {collapsed ? '»' : '«'}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onSignOut}
-            className={`hit flex flex-1 items-center rounded-lg text-label uppercase text-text-dim transition hover:bg-raised hover:text-text ${
-              collapsed ? 'justify-center' : 'justify-center px-3'
-            }`}
-          >
-            {collapsed ? 'Out' : 'Sign out'}
-          </button>
-        </div>
+      <div className="mt-auto shrink-0 border-t border-border pt-2">
+        <Link to="/account" title="Your account" className="hit flex items-center gap-3 rounded-lg px-2 py-2 hover:bg-raised">
+          <span aria-hidden className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-raised text-label text-text">
+            {user?.fullName?.charAt(0) ?? 'U'}
+          </span>
+          <span className="min-w-0">
+            <span className="block truncate text-body font-semibold text-text">{user?.fullName ?? 'Account'}</span>
+            {!collapsed ? <span className="block truncate text-label text-text-dim">{user?.role === 'ADMIN' ? 'Admin' : 'Employee'} · {user?.branchName ?? 'No branch'}</span> : null}
+          </span>
+        </Link>
       </div>
     </nav>
   );
