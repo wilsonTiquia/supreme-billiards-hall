@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { lastCompletedNight, nightHasEnded, validNight, cashStatus } from './morning';
 import { LossesDetail, type LossKind } from './LossesDetail';
 import { HourChart } from './HourChart';
-import { fetchDailyReport } from '@/api/endpoints/reports';
+import { fetchDailyReport, fetchPeriodReport } from '@/api/endpoints/reports';
 import {
   fetchCashCount,
   fetchCurrentBusinessDay,
@@ -15,9 +15,11 @@ import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { CashCount, DailyReport, Losses, TimeRevenueByMode } from '@/api/types';
 import { AdminPage } from '../AdminPage';
-import { BigFigure, comparedClause, describeChange } from '../Comparison';
+import { comparedClause, describeChange } from '../Comparison';
+import { AnalyticsPanel, AnalyticsLoading, RankedBars, Stat } from '../analytics/Analytics';
+import { SalesByNight } from '../reports/SalesByNight';
+import { presetRange } from '../reports/periodDates';
 import { Disclosure } from '@/components/Disclosure';
-import { Spinner } from '@/components/Spinner';
 import { formatPesos } from '@/lib/money';
 import { formatHours, weekdayOf } from '@/lib/datetime';
 
@@ -78,6 +80,12 @@ export function DashboardPage() {
   });
 
   const shownDate = date || currentDay.data?.businessDate || '';
+  const trendRange = shownDate ? presetRange('thisWeek', shownDate) : null;
+  const trend = useQuery({
+    queryKey: queryKeys.periodReport(trendRange?.from ?? '', trendRange?.to ?? ''),
+    queryFn: () => fetchPeriodReport(trendRange!.from, trendRange!.to),
+    enabled: Boolean(trendRange),
+  });
   const cashCount = useQuery({
     queryKey: queryKeys.cashCount(shownDate),
     queryFn: () => fetchCashCount(shownDate),
@@ -89,29 +97,31 @@ export function DashboardPage() {
   const tonight = Boolean(currentDay.data && !nightHasEnded(shownDate, currentDay.data.serverNow));
 
   return (
-    <AdminPage title="Dashboard" error={report.isError ? messageOf(report.error) : null}>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+    <AdminPage title="Dashboard" intro="Your hall, at a glance." error={report.isError ? messageOf(report.error) : null}>
+      <div className="analytics">
+      <div className="analytics-toolbar">
+        <div>
+        <p className="analytics-eyebrow">Owner overview · Business day</p>
         <h2 className="text-heading text-text">
           {shownDate ? `${new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(`${shownDate}T12:00:00Z`))} · ${tonight ? 'in progress since 10am' : 'complete'}` : 'Loading business night…'}
         </h2>
-        <div className="flex flex-wrap items-center gap-2">
+        </div>
+        <div className="analytics-actions">
           <button type="button" onClick={() => setDate(tonight ? latestCompleted : currentDay.data!.businessDate)}
             disabled={!currentDay.data || (!tonight && nightHasEnded(currentDay.data.businessDate, currentDay.data.serverNow))}
-            className="hit rounded-lg border border-border px-3 text-label">
+            className="analytics-button">
             {tonight ? 'Last completed night' : 'Tonight so far'}
           </button>
           <input type="date" aria-label="Business day" value={shownDate} max={currentDay.data?.businessDate}
             onInput={(event) => setDate(event.currentTarget.value)}
-            className="hit rounded-lg border border-border bg-raised px-3 text-label text-text" />
-          <Link className="hit inline-flex items-center text-label underline" to={`/admin/reports?from=${shownDate}&to=${shownDate}`}>View report</Link>
+            className="analytics-button" />
+          <Link className="analytics-button analytics-button-primary" to={`/admin/reports?from=${shownDate}&to=${shownDate}`}>View report</Link>
         </div>
       </div>
       {currentDay.isError && <p role="alert">The business clock is unavailable. Refresh to try again.</p>}
 
       {report.isPending ? (
-        <div className="py-16 text-center">
-          <Spinner label="Loading the night…" />
-        </div>
+        <AnalyticsLoading label="Loading the night…" />
       ) : !data ? null : (
         <Night
           data={data}
@@ -122,6 +132,12 @@ export function DashboardPage() {
           cashLoading={cashCount.isPending}
           cashError={cashCount.isError}
           checksError={unsettled.isError || uncounted.isError}
+          trend={
+            <AnalyticsPanel title="How are sales changing?" subtitle="This week through the selected day · Monday start">
+              {trend.data ? <SalesByNight days={trend.data.byDay} breakEven={null} /> :
+                <p role="status" className="analytics-note">{trend.isError ? 'The weekly trend could not be loaded.' : 'Loading weekly sales…'}</p>}
+            </AnalyticsPanel>
+          }
           onOpenLoss={setOpenLoss}
         />
       )}
@@ -134,6 +150,7 @@ export function DashboardPage() {
           onClose={() => setOpenLoss(null)}
         />
       ) : null}
+      </div>
     </AdminPage>
   );
 }
@@ -148,7 +165,9 @@ function Night({
   cashError,
   checksError,
   onOpenLoss,
+  trend,
 }: {
+  trend: React.ReactNode;
   data: DailyReport;
   tonight: boolean;
   notCheckedOut: number;
@@ -162,6 +181,9 @@ function Night({
   const { totals, previousTotals: previous } = data;
   const against = data.comparedTo ? `last ${weekdayOf(data.comparedTo)}` : 'last week';
   const payments = data.paymentMix.reduce((sum, row) => sum + row.amount, 0);
+  const subtotal = totals.timeRevenue + totals.itemRevenue;
+  const adjustment = subtotal - totals.gross;
+  const heldTables = [...data.tableUtilisation].sort((a, b) => b.occupiedMinutes - a.occupiedMinutes);
   const cash = cashStatus(cashCount, tonight, cashLoading, cashError);
 
   const attention = (
@@ -181,34 +203,20 @@ function Night({
 
   return (
     <div className="flex flex-col gap-3">
-      {/* 1 — THE ANSWER. */}
-      <section className="flex flex-col gap-5">
-        {/* The answer first and full width; the two beneath share a row on a phone and all
-            three share one from sm up. */}
-        <div className="grid grid-cols-2 gap-x-6 gap-y-5 sm:flex sm:items-end sm:gap-x-12">
-          <div className="col-span-2">
-            <BigFigure
-              label="Sales"
-              size="hero"
-              value={formatPesos(totals.gross)}
-              comparison={tonight || totals.bills === 0 ? undefined : { now: totals.gross, before: previous.gross, against }}
-            />
-          </div>
-          <BigFigure
-            label="After cost of goods"
-            value={formatPesos(totals.profit)}
-            comparison={tonight || totals.bills === 0 ? undefined : { now: totals.profit, before: previous.profit, against }}
-          />
-          <BigFigure
-            label="Collected"
-            value={formatPesos(payments)}
-          />
-        </div>
-      </section>
+      <div className="analytics-stats">
+        <Stat primary label="Sales" value={formatPesos(totals.gross)}
+          comparison={tonight || totals.bills === 0 ? undefined : { now: totals.gross, before: previous.gross, against }}
+          note="Closed bills, including sales left unpaid" />
+        <Stat label="Collected" value={formatPesos(payments)} note="Payments actually taken on this night" />
+        <Stat label="After cost of goods" value={formatPesos(totals.profit)}
+          comparison={tonight || totals.bills === 0 ? undefined : { now: totals.profit, before: previous.profit, against }}
+          note="Sales − recorded product costs" />
+        <Stat label="Closed bills" value={totals.bills.toLocaleString('en-PH')} note="Table bills and quick sales" />
+      </div>
+      {attention}
       <Link to={`/end-of-day?date=${data.businessDate}`} className={`text-body ${cash.danger ? 'text-danger' : 'text-text'} underline decoration-dotted`}>
         {cash.text}{cash.amount !== undefined ? formatPesos(cash.amount) : ''}
       </Link>
-      {attention}
       {checksError && <p role="status" className="text-danger">Some unpaid-bill or close-out checks are unavailable.</p>}
       <p className="max-w-prose text-body text-text">
         {totals.bills} closed {totals.bills === 1 ? 'bill' : 'bills'}; {formatPesos(data.unsettledTonight.amount)} left unpaid on this night
@@ -219,130 +227,136 @@ function Night({
         Paid out {formatPesos(data.expenses.total)}{data.expenses.byCategory.length ? ` · ${data.expenses.byCategory.map(row => row.category).join(', ')}` : ''}
       </p>
 
-      {/* 2 — DETAILS. Collapsed, each with its key figure showing. */}
-      <section>
-        <h2 className="mb-2 text-label uppercase tracking-wide text-text-dim">Details</h2>
-        <Disclosure title="Sales by hour"><HourChart hours={data.salesByHour} /></Disclosure>
-        <Disclosure
-          title="Table time vs products"
-          summary={`${formatPesos(totals.timeRevenue)} · ${formatPesos(totals.itemRevenue)}`}
+      <div className="analytics-grid">
+        {trend}
+        <AnalyticsPanel
+          title="Where did the sales come from?"
+          subtitle="Table time and products, reconciled to total sales"
         >
-          <Split time={totals.timeRevenue} items={totals.itemRevenue} total={totals.gross} />
-        </Disclosure>
-
-        <Disclosure
-          title="How table time was priced"
-          summary={`${formatPesos(data.timeRevenueByMode.find((row) => row.mode === 'STANDARD')?.amount ?? 0)} standard`}
+          {subtotal > 0 && (
+            <div className="analytics-split" aria-hidden>
+              <div style={{ width: `${(totals.timeRevenue / subtotal) * 100}%` }} />
+              <div style={{ width: `${(totals.itemRevenue / subtotal) * 100}%` }} />
+            </div>
+          )}
+          <div className="analytics-ledger">
+            <div>
+              <span>
+                <i className="analytics-dot" />
+                Table time
+              </span>
+              <strong>{formatPesos(totals.timeRevenue)}</strong>
+            </div>
+            <div>
+              <span>
+                <i className="analytics-dot analytics-dot-secondary" />
+                Products
+              </span>
+              <strong>{formatPesos(totals.itemRevenue)}</strong>
+            </div>
+            {Math.abs(adjustment) >= 0.005 && (
+              <div>
+                <span>Bill discounts & vouchers</span>
+                <strong>
+                  {adjustment >= 0 ? '−' : '+'}
+                  {formatPesos(Math.abs(adjustment))}
+                </strong>
+              </div>
+            )}
+            <div className="analytics-ledger-total">
+              <span>Total sales</span>
+              <strong>{formatPesos(totals.gross)}</strong>
+            </div>
+          </div>
+          <p className="analytics-note">
+            Table and product amounts are before bill-level discounts and vouchers.
+          </p>
+        </AnalyticsPanel>
+      </div>
+      <div className="analytics-grid analytics-grid-equal">
+        <AnalyticsPanel
+          title="Which tables were used most?"
+          subtitle="Hours held on closed bills · includes pauses"
         >
+          <RankedBars
+            empty="No table time on closed bills for this day."
+            rows={(heldTables.some((row) => row.occupiedMinutes > 0) ? heldTables : []).map(
+              (row) => ({
+                label: row.tableName,
+                value: row.occupiedMinutes,
+                display: formatHours(row.occupiedMinutes),
+                detail: `${row.utilisationPercent.toFixed(1)}% of the 19-hour business day`,
+              }),
+            )}
+          />
+        </AnalyticsPanel>
+        <AnalyticsPanel
+          title="What are customers buying?"
+          subtitle="Top products by sales · before bill-level discounts"
+        >
+          <RankedBars
+            rows={data.topItems
+              .slice(0, 5)
+              .map((row) => ({
+                label: row.description,
+                value: row.revenue,
+                display: formatPesos(row.revenue),
+                detail: `${row.quantity.toLocaleString('en-PH')} units sold`,
+              }))}
+          />
+        </AnalyticsPanel>
+      </div>
+      <div className="analytics-grid">
+        <AnalyticsPanel
+          title="When were sales closed?"
+          subtitle="Sales by checkout hour · Asia/Manila"
+        >
+          <HourChart hours={data.salesByHour} />
+          <p className="analytics-note">
+            Checkout time shows when a bill closed, not when a table session started.
+          </p>
+        </AnalyticsPanel>
+        <AnalyticsPanel
+          title="How did customers pay?"
+          subtitle={`${formatPesos(payments)} collected on this business day`}
+        >
+          <RankedBars
+            rows={[...data.paymentMix]
+              .sort((a, b) => b.amount - a.amount)
+              .map((row) => ({
+                label: titleCase(row.method),
+                value: row.amount,
+                display: formatPesos(row.amount),
+                detail: `${row.payments} ${row.payments === 1 ? 'payment' : 'payments'}${payments > 0 ? ` · ${((row.amount / payments) * 100).toFixed(1)}% of collections` : ''}`,
+              }))}
+          />
+          <p className="analytics-note">
+            Collections can include older debts and exclude bills left unpaid.
+          </p>
+          {data.collectedToday.count > 0 && (
+            <p className="analytics-note">
+              Includes {formatPesos(data.collectedToday.amount)} collected against earlier sales.
+            </p>
+          )}
+        </AnalyticsPanel>
+      </div>
+      <section className="analytics-detail-group">
+        <p className="analytics-eyebrow mb-3">Behind the numbers</p>
+        <Disclosure title="Table pricing" summary={formatPesos(totals.timeRevenue)}>
           <PricingModes rows={data.timeRevenueByMode} timeRevenue={totals.timeRevenue} />
         </Disclosure>
-
-        <Disclosure
-          title="Payments"
-          summary={
-            data.paymentMix.length === 0
-              ? 'None'
-              : `${formatPesos(Math.max(...data.paymentMix.map((m) => m.amount)))} ${
-                  data.paymentMix.reduce((best, m) => (m.amount > best.amount ? m : best)).method.toLowerCase()
-                }`
-          }
-        >
-          {data.paymentMix.map((method) => (
-            <Row
-              key={method.method}
-              label={`${titleCase(method.method)} · ${method.payments} ${method.payments === 1 ? 'payment' : 'payments'}`}
-              value={formatPesos(method.amount)}
-            />
-          ))}
-          {/* Money that arrived tonight against an earlier night. In the drawer, not in
-              tonight's sales — that revenue was recognised on the night it was earned. */}
-          {data.collectedToday.count > 0 ? (
-            <Row
-              label={`Old debts collected · ${data.collectedToday.count} ${data.collectedToday.count === 1 ? 'bill' : 'bills'}`}
-              value={formatPesos(data.collectedToday.amount)}
-              dim
-            />
-          ) : null}
+        <Disclosure title="Operating expenses" summary={formatPesos(data.expenses.total)}>
+          {data.expenses.byCategory.length ? data.expenses.byCategory.map(row =>
+            <Row key={row.category} label={row.category} value={formatPesos(row.amount)} />
+          ) : <p className="analytics-note">No expenses recorded for this business day.</p>}
         </Disclosure>
-
-        <Disclosure
-          title="Top items"
-          summary={
-            data.topItems.length === 0
-              ? 'Nothing sold'
-              : `${data.topItems[0].description} × ${data.topItems[0].quantity}`
-          }
-        >
-          {data.topItems.map((item) => (
-            <Row
-              key={item.description}
-              label={`${item.quantity} × ${item.description}`}
-              value={formatPesos(item.revenue)}
-            />
-          ))}
-        </Disclosure>
-
-        <Disclosure
-          title="Paid out"
-          summary={data.expenses.total === 0 ? 'Nothing' : formatPesos(data.expenses.total)}
-        >
-          {data.expenses.byCategory.length === 0 ? (
-            <p className="text-body text-text-dim">Nothing paid out on this night.</p>
-          ) : (
-            data.expenses.byCategory.map((line) => (
-              <Row key={line.category} label={line.category} value={formatPesos(line.amount)} />
-            ))
-          )}
-        </Disclosure>
-
         <Disclosure title="Given away" summary={formatPesos(givenAwayTotal(data.losses))}>
           <GivenAway losses={data.losses} onOpen={onOpenLoss} />
         </Disclosure>
-
-        <Disclosure
-          title="Per employee"
-          summary={
-            data.perEmployee.length === 0
-              ? 'Nobody'
-              : data.perEmployee.length === 1
-                ? `${data.perEmployee[0].fullName} · ${formatPesos(data.perEmployee[0].gross)}`
-                : `${data.perEmployee.length} people`
-          }
-        >
+        <Disclosure title="Sales by employee" summary={`${data.perEmployee.length} employees`}>
           <PerEmployee rows={data.perEmployee} />
         </Disclosure>
-
-        <Disclosure
-          title="Table use"
-          summary={(() => {
-            const busiest = data.tableUtilisation.reduce(
-              (best, t) => (t.utilisationPercent > best.utilisationPercent ? t : best),
-              data.tableUtilisation[0],
-            );
-            return busiest ? `${busiest.tableName} · ${Math.round(busiest.utilisationPercent)}%` : 'No tables';
-          })()}
-        >
-          <ul>
-            {data.tableUtilisation.map((table) => (
-              <li key={table.tableName} className="relative overflow-hidden rounded-md">
-                <div
-                  className="absolute inset-y-0 left-0 bg-chart-bar/20"
-                  style={{ width: `${Math.min(table.utilisationPercent, 100)}%` }}
-                  aria-hidden
-                />
-                <div className="relative flex items-baseline justify-between gap-3 px-3 py-2">
-                  <span className="text-body text-text">{table.tableName}</span>
-                  <span className="tabular text-body text-text-dim">
-                    {formatHours(table.occupiedMinutes)} ·{' '}
-                    <span className="text-text">{Math.round(table.utilisationPercent)}%</span>
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Disclosure>
       </section>
-
       <HowWorkedOut against={against} />
     </div>
   );
@@ -438,36 +452,11 @@ function titleCase(word: string): string {
   return word.charAt(0) + word.slice(1).toLowerCase();
 }
 
-function Split({ time, items, total }: { time: number; items: number; total: number }) {
-  // Widths only — a proportion of a bar, not a peso figure.
-  const timePercent = total > 0 ? (time / total) * 100 : 0;
-  return (
-    <div>
-      <div className="flex h-4 overflow-hidden rounded">
-        <div className="bg-chart-bar" style={{ width: `${timePercent}%` }} />
-        <div className="flex-1 bg-border" />
-      </div>
-      <div className="mt-3 grid gap-x-8 md:grid-cols-2">
-        <Row label="Table time" value={formatPesos(time)} />
-        <Row label="Products" value={formatPesos(items)} />
-      </div>
-    </div>
-  );
-}
 
 const MODE_LABELS: Record<TimeRevenueByMode['mode'], string> = {
-  STANDARD: 'Standard rate',
-  PROMO: 'Promo',
-  FRIEND: 'Friend rate',
-  FLAT: 'Flat rate',
+  STANDARD: 'Standard rate', PROMO: 'Promo', FRIEND: 'Friend rate', FLAT: 'Flat rate',
 };
 
-/**
- * Table revenue by how it was priced — and a check that it still adds up. The four amounts
- * are the whole of `totals.timeRevenue` broken apart, so they must sum back to it. Said on
- * screen only when they do not: two figures that disagree about the same money are worse
- * than one figure alone.
- */
 function PricingModes({ rows, timeRevenue }: { rows: TimeRevenueByMode[]; timeRevenue: number }) {
   const summed = rows.reduce((total, row) => total + row.amount, 0);
   // A tolerance, not identity: both sides are the database's own sums read back through JSON.
