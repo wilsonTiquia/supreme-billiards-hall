@@ -7,11 +7,19 @@ import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { PeriodReport } from '@/api/types';
 import { AdminPage } from '../AdminPage';
-import { BigFigure, ComparisonLine, comparedClause, describeChange } from '../Comparison';
+import { ComparisonLine, comparedClause, describeChange } from '../Comparison';
 import { Definition, Row } from '../dashboard/DashboardPage';
 import { HourChart } from '../dashboard/HourChart';
 import { Disclosure } from '@/components/Disclosure';
-import { Spinner } from '@/components/Spinner';
+import {
+  AnalyticsPanel,
+  AnalyticsLoading,
+  EmptyState,
+  RankedBars,
+  Stat,
+} from '../analytics/Analytics';
+import { ReportExplorer } from './ReportExplorer';
+import { downloadReport, reportDataset, rangeError } from './reportData';
 import { formatPesos } from '@/lib/money';
 import { formatHours } from '@/lib/datetime';
 import { SalesByNight } from './SalesByNight';
@@ -39,6 +47,14 @@ export function ReportsPage() {
   const [params, setParams] = useSearchParams();
   const from = params.get('from') ?? '';
   const to = params.get('to') ?? '';
+  const [draftFrom, setDraftFrom] = useState(from);
+  const [draftTo, setDraftTo] = useState(to);
+  useEffect(() => {
+    setDraftFrom(from);
+    setDraftTo(to);
+  }, [from, to]);
+  const invalidRange = from || to ? rangeError(from, to) : null;
+  const draftError = rangeError(draftFrom, draftTo);
 
   const currentDay = useQuery({
     queryKey: queryKeys.businessDayCurrent,
@@ -50,7 +66,7 @@ export function ReportsPage() {
   // No range in the URL means this month, once the server has said which month it is. Replaced
   // rather than pushed so Back does not land on an empty page.
   useEffect(() => {
-    if (current && (!from || !to)) {
+    if (current && !from && !to) {
       const range = presetRange('thisMonth', current);
       setParams({ from: range.from, to: range.to }, { replace: true });
     }
@@ -59,69 +75,135 @@ export function ReportsPage() {
   const report = useQuery({
     queryKey: queryKeys.periodReport(from, to),
     queryFn: () => fetchPeriodReport(from, to),
-    enabled: Boolean(from && to),
+    enabled: Boolean(from && to && !invalidRange),
   });
 
   const data = report.data;
   const selected = current && from && to ? presetOf(from, to, current) : null;
 
   return (
-    <AdminPage title="Reports" error={report.isError ? messageOf(report.error) : null}>
-      <div className="print:hidden mb-6 flex flex-wrap items-center gap-2">
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Presets">
-          {PRESETS.map((preset) => (
+    <AdminPage
+      title="Reports"
+      intro="Understand what drives your business."
+      error={
+        invalidRange ||
+        (report.isError
+          ? messageOf(report.error)
+          : currentDay.isError
+            ? messageOf(currentDay.error)
+            : null)
+      }
+    >
+      <div className="analytics">
+        <div className="analytics-toolbar print:hidden mb-6 flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap gap-2" role="group" aria-label="Presets">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                disabled={!current}
+                onClick={() => current && setParams(presetRange(preset.key, current))}
+                aria-pressed={selected === preset.key}
+                className={`hit rounded-full border px-4 text-label transition ${
+                  selected === preset.key
+                    ? 'border-text bg-text text-bg'
+                    : 'border-border bg-surface text-text hover:bg-raised'
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <div className="analytics-actions">
+            <input
+              type="date"
+              aria-label="From"
+              value={draftFrom}
+              max={draftTo || undefined}
+              onInput={(event) => setDraftFrom(event.currentTarget.value)}
+              className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
+            />
+            <span className="text-label text-text-dim">to</span>
+            <input
+              type="date"
+              aria-label="To"
+              value={draftTo}
+              min={draftFrom || undefined}
+              onInput={(event) => setDraftTo(event.currentTarget.value)}
+              className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
+            />
             <button
-              key={preset.key}
               type="button"
-              disabled={!current}
-              onClick={() => current && setParams(presetRange(preset.key, current))}
-              aria-pressed={selected === preset.key}
-              className={`hit rounded-full border px-4 text-label transition ${
-                selected === preset.key
-                  ? 'border-text bg-text text-bg'
-                  : 'border-border bg-surface text-text hover:bg-raised'
-              }`}
+              className="analytics-button analytics-button-primary"
+              disabled={Boolean(draftError) || (draftFrom === from && draftTo === to)}
+              onClick={() => setParams({ from: draftFrom, to: draftTo })}
             >
-              {preset.label}
+              Apply dates
             </button>
-          ))}
+            <button
+              type="button"
+              onClick={() => window.print()}
+              disabled={!data}
+              className="hit rounded-lg border border-border bg-surface px-4 text-label text-text disabled:opacity-50"
+            >
+              Print / Save PDF
+            </button>
+            <button
+              type="button"
+              className="analytics-button"
+              disabled={!data || report.isFetching || report.isError}
+              onClick={() =>
+                data &&
+                downloadReport(
+                  reportDataset(data, 'sales'),
+                  `supreme-sales-${data.from}-to-${data.to}.csv`,
+                )
+              }
+            >
+              ↓ Sales CSV
+            </button>
+            <button
+              type="button"
+              className="analytics-button"
+              disabled={report.isFetching}
+              onClick={() => {
+                void currentDay.refetch();
+                if (from && to && !invalidRange) void report.refetch();
+              }}
+            >
+              {report.isFetching ? 'Refreshing…' : '↻ Refresh'}
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <input
-            type="date"
-            aria-label="From"
-            value={from}
-            max={to || undefined}
-            onChange={(event) => setParams({ from: event.target.value, to })}
-            className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
-          />
-          <span className="text-label text-text-dim">to</span>
-          <input
-            type="date"
-            aria-label="To"
-            value={to}
-            min={from || undefined}
-            onChange={(event) => setParams({ from, to: event.target.value })}
-            className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
-          />
-          <button
-            type="button"
-            onClick={() => window.print()}
-            disabled={!data}
-            className="hit rounded-lg border border-border bg-surface px-4 text-label text-text disabled:opacity-50"
-          >
-            Print
-          </button>
-        </div>
-      </div>
 
-      {!from || !to || report.isPending ? (
-        <div className="py-16 text-center">
-          <Spinner label="Loading the period…" />
-        </div>
-      ) : !data ? null : (
-        <Report data={data} />
-      )}
+        {draftError && (draftFrom !== from || draftTo !== to) && (
+          <p role="status" className="text-danger text-body">
+            {draftError}
+          </p>
+        )}
+        {invalidRange ? (
+          <EmptyState title="Select a valid date range">
+            Update the dates above and choose Apply dates.
+          </EmptyState>
+        ) : !from || !to || report.isPending ? (
+          currentDay.isError && (!from || !to) ? (
+            <EmptyState title="Business date unavailable">
+              Refresh to retry, or select both report dates.
+            </EmptyState>
+          ) : (
+            <AnalyticsLoading label="Loading reports…" />
+          )
+        ) : !data ? null : (
+          <>
+            {report.isError && (
+              <p role="status" className="text-danger">
+                Showing the last successful report. Refresh before relying on these figures.
+              </p>
+            )}
+            <Report data={data} />
+          </>
+        )}
+      </div>
     </AdminPage>
   );
 }
@@ -139,15 +221,22 @@ function Report({ data }: { data: PeriodReport }) {
   const net = describeChange({ now: headline.net, before: previous.net, against });
   const clause = comparedClause(net, against);
 
-  const owed = cash.unsettled.thisPeriod.count + cash.unsettled.oneToFourWeeksBefore.count + cash.unsettled.older.count;
-  const owedAmount = cash.unsettled.thisPeriod.amount + cash.unsettled.oneToFourWeeksBefore.amount + cash.unsettled.older.amount;
+  const owed =
+    cash.unsettled.thisPeriod.count +
+    cash.unsettled.oneToFourWeeksBefore.count +
+    cash.unsettled.older.count;
+  const owedAmount =
+    cash.unsettled.thisPeriod.amount +
+    cash.unsettled.oneToFourWeeksBefore.amount +
+    cash.unsettled.older.amount;
 
   const strongestDay = data.byDayOfWeek.reduce(
     (best, day) => ((day.avgGross ?? -Infinity) > (best.avgGross ?? -Infinity) ? day : best),
     data.byDayOfWeek[0],
   );
   const belowCost = data.products.filter((product) => product.margin <= 0).length;
-  const weakestTable = data.tables.find((table) => table.occupiedMinutes > 0) ?? data.tables[0];
+  const weakestTable = data.tables.find((table) => table.occupiedMinutes > 0);
+  const hasActivity = headline.bills > 0 || headline.operatingExpenses > 0;
 
   return (
     <div className="flex flex-col gap-8">
@@ -156,38 +245,57 @@ function Report({ data }: { data: PeriodReport }) {
         <p className="text-label uppercase text-text-dim">
           {period} <span className="normal-case">vs {against}</span>
         </p>
-        <div className="grid grid-cols-2 gap-x-8 gap-y-6 lg:grid-cols-4">
-          <BigFigure
-            label="Sales"
+        <div className="analytics-stats">
+          <Stat
+            primary
+            label="Total sales"
             value={formatPesos(headline.gross)}
-            comparison={{ now: headline.gross, before: previous.gross, against }}
+            comparison={
+              hasActivity ? { now: headline.gross, before: previous.gross, against } : undefined
+            }
+            note={`${headline.bills.toLocaleString('en-PH')} closed bills`}
           />
-          <BigFigure
-            label="After cost of goods"
+          <Stat
+            label="After product costs"
             value={formatPesos(headline.grossProfit)}
-            comparison={{ now: headline.grossProfit, before: previous.grossProfit, against }}
+            comparison={
+              hasActivity
+                ? { now: headline.grossProfit, before: previous.grossProfit, against }
+                : undefined
+            }
+            note={`${formatPesos(headline.costOfGoods)} in product costs`}
           />
-          <BigFigure
-            label="Expenses"
+          <Stat
+            label="Operating expenses"
             value={formatPesos(headline.operatingExpenses)}
-            comparison={{
-              now: headline.operatingExpenses,
-              before: previous.operatingExpenses,
-              against,
-              goodWhen: 'down',
-            }}
+            comparison={
+              hasActivity
+                ? {
+                    now: headline.operatingExpenses,
+                    before: previous.operatingExpenses,
+                    against,
+                    goodWhen: 'down',
+                  }
+                : undefined
+            }
+            note="Recorded, non-voided expenses"
           />
-          <BigFigure
-            label="After all costs"
+          <Stat
+            label="After recorded costs"
             value={formatPesos(headline.net)}
-            tone={headline.net < 0 ? 'danger' : undefined}
-            comparison={{ now: headline.net, before: previous.net, against }}
+            danger={headline.net < 0}
+            comparison={
+              hasActivity ? { now: headline.net, before: previous.net, against } : undefined
+            }
+            note="Sales − product costs − recorded expenses"
           />
         </div>
-        <p className="max-w-prose text-body text-text">
-          {period}: you {headline.net < 0 ? 'lost' : 'made'} {formatPesos(Math.abs(headline.net))} after
-          all costs{clause ? `, ${clause}` : ''}.
-        </p>
+        {hasActivity && (
+          <p className="max-w-prose text-body text-text">
+            {period}: you {headline.net < 0 ? 'lost' : 'made'} {formatPesos(Math.abs(headline.net))}{' '}
+            after recorded costs{clause ? `, ${clause}` : ''}.
+          </p>
+        )}
       </section>
 
       {/* 2 — ANYTHING TO DO. Only when there is. */}
@@ -203,7 +311,10 @@ function Report({ data }: { data: PeriodReport }) {
                   {cash.uncountedTradingDays}{' '}
                   {cash.uncountedTradingDays === 1 ? 'night was' : 'nights were'} never counted
                 </span>
-                <Link to="/end-of-day" className="hit inline-flex items-center text-body text-info underline">
+                <Link
+                  to="/end-of-day"
+                  className="hit inline-flex items-center text-body text-info underline"
+                >
                   Count {cash.uncountedTradingDays === 1 ? 'it' : 'them'}
                 </Link>
               </li>
@@ -213,7 +324,10 @@ function Report({ data }: { data: PeriodReport }) {
                 <span className="text-body text-danger">
                   {formatPesos(owedAmount)} still owed across {owed} {owed === 1 ? 'bill' : 'bills'}
                 </span>
-                <Link to="/unsettled" className="hit inline-flex items-center text-body text-info underline">
+                <Link
+                  to="/unsettled"
+                  className="hit inline-flex items-center text-body text-info underline"
+                >
                   Chase it
                 </Link>
               </li>
@@ -222,13 +336,19 @@ function Report({ data }: { data: PeriodReport }) {
         </section>
       ) : null}
 
+      {headline.bills === 0 && headline.operatingExpenses === 0 && (
+        <EmptyState title="No closed sales or expenses in this period">
+          Choose another range to explore earlier activity. Live outstanding debts and stock may
+          still appear below.
+        </EmptyState>
+      )}
       {/* 3 — WHAT IT NEEDS TO TAKE, AND THE TREND. */}
-      <section className="rounded-2xl border border-border bg-surface p-5 sm:p-8">
+      <section className="analytics-panel">
         {breakEven.computable &&
         breakEven.requiredGrossPerTradingDay !== null &&
         breakEven.actualGrossPerTradingDay !== null ? (
           <p className="mb-6 text-body text-text">
-            You need {formatPesos(breakEven.requiredGrossPerTradingDay)} a night to break even. You
+            Estimated sales per trading night to cover this period’s recorded costs: {formatPesos(breakEven.requiredGrossPerTradingDay)}. You
             averaged{' '}
             <span
               className={`tabular font-semibold ${
@@ -245,9 +365,14 @@ function Report({ data }: { data: PeriodReport }) {
           <p className="mb-6 text-body text-text-dim">
             {headline.gross === 0
               ? 'Not enough sales to work out a break-even.'
-              : 'Goods sold for less than they cost, so no level of sales covers costs.'}
+              : 'The recorded margin is not positive, so a break-even target cannot be calculated.'}
           </p>
         )}
+        <p className="mb-4 text-label text-text-dim">
+          This estimate spreads the selected period’s recorded expenses across its trading days,
+          using its recorded product margin. It is not a forecast; short periods containing rent
+          or other large payouts can distort it.
+        </p>
         <h2 className="mb-3 text-label uppercase text-text-dim">Sales per night</h2>
         <SalesByNight
           days={data.byDay}
@@ -255,32 +380,93 @@ function Report({ data }: { data: PeriodReport }) {
         />
       </section>
 
-      {/* 4 — DETAILS. Collapsed, each with its key figure showing. */}
+      <div className="analytics-grid analytics-grid-equal">
+        <AnalyticsPanel
+          title="Which tables generate sales?"
+          subtitle="Time revenue · before bill-level discounts"
+        >
+          <RankedBars
+            empty="No table sales or occupied time recorded in this period."
+            rows={(data.tables.some((row) => row.occupiedMinutes > 0 || row.timeRevenue > 0)
+              ? [...data.tables]
+              : []
+            )
+              .sort((a, b) => b.timeRevenue - a.timeRevenue)
+              .map((row) => ({
+                label: row.tableName,
+                value: row.timeRevenue,
+                display: formatPesos(row.timeRevenue),
+                detail: `${formatHours(row.occupiedMinutes)} held · ${formatPesos(row.revenuePerOccupiedHour)} per hour held`,
+              }))}
+          />
+        </AnalyticsPanel>
+        <AnalyticsPanel
+          title="What are the best-selling products?"
+          subtitle="Top 5 by sales · before bill-level discounts"
+        >
+          <RankedBars
+            rows={[...data.products]
+              .sort((a, b) => b.revenue - a.revenue)
+              .slice(0, 5)
+              .map((row) => ({
+                label: row.name,
+                value: row.revenue,
+                display: formatPesos(row.revenue),
+                detail: `${row.quantity} units · ${formatPesos(row.margin)} product margin`,
+              }))}
+          />
+        </AnalyticsPanel>
+      </div>
+      <ReportExplorer key={`${data.from}-${data.to}`} data={data} />
+      {/* Supporting financial details also expand when printed. */}
       <section>
-        <h2 className="mb-2 text-label uppercase tracking-wide text-text-dim">Details</h2>
+        <h2 className="analytics-eyebrow mb-3">Financial detail & controls</h2>
 
         <Disclosure
           title="Bills and averages"
           summary={`${headline.bills.toLocaleString('en-PH')} bills over ${headline.tradingDays} trading ${headline.tradingDays === 1 ? 'day' : 'days'}`}
         >
           <FigureRow label="Bills" value={headline.bills.toLocaleString('en-PH')}>
-            <ComparisonLine now={headline.bills} before={previous.bills} against={against} kind="count" />
+            <ComparisonLine
+              now={headline.bills}
+              before={previous.bills}
+              against={against}
+              kind="count"
+            />
           </FigureRow>
           <FigureRow label="Trading days" value={String(headline.tradingDays)}>
-            <ComparisonLine now={headline.tradingDays} before={previous.tradingDays} against={against} kind="count" />
+            <ComparisonLine
+              now={headline.tradingDays}
+              before={previous.tradingDays}
+              against={against}
+              kind="count"
+            />
           </FigureRow>
           <FigureRow label="Sales per trading day" value={formatPesos(headline.grossPerTradingDay)}>
-            <ComparisonLine now={headline.grossPerTradingDay} before={previous.grossPerTradingDay} against={against} />
+            <ComparisonLine
+              now={headline.grossPerTradingDay}
+              before={previous.grossPerTradingDay}
+              against={against}
+            />
           </FigureRow>
-          <FigureRow label="After all costs per trading day" value={formatPesos(headline.netPerTradingDay)}>
-            <ComparisonLine now={headline.netPerTradingDay} before={previous.netPerTradingDay} against={against} />
+          <FigureRow
+            label="After recorded costs per trading day"
+            value={formatPesos(headline.netPerTradingDay)}
+          >
+            <ComparisonLine
+              now={headline.netPerTradingDay}
+              before={previous.netPerTradingDay}
+              against={against}
+            />
           </FigureRow>
           <FigureRow
             label="Kept after cost of goods"
             value={headline.grossMarginPercent === null ? '—' : `${headline.grossMarginPercent}%`}
           >
             <p className="mt-1 text-label text-text-dim">
-              {previous.grossMarginPercent === null ? 'Nothing to compare' : `${previous.grossMarginPercent}% ${against}`}
+              {previous.grossMarginPercent === null
+                ? 'Nothing to compare'
+                : `${previous.grossMarginPercent}% ${against}`}
             </p>
           </FigureRow>
         </Disclosure>
@@ -301,7 +487,9 @@ function Report({ data }: { data: PeriodReport }) {
             head={['Day', 'Trading days', 'Avg bills', 'Avg sales', 'vs break-even']}
             rows={data.byDayOfWeek.map((day) => {
               const gap =
-                day.avgGross === null || !breakEven.computable || breakEven.requiredGrossPerTradingDay === null
+                day.avgGross === null ||
+                !breakEven.computable ||
+                breakEven.requiredGrossPerTradingDay === null
                   ? null
                   : day.avgGross - breakEven.requiredGrossPerTradingDay;
               return {
@@ -320,15 +508,20 @@ function Report({ data }: { data: PeriodReport }) {
           />
         </Disclosure>
 
-        <Disclosure title="Every night" summary={`${data.byDay.length} nights`}>
-          <EveryNight days={data.byDay} />
-        </Disclosure>
+        <div className="hidden print:block" data-print-report-detail>
+          <Disclosure title="Every night" summary={plural(data.byDay.length, 'night')}>
+            <EveryNight days={data.byDay} />
+          </Disclosure>
+        </div>
 
         <Disclosure
           title="Sales by hour"
           summary={(() => {
-            const busiest = data.byHour.reduce((a, b) => (b.amount > a.amount ? b : a), data.byHour[0]);
-            return busiest ? `Busiest at ${hourLabel(busiest.hour)}` : 'No sales';
+            const busiest = data.byHour.reduce(
+              (a, b) => (b.amount > a.amount ? b : a),
+              data.byHour[0],
+            );
+            return busiest?.amount > 0 ? `Highest sales at ${hourLabel(busiest.hour)}` : 'No sales';
           })()}
         >
           <HourChart hours={data.byHour} />
@@ -337,110 +530,135 @@ function Report({ data }: { data: PeriodReport }) {
 
       {/* 5 — WHAT IT COST TO BE OPEN, and the rest. A new page when printed. */}
       <section className="-mt-6 print:break-before-page">
-        <Disclosure
-          title="Expenses"
-          summary={
-            data.expensesByCategory.length === 0
-              ? 'None'
-              : `${formatPesos(headline.operatingExpenses)} · ${data.expensesByCategory[0].category.toLowerCase()} ${formatPesos(data.expensesByCategory[0].amount)}`
-          }
-        >
-          {data.expensesByCategory.length === 0 ? (
-            <p className="text-body text-text-dim">Nothing paid out in either period.</p>
-          ) : (
+        <div className="hidden print:block" data-print-report-detail>
+          <Disclosure
+            title="Expenses"
+            summary={
+              data.expensesByCategory.length === 0
+                ? 'None'
+                : `${formatPesos(headline.operatingExpenses)} · ${data.expensesByCategory[0].category.toLowerCase()} ${formatPesos(data.expensesByCategory[0].amount)}`
+            }
+          >
+            {data.expensesByCategory.length === 0 ? (
+              <p className="text-body text-text-dim">Nothing paid out in either period.</p>
+            ) : (
+              <Table
+                head={['Category', period, against, '% of sales']}
+                rows={data.expensesByCategory.map((line) => ({
+                  key: line.category,
+                  cells: [
+                    line.category,
+                    formatPesos(line.amount),
+                    formatPesos(line.previousAmount),
+                    percent(line.percentOfGross),
+                  ],
+                }))}
+                total={[
+                  'Total',
+                  formatPesos(headline.operatingExpenses),
+                  formatPesos(previous.operatingExpenses),
+                  percent(
+                    headline.gross > 0 ? (headline.operatingExpenses / headline.gross) * 100 : null,
+                  ),
+                ]}
+              />
+            )}
+          </Disclosure>
+        </div>
+
+        <div className="hidden print:block" data-print-report-detail>
+          <Disclosure
+            title="Tables"
+            summary={
+              weakestTable
+                ? `Weakest: ${weakestTable.tableName} · ${formatPesos(weakestTable.revenuePerOccupiedHour)} an hour`
+                : 'No occupied tables'
+            }
+          >
             <Table
-              head={['Category', period, against, '% of sales']}
-              rows={data.expensesByCategory.map((line) => ({
-                key: line.category,
-                cells: [line.category, formatPesos(line.amount), formatPesos(line.previousAmount), percent(line.percentOfGross)],
+              head={['Table', 'Hours held', 'In use', 'Time sales', 'Per hour held']}
+              rows={data.tables.map((table) => ({
+                key: table.tableName,
+                dim: table.occupiedMinutes === 0,
+                marker: table === weakestTable ? 'weakest' : undefined,
+                cells: [
+                  table.tableName,
+                  formatHours(table.occupiedMinutes),
+                  percent(table.utilisationPercent),
+                  formatPesos(table.timeRevenue),
+                  formatPesos(table.revenuePerOccupiedHour),
+                ],
               }))}
-              total={[
-                'Total',
-                formatPesos(headline.operatingExpenses),
-                formatPesos(previous.operatingExpenses),
-                percent(headline.gross > 0 ? (headline.operatingExpenses / headline.gross) * 100 : null),
-              ]}
             />
-          )}
-          {data.expensesByMonth.rows.length > 0 ? (
-            <div className="mt-8">
-              <h3 className="mb-2 text-label uppercase text-text-dim">Six months</h3>
+          </Disclosure>
+        </div>
+
+        <div className="hidden print:block" data-print-report-detail>
+          <Disclosure
+            title="Products"
+            summary={
+              data.products.length === 0
+                ? 'Nothing sold'
+                : belowCost === 0
+                  ? 'All sold above cost'
+                  : `${belowCost} sold at or below cost`
+            }
+            tone={belowCost > 0 ? 'danger' : undefined}
+          >
+            {data.products.length === 0 ? (
+              <p className="text-body text-text-dim">Nothing sold.</p>
+            ) : (
+              <Table
+                head={['Product', 'Qty', 'Sales', 'Cost', 'Margin', 'Margin %']}
+                rows={data.products.map((product) => ({
+                  key: product.name,
+                  danger: product.margin <= 0,
+                  cells: [
+                    product.name,
+                    product.quantity.toLocaleString('en-PH'),
+                    formatPesos(product.revenue),
+                    formatPesos(product.cost),
+                    formatPesos(product.margin),
+                    percent(product.marginPercent),
+                  ],
+                }))}
+              />
+            )}
+          </Disclosure>
+        </div>
+
+        {data.expensesByMonth.rows.length > 0 && (
+          <Disclosure title="Expense history — six months" summary="By month and category">
+            <div>
               <Table
                 head={['Category', ...data.expensesByMonth.months.map(formatMonth), 'Total']}
                 rows={data.expensesByMonth.rows.map((row) => ({
                   key: row.category,
-                  cells: [row.category, ...row.amounts.map((amount) => formatPesos(amount)), formatPesos(row.total)],
+                  cells: [
+                    row.category,
+                    ...row.amounts.map((amount) => formatPesos(amount)),
+                    formatPesos(row.total),
+                  ],
                 }))}
                 total={[
                   'Total',
                   ...data.expensesByMonth.months.map((_, index) =>
-                    formatPesos(data.expensesByMonth.rows.reduce((sum, row) => sum + row.amounts[index], 0)),
+                    formatPesos(
+                      data.expensesByMonth.rows.reduce((sum, row) => sum + row.amounts[index], 0),
+                    ),
                   ),
                   formatPesos(data.expensesByMonth.rows.reduce((sum, row) => sum + row.total, 0)),
                 ]}
               />
             </div>
-          ) : null}
-        </Disclosure>
-
-        <Disclosure
-          title="Tables"
-          summary={
-            weakestTable
-              ? `Weakest: ${weakestTable.tableName} · ${formatPesos(weakestTable.revenuePerOccupiedHour)} an hour`
-              : 'No tables'
-          }
-        >
-          <Table
-            head={['Table', 'Hours held', 'In use', 'Time sales', 'Per hour held']}
-            rows={data.tables.map((table) => ({
-              key: table.tableName,
-              dim: table.occupiedMinutes === 0,
-              marker: table === weakestTable ? 'weakest' : undefined,
-              cells: [
-                table.tableName,
-                formatHours(table.occupiedMinutes),
-                percent(table.utilisationPercent),
-                formatPesos(table.timeRevenue),
-                formatPesos(table.revenuePerOccupiedHour),
-              ],
-            }))}
-          />
-        </Disclosure>
-
-        <Disclosure
-          title="Products"
-          summary={
-            data.products.length === 0
-              ? 'Nothing sold'
-              : belowCost === 0
-                ? 'All sold above cost'
-                : `${belowCost} sold at or below cost`
-          }
-          tone={belowCost > 0 ? 'danger' : undefined}
-        >
-          {data.products.length === 0 ? (
-            <p className="text-body text-text-dim">Nothing sold.</p>
-          ) : (
-            <Table
-              head={['Product', 'Qty', 'Sales', 'Cost', 'Margin', 'Margin %']}
-              rows={data.products.map((product) => ({
-                key: product.name,
-                danger: product.margin <= 0,
-                cells: [
-                  product.name,
-                  product.quantity.toLocaleString('en-PH'),
-                  formatPesos(product.revenue),
-                  formatPesos(product.cost),
-                  formatPesos(product.margin),
-                  percent(product.marginPercent),
-                ],
-              }))}
-            />
-          )}
-          {data.unsoldProducts.length > 0 ? (
-            <div className="mt-8">
-              <h3 className="mb-2 text-label uppercase text-text-dim">Not sold, still on the shelf</h3>
+          </Disclosure>
+        )}
+        {data.unsoldProducts.length > 0 && (
+          <Disclosure
+            title="Unsold stock"
+            summary={`${data.unsoldProducts.length} products still on the shelf`}
+          >
+            <div>
               <Table
                 head={['Product', 'On hand', 'Avg cost', 'On the shelf']}
                 rows={data.unsoldProducts.map((product) => ({
@@ -454,27 +672,53 @@ function Report({ data }: { data: PeriodReport }) {
                 }))}
               />
             </div>
-          ) : null}
-        </Disclosure>
+          </Disclosure>
+        )}
 
         <Disclosure
           title="Given away"
           summary={`${formatPesos(data.givenAway.total)}${
-            data.givenAway.percentOfGross === null ? '' : ` · ${data.givenAway.percentOfGross}% of sales`
+            data.givenAway.percentOfGross === null
+              ? ''
+              : ` · ${data.givenAway.percentOfGross}% of sales`
           }`}
         >
           <div className="grid gap-x-8 md:grid-cols-2">
             <h3 className="col-span-full mt-3 text-label text-text-dim">Discounts we chose</h3>
-            <Row label={`Promos · ${plural(data.givenAway.promoSessions, 'session')}`} value={formatPesos(data.givenAway.promoForgone)} />
-            <Row label={`Friend rates · ${plural(data.givenAway.friendSessions, 'session')}`} value={formatPesos(data.givenAway.friendForgone)} />
-            <Row label={`Flat rate · ${plural(data.givenAway.flatSessions, 'session')}`} value={formatPesos(data.givenAway.flatForgone)} />
-            <Row label={`Time not charged · ${plural(data.givenAway.reducedSessions, 'session')}`} value={formatPesos(data.givenAway.timeReductionForgone)} />
-            <Row label={`Discounts · ${plural(data.givenAway.discountBills, 'bill')}`} value={formatPesos(data.givenAway.discountAmount)} />
-            <Row label={`Vouchers · ${plural(data.givenAway.voucherCount, 'voucher')}`} value={formatPesos(data.givenAway.voucherAmount)} />
+            <Row
+              label={`Promos · ${plural(data.givenAway.promoSessions, 'session')}`}
+              value={formatPesos(data.givenAway.promoForgone)}
+            />
+            <Row
+              label={`Friend rates · ${plural(data.givenAway.friendSessions, 'session')}`}
+              value={formatPesos(data.givenAway.friendForgone)}
+            />
+            <Row
+              label={`Flat rate · ${plural(data.givenAway.flatSessions, 'session')}`}
+              value={formatPesos(data.givenAway.flatForgone)}
+            />
+            <Row
+              label={`Time not charged · ${plural(data.givenAway.reducedSessions, 'session')}`}
+              value={formatPesos(data.givenAway.timeReductionForgone)}
+            />
+            <Row
+              label={`Discounts · ${plural(data.givenAway.discountBills, 'bill')}`}
+              value={formatPesos(data.givenAway.discountAmount)}
+            />
+            <Row
+              label={`Vouchers · ${plural(data.givenAway.voucherCount, 'voucher')}`}
+              value={formatPesos(data.givenAway.voucherAmount)}
+            />
             <h3 className="col-span-full mt-3 text-label text-text-dim">Mistakes</h3>
-            <Row label={`Voids · ${plural(data.givenAway.voidCount, 'line')}`} value={formatPesos(data.givenAway.voidAmount)} />
+            <Row
+              label={`Voids · ${plural(data.givenAway.voidCount, 'line')}`}
+              value={formatPesos(data.givenAway.voidAmount)}
+            />
             <h3 className="col-span-full mt-3 text-label text-text-dim">Comps · estimate</h3>
-            <Row label={`Comps · ${plural(data.givenAway.compQuantity, 'unit')}`} value={formatPesos(data.givenAway.compEstimatedCost)} />
+            <Row
+              label={`Comps · ${plural(data.givenAway.compQuantity, 'unit')}`}
+              value={formatPesos(data.givenAway.compEstimatedCost)}
+            />
           </div>
         </Disclosure>
 
@@ -489,7 +733,11 @@ function Report({ data }: { data: PeriodReport }) {
           />
           <Row label="Nights with a variance" value={String(cash.nightsWithVariance)} />
           <Row label="Nights counted" value={String(cash.countedNights)} />
-          <Row label="Trading days never counted" value={String(cash.uncountedTradingDays)} dim={cash.uncountedTradingDays === 0} />
+          <Row
+            label="Trading days never counted"
+            value={String(cash.uncountedTradingDays)}
+            dim={cash.uncountedTradingDays === 0}
+          />
         </Disclosure>
 
         <Disclosure
@@ -497,9 +745,18 @@ function Report({ data }: { data: PeriodReport }) {
           summary={owed === 0 ? 'Nothing' : `${formatPesos(owedAmount)} · ${plural(owed, 'bill')}`}
           tone={owed > 0 ? 'danger' : undefined}
         >
-          <Row label={`From this period · ${plural(cash.unsettled.thisPeriod.count, 'bill')}`} value={formatPesos(cash.unsettled.thisPeriod.amount)} />
-          <Row label={`1–4 weeks before it · ${plural(cash.unsettled.oneToFourWeeksBefore.count, 'bill')}`} value={formatPesos(cash.unsettled.oneToFourWeeksBefore.amount)} />
-          <Row label={`Older · ${plural(cash.unsettled.older.count, 'bill')}`} value={formatPesos(cash.unsettled.older.amount)} />
+          <Row
+            label={`From this period · ${plural(cash.unsettled.thisPeriod.count, 'bill')}`}
+            value={formatPesos(cash.unsettled.thisPeriod.amount)}
+          />
+          <Row
+            label={`1–4 weeks before it · ${plural(cash.unsettled.oneToFourWeeksBefore.count, 'bill')}`}
+            value={formatPesos(cash.unsettled.oneToFourWeeksBefore.amount)}
+          />
+          <Row
+            label={`Older · ${plural(cash.unsettled.older.count, 'bill')}`}
+            value={formatPesos(cash.unsettled.older.amount)}
+          />
         </Disclosure>
       </section>
 
@@ -515,30 +772,29 @@ function Report({ data }: { data: PeriodReport }) {
             Rent, wages, water, electricity and the like, dated by the night they were paid. Voided
             expenses are left out.
           </Definition>
-          <Definition term="After all costs">After cost of goods, less expenses.</Definition>
+          <Definition term="After recorded costs">After cost of goods, less expenses.</Definition>
           <Definition term={`vs ${against}`}>
-            Like for like: a whole month against the whole month before, a month to date against
-            the same days of the month before, a week against the same weekdays a week earlier.
-            Under one per cent either way reads as about the same.
+            Like for like: a whole month against the whole month before, a month to date against the
+            same days of the month before, a week against the same weekdays a week earlier. Under
+            one per cent either way reads as about the same.
           </Definition>
           <Definition term="Trading day">
             A night with at least one sale or a drawer count. Every per-day figure divides by
             trading days, not calendar days.
           </Definition>
           <Definition term="Break-even">
-            What a night must take for the margin on it to cover the period&rsquo;s expenses
-            spread evenly across its trading days. The day-of-week table measures against the
-            same figure.
+            What a night must take for the margin on it to cover the period&rsquo;s expenses spread
+            evenly across its trading days. The day-of-week table measures against the same figure.
           </Definition>
           <Definition term="Tables">
             Hours held is wall clock, pauses included. In use is against 19 hours a trading day.
-            Time sales is what the time was charged, a moved session split between its tables
-            by minutes. Weakest is the table earning least per hour it was held — a premium
-            table earning less than a standard one is a pricing question.
+            Time sales is what the time was charged, a moved session split between its tables by
+            minutes. Weakest is the table earning least per hour it was held — a premium table
+            earning less than a standard one is a pricing question.
           </Definition>
           <Definition term="Products">
-            From the prices and costs recorded at the moment of sale. Unsold stock is valued at
-            its current average cost.
+            From the prices and costs recorded at the moment of sale. Unsold stock is valued at its
+            current average cost.
           </Definition>
           <Definition term="Given away">
             The dashboard&rsquo;s eight lines summed over the period. Comps are valued at current
@@ -558,7 +814,15 @@ function Report({ data }: { data: PeriodReport }) {
 }
 
 /** A figure with its comparison, as a row: label left, number and comparison right. */
-function FigureRow({ label, value, children }: { label: string; value: string; children: ReactNode }) {
+function FigureRow({
+  label,
+  value,
+  children,
+}: {
+  label: string;
+  value: string;
+  children: ReactNode;
+}) {
   return (
     <div className="flex items-start justify-between gap-3 border-b border-border py-2 last:border-0">
       <span className="text-body text-text">{label}</span>
@@ -578,8 +842,16 @@ function FigureRow({ label, value, children }: { label: string; value: string; c
 function EveryNight({ days }: { days: PeriodReport['byDay'] }) {
   const [all, setAll] = useState(false);
   const head = all
-    ? ['Night', 'Bills', 'Sales', 'Cost of goods', 'After cost of goods', 'Expenses', 'After all costs']
-    : ['Night', 'Bills', 'Sales', 'Expenses', 'After all costs'];
+    ? [
+        'Night',
+        'Bills',
+        'Sales',
+        'Cost of goods',
+        'After cost of goods',
+        'Expenses',
+        'After recorded costs',
+      ]
+    : ['Night', 'Bills', 'Sales', 'Expenses', 'After recorded costs'];
   return (
     <div>
       <div className="mb-2 flex justify-end print:hidden">
@@ -609,7 +881,13 @@ function EveryNight({ days }: { days: PeriodReport['byDay'] }) {
                 expenses,
                 formatPesos(day.net),
               ]
-            : [shortNight(day.businessDate), String(day.bills), formatPesos(day.gross), expenses, formatPesos(day.net)];
+            : [
+                shortNight(day.businessDate),
+                String(day.bills),
+                formatPesos(day.gross),
+                expenses,
+                formatPesos(day.net),
+              ];
           return {
             key: day.businessDate,
             dim: !day.trading,
@@ -658,7 +936,10 @@ function Table({
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.key} className={`border-b border-border ${row.shaded ? 'bg-surface' : ''}`}>
+            <tr
+              key={row.key}
+              className={`border-b border-border ${row.shaded ? 'bg-surface' : ''}`}
+            >
               {row.cells.map((cell, index) => (
                 <td
                   key={index}
