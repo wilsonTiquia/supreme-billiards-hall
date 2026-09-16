@@ -487,6 +487,41 @@ holding real takings unless you have just taken and verified a backup and you me
 After `down -v`, the next `docker compose up -d` is a first boot again: put
 `SUPREME_BOOTSTRAP_ADMIN_PASSWORD` back in `.env` first, then follow section 2 from the `up`.
 
+### The whole reset, in order
+
+About two minutes end to end. Every line is typed by hand; nothing here asks "are you sure".
+
+```bash
+cd /opt/supreme
+deploy/backup.sh --nightly        # ALWAYS, even in testing: it costs ten seconds and the
+                                  # dump lands in ./backups, which the reset does not touch
+docker compose down -v            # stops everything and DELETES the database volume
+sudo rm -rf data/*                # product images and payment photos — a bind mount, so
+                                  # down -v leaves them behind; omit this line to keep them
+nano .env                         # put SUPREME_BOOTSTRAP_ADMIN_PASSWORD=<first password> back
+docker compose up -d
+docker compose logs app | grep -E 'profile is active|applied 20|Started Billiards|AdminPasswordBootstrap'
+```
+
+All four lines, as in section 2. Then in the browser: log in as `owner` with the bootstrap
+password, change it, and back on the box delete the bootstrap line from `.env` and
+`docker compose up -d` once more.
+
+Two things `down -v` takes with it that are easy to forget:
+
+- **Caddy's certificate.** The `caddy-data` volume goes too, so the next `up` asks Let's Encrypt
+  for a new one — about a minute, during which the site shows a connection error. Let's Encrypt
+  allows **five certificates per hostname per week**; reset more than a few times in a day and
+  the site will be certificate-less until the window passes. If you expect to reset repeatedly
+  while testing, use `docker compose down` (no `-v`) followed by
+  `docker volume rm supreme_db-data` instead — that wipes only the database and keeps the
+  certificate.
+- **Every user, including the ones the owner created.** Staff accounts are rows in the
+  database. After a reset the owner recreates them in Admin → Staff.
+
+`./backups` survives. If the reset was a mistake, `deploy/restore.sh` with the dump you just
+took puts everything back.
+
 ---
 
 ## 10. The demo data
