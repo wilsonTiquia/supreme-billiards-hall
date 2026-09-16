@@ -372,6 +372,9 @@ version of this page is `docs/WORKFLOW.md`.
   The invocation is in `docs/RUNBOOK.md`, "Never run the test suite against the trading
   database": `createdb supreme_scratch`, `DB_URL=... ./mvnw test`, `dropdb`. For a frontend
   change, `npm run typecheck && npm run build` in `frontend/` as well — that is what CI runs.
+  On a fresh clone (or after `mvn clean`) build the SPA first and run
+  `./mvnw resources:copy-resources@copy-frontend test`: the suite serves the fallback page,
+  and without `target/classes/static/index.html` the gate test errors with `FileNotFound`.
 - **Open the PR with `gh pr create`** and fill in `.github/pull_request_template.md`. The
   "How it was tested" heading holds the exact command and the count it printed (currently
   `Tests run: 203, Failures: 0`), and says what was *not* run. A PR whose body claims a test

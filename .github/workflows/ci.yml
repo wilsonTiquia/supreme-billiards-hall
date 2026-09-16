@@ -3,7 +3,8 @@
 #
 # The backend gets a throwaway postgres:18 service, never a real database: the suite commits
 # rows on purpose (docs/RUNBOOK.md, "Never run the test suite against the trading database").
-# `mvnw test` stops before prepare-package, so npm is not involved; the SPA is checked on its own.
+# It also builds the SPA first: the suite serves the fallback page (PasswordChangeGateTest), and
+# `mvnw test` stops before prepare-package, where the pom would have put it in place.
 #
 # Playwright (frontend/e2e) is NOT run here yet: it needs a live backend on 8081 started by
 # scripts/e2e-backend.sh, which assumes a local psql. Wiring that into a runner is its own PR.
@@ -20,8 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        # 18, nothing older: V1 uses uuidv7(). POSTGRES_USER is the image's superuser, which
-        # is what CREATE EXTENSION btree_gist needs.
+        # 18, nothing older: V1 uses uuidv7(). POSTGRES_USER is the superuser btree_gist needs.
         image: postgres:18
         env: { POSTGRES_USER: supreme, POSTGRES_PASSWORD: supreme, POSTGRES_DB: supreme }
         ports: ["5432:5432"]
@@ -30,9 +30,14 @@ jobs:
           --health-interval 5s --health-timeout 3s --health-retries 12
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci && npm run build
+        working-directory: frontend
       - uses: actions/setup-java@v6
         with: { distribution: temurin, java-version: "21", cache: maven }
-      - run: ./mvnw -B test
+      # copy-frontend is the pom's own prepare-package step, invoked early by its id.
+      - run: ./mvnw -B resources:copy-resources@copy-frontend test
         env:
           DB_URL: jdbc:postgresql://localhost:5432/supreme
           DB_USERNAME: supreme

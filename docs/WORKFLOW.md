@@ -49,8 +49,9 @@ the protection rule rejects the push if they try.
    name the command and the count it printed (`Tests run: 203, Failures: 0` today). If it
    says "not run", or the count is missing, that is the first comment to leave.
 3. Check the two checks at the bottom of the **Conversation** tab: `backend` and `frontend`,
-   both with a green tick. `backend` is the Java suite against a throwaway database;
-   `frontend` is `npm run typecheck` and `npm run build`. Red means do not merge; the
+   both with a green tick. `backend` is the Java suite against a throwaway database (it
+   builds the SPA first, because the suite serves the fallback page); `frontend` is
+   `npm run typecheck` and `npm run build`. Red means do not merge; the
    **Details** link shows which test failed and why.
 4. **Files changed** tab. Read the diff. Hover over a line and click the blue **+** to leave a
    comment on that line; a comment left this way stays attached to the line.
