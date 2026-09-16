@@ -48,6 +48,7 @@ export function AppRoutes() {
             {/* Both roles: collecting a debt is counter work, and the shape carries no cost. */}
             <Route path="unsettled" element={<UnsettledPage />} />
             <Route path="expenses" element={<ExpensesPage />} />
+            <Route path="account" element={<ChangePasswordPage />} />
             <Route path="account/password" element={<ChangePasswordPage />} />
 
             <Route element={<RequireAdmin />}>

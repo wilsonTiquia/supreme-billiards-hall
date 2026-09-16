@@ -13,30 +13,29 @@ import { Sidebar, type NavGroup } from './Sidebar';
 /** The counter's destinations. Short enough to live on a collapsed rail. */
 const COUNTER: NavGroup[] = [
   {
-    emphasis: 'primary',
+    label: 'At the counter',
     items: [
       { to: '/floor', label: 'Floor', short: 'Fl' },
       { to: '/quick-sale', label: 'Quick sale', short: 'QS' },
     ],
   },
   {
-    emphasis: 'quiet',
+    label: 'Close the night',
     items: [
       // Beside End of day rather than up with the floor: money paid out is an occasional
       // errand, and it is the drawer count it has to reconcile with.
       { to: '/expenses', label: 'Expenses', short: 'Ex' },
-      // Who owes the hall money. Quiet rather than primary: it is checked when somebody walks
-      // in to settle, not on every sale.
+      // Unpaid bills sit with the end-of-night tasks.
       { to: '/unsettled', label: 'Unsettled', short: 'Un' },
       { to: '/end-of-day', label: 'End of day', short: 'EOD' },
     ],
   },
 ];
 
-/** The owner's nine, in the three groups they actually fall into. */
+/** Owner navigation, grouped by purpose. */
 const ADMIN: NavGroup[] = [
   {
-    emphasis: 'primary',
+    label: 'Manage',
     items: [
       { to: '/dashboard', label: 'Dashboard', short: 'Db' },
       // Beside the dashboard, because it is the same question over a longer span: the
@@ -48,7 +47,6 @@ const ADMIN: NavGroup[] = [
   },
   {
     label: 'Look up',
-    emphasis: 'quiet',
     items: [
       { to: '/admin/sales', label: 'Sales', short: 'Sa' },
       { to: '/admin/audit', label: 'Audit', short: 'Au' },
@@ -56,7 +54,6 @@ const ADMIN: NavGroup[] = [
   },
   {
     label: 'Set up',
-    emphasis: 'quiet',
     items: [
       { to: '/admin/categories', label: 'Categories', short: 'Ca' },
       { to: '/admin/tables', label: 'Tables', short: 'Tb' },
@@ -70,21 +67,11 @@ const ADMIN: NavGroup[] = [
 ];
 
 export function AppShell() {
-  const { user, logout } = useAuth();
-  const { theme, toggle } = useTheme();
+  const { user } = useAuth();
+  const { theme, toggle, setScreen } = useTheme();
   const { pathname } = useLocation();
 
-  /*
-   * Below 768px the rail becomes a drawer.
-   *
-   * A 256px column out of a 375px phone leaves 119px for the screen itself, which is why every
-   * route overflowed sideways. A drawer rather than a bottom bar because the admin side has
-   * nine destinations and a bottom bar would need a "More" that hides half of them — and the
-   * phone case is the owner checking the dashboard from home, which is occasional navigation,
-   * not rapid switching.
-   *
-   * At 768 and above nothing changes: the counter monitor gets exactly the shell it had.
-   */
+  // Below 768px, navigation opens as a drawer so the page keeps the full width.
   const desktop = useMediaQuery(DESKTOP);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -100,13 +87,23 @@ export function AppShell() {
     return () => window.removeEventListener('keydown', onKey);
   }, [drawerOpen]);
 
-  const admin = pathname.startsWith('/admin') || pathname.startsWith('/dashboard');
+  // Account is shared by both workspaces; keep the navigation the user came from.
+  const [lastWorkspace, setLastWorkspace] = useState<'floor' | 'admin'>(() => {
+    try { return sessionStorage.getItem('supreme.workspace') === 'admin' ? 'admin' : 'floor'; }
+    catch { return 'floor'; }
+  });
+  const workspace = pathname.startsWith('/account') ? lastWorkspace
+    : pathname.startsWith('/admin') || pathname.startsWith('/dashboard') ? 'admin' : 'floor';
+  const admin = user?.role === 'ADMIN' && workspace === 'admin';
+  useEffect(() => {
+    if (pathname.startsWith('/account')) setScreen(admin ? 'admin' : 'pos');
+  }, [pathname, admin, setScreen]);
+  useEffect(() => {
+    setLastWorkspace(workspace);
+    try { sessionStorage.setItem('supreme.workspace', workspace); } catch { /* optional preference */ }
+  }, [workspace]);
 
-  /* Open by default on both. Measured rather than assumed: at the counter's width the 240px
-     sidebar leaves 1904px for the floor grid, which is still three columns and ~630px cards —
-     so it costs no column and the labels are worth more than the pixels, especially to staff
-     learning this on Friday. It stays collapsible for a narrower screen, where the counter
-     falls back to a rail of initials. */
+  // Full labels by default; the compact menu keeps every destination accessible.
   const [collapsed, setCollapsed] = useState(false);
 
   const { data: businessDay } = useQuery({
@@ -115,11 +112,7 @@ export function AppShell() {
     staleTime: 60_000,
   });
 
-  const groups = admin
-    ? [...ADMIN, { emphasis: 'quiet' as const, items: [{ to: '/floor', label: 'Back to the floor', short: 'Fl' }] }]
-    : user?.role === 'ADMIN'
-      ? [...COUNTER, { emphasis: 'quiet' as const, items: [{ to: '/dashboard', label: 'Admin', short: 'Ad' }] }]
-      : COUNTER;
+  const groups = admin ? ADMIN : COUNTER;
 
   return (
     <div className="flex min-h-dvh bg-bg text-text">
@@ -128,6 +121,8 @@ export function AppShell() {
         <button
           type="button"
           aria-label="Close the menu"
+          tabIndex={-1}
+          aria-hidden="true"
           className="fixed inset-0 z-40 bg-ink/60 md:hidden"
           onClick={() => setDrawerOpen(false)}
         />
@@ -142,13 +137,13 @@ export function AppShell() {
         theme={theme}
         onToggleTheme={toggle}
         user={user ?? null}
-        onSignOut={() => void logout()}
+        workspace={admin ? 'admin' : 'floor'}
         drawer={!desktop}
         open={drawerOpen}
         onClose={() => setDrawerOpen(false)}
       />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-w-0 flex-1 flex-col" inert={!desktop && drawerOpen ? true : undefined}>
         {/* The phone's way in. Hidden from 768 up, where the rail is always present. */}
         <div className="flex items-center gap-3 border-b border-border px-4 py-2 md:hidden">
           <button

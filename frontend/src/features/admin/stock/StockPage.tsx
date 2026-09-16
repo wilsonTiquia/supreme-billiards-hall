@@ -15,13 +15,13 @@ import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
 import { ProductPicker } from '@/components/ProductPicker';
-import { Banner } from '@/components/Banner';
+import { useToast } from '@/components/Toast';
 import { Spinner } from '@/components/Spinner';
 
 export function StockPage() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const { notify, dismiss } = useToast();
 
   const products = useQuery({
     queryKey: queryKeys.products({ activeOnly: false }),
@@ -33,13 +33,13 @@ export function StockPage() {
   // A failure must clear the previous success, or the screen shows both at once and reads as
   // if the failed action also worked.
   function fail(message: string) {
-    setNotice(null);
+    dismiss();
     setError(message);
   }
 
   function refresh(message: string) {
     setError(null);
-    setNotice(message);
+    notify(message);
     void queryClient.invalidateQueries({ queryKey: ['products'] });
     void queryClient.invalidateQueries({ queryKey: queryKeys.lowStock });
   }
@@ -52,12 +52,6 @@ export function StockPage() {
       intro="Stock only ever moves through the ledger, and the ledger is append-only. A correction is a new compensating row, never an edit."
       error={error ?? (products.isError ? messageOf(products.error) : null)}
     >
-      {notice ? (
-        <div className="mb-4">
-          <Banner tone="info">{notice}</Banner>
-        </div>
-      ) : null}
-
       {products.isPending ? (
         <div className="py-10 text-center">
           <Spinner label="Loading stock…" />
