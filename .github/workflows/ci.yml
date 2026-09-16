@@ -1,0 +1,54 @@
+# The check every pull request must pass before it can merge into main. Branch protection
+# requires both jobs by name; rename one here and the rule in docs/WORKFLOW.md must follow.
+#
+# The backend gets a throwaway postgres:18 service, never a real database: the suite commits
+# rows on purpose (docs/RUNBOOK.md, "Never run the test suite against the trading database").
+# `mvnw test` stops before prepare-package, so npm is not involved; the SPA is checked on its own.
+#
+# Playwright (frontend/e2e) is NOT run here yet: it needs a live backend on 8081 started by
+# scripts/e2e-backend.sh, which assumes a local psql. Wiring that into a runner is its own PR.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        # 18, nothing older: V1 uses uuidv7(). POSTGRES_USER is the image's superuser, which
+        # is what CREATE EXTENSION btree_gist needs.
+        image: postgres:18
+        env: { POSTGRES_USER: supreme, POSTGRES_PASSWORD: supreme, POSTGRES_DB: supreme }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U supreme -d supreme"
+          --health-interval 5s --health-timeout 3s --health-retries 12
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with: { distribution: temurin, java-version: "21", cache: maven }
+      - run: ./mvnw -B test
+        env:
+          DB_URL: jdbc:postgresql://localhost:5432/supreme
+          DB_USERNAME: supreme
+          DB_PASSWORD: supreme
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with: { name: surefire-reports, path: target/surefire-reports }
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run: { working-directory: frontend }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with: { node-version: "22", cache: npm, cache-dependency-path: frontend/package-lock.json }
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build

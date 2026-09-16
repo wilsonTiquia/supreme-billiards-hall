@@ -431,8 +431,15 @@ Then `docker compose down -v` on the throwaway and delete the copied `.env` and 
 
 ## 7. Updating
 
+**From the laptop, not from the box: Actions → Deploy → Run workflow → type `deploy`.** The
+button runs `deploy/update.sh` on the VPS through a key that can run nothing else, then waits
+for `https://billiards.frasi.tech/api/v1/time` to answer 401. `docs/WORKFLOW.md` has the
+button, the review process in front of it, and the one-time key setup.
+
+What the script does, and the only thing to type by hand if the button is unavailable:
+
 ```bash
-cd /opt/supreme && git pull && docker compose up -d --build
+cd /opt/supreme && git pull --ff-only && docker compose up -d --build
 ```
 
 The build takes a few minutes; only at the end does compose replace the `app` container, and

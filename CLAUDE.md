@@ -354,3 +354,32 @@ a change would touch more than a handful of files; or a dependency would be adde
 
 Report honestly. If something does not work, say so with the error. Never claim a feature is done
 when it is stubbed.
+
+---
+
+## 9. Branches and pull requests
+
+Nothing lands on `main` except through a pull request that CI has passed, and the VPS is
+updated by one deliberate click, never by a push. Branch protection enforces the first half;
+`.github/workflows/deploy.yml` being `workflow_dispatch`-only enforces the second. The human
+version of this page is `docs/WORKFLOW.md`.
+
+- **Branch from `main`** as `feat/<slug>`, `fix/<slug>` or `chore/<slug>`. Never commit on
+  `main`; if you find yourself there, `git switch -c` first and the commits move with you.
+- **Commit messages as the repo already writes them**: one imperative line, the reasoning in
+  the body. `git log` is the reference; match it.
+- **Run the suite against a scratch database before opening the PR, never against 8080.**
+  The invocation is in `docs/RUNBOOK.md`, "Never run the test suite against the trading
+  database": `createdb supreme_scratch`, `DB_URL=... ./mvnw test`, `dropdb`. For a frontend
+  change, `npm run typecheck && npm run build` in `frontend/` as well — that is what CI runs.
+- **Open the PR with `gh pr create`** and fill in `.github/pull_request_template.md`. The
+  "How it was tested" heading holds the exact command and the count it printed (currently
+  `Tests run: 203, Failures: 0`), and says what was *not* run. A PR whose body claims a test
+  that did not happen is the same defect as a test name that claims more than it asserts (§6).
+- **Never merge your own PR.** Report the URL and the CI result and stop. The owner reviews on
+  GitHub and merges with **squash**, so one PR is one commit on `main`. If CI is red, fix it on
+  the branch and push; the PR page keeps the history.
+- **Deploy is the Actions button** — Actions → Deploy → Run workflow → type `deploy`. Never a
+  `git pull` on the VPS, never a push from it, never `docker compose up` by hand there. The
+  button runs `deploy/update.sh` through a key that can run nothing else, then waits for
+  `/api/v1/time` to answer 401.
