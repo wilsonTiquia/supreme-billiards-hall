@@ -395,6 +395,19 @@
 @media print {
   .analytics {
     gap: 16px;
+    --text: #111;
+    --text-dim: #444;
+    --bg: #fff;
+    --surface: #fff;
+    --raised: #fff;
+    --border: #bbb;
+    --info: #174f87;
+    --danger: #a02020;
+    --green: #17623b;
+  }
+  /* The app's print reset hides headers globally; report section titles must remain. */
+  .analytics .analytics-panel-header {
+    display: block !important;
   }
   .analytics-panel,
   .analytics-stat {
