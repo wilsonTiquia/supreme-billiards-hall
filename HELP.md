@@ -46,7 +46,6 @@ passwords. It has two paths:
 - **Interactive (recommended, the default):** run it with no flag and it asks you to type the
   two real passwords — no default password ever exists, so there is nothing to leak or forget
   to change.
-- **`--default-password`:** it seeds one documented default (`supreme-golive`) for both
   accounts and forces each to change it on first sign-in — convenient for a hands-off install,
   at the cost of a default briefly existing (usable only to change itself, nothing else).
 
