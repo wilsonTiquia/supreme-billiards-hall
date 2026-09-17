@@ -1,11 +1,11 @@
-import type { BusinessDayStatus, CashCount } from '@/api/types';
+import type { CashCount } from '@/api/types';
 
 export function validNight(date: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(Date.parse(`${date}T00:00:00Z`)) &&
     new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
 }
 
-function shiftDay(date: string, days: number): string {
+export function shiftDay(date: string, days: number): string {
   const shifted = new Date(`${date}T00:00:00Z`);
   shifted.setUTCDate(shifted.getUTCDate() + days);
   return shifted.toISOString().slice(0, 10);
@@ -17,8 +17,10 @@ export function nightHasEnded(date: string, serverNow: string): boolean {
   return validNight(date) && Date.parse(serverNow) >= Date.parse(`${shiftDay(date, 1)}T05:00:00+08:00`);
 }
 
-export function lastCompletedNight(day: Pick<BusinessDayStatus, 'businessDate' | 'serverNow'>): string {
-  return nightHasEnded(day.businessDate, day.serverNow) ? day.businessDate : shiftDay(day.businessDate, -1);
+/** The server supplies business_date_of(now); never substitute the last completed night. */
+export function dashboardNight(requested: string, current: string): string {
+  if (!validNight(current)) return '';
+  return validNight(requested) && requested <= current ? requested : current;
 }
 
 export function cashStatus(count: CashCount | null, running: boolean, loading = false, error = false): {

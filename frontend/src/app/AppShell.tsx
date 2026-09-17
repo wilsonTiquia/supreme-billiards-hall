@@ -161,7 +161,7 @@ export function AppShell() {
         </div>
         {/* The business day is context for what you are looking at, not somewhere to go. It
             belongs over the content, not in a rail of links. */}
-        {businessDay ? (
+        {businessDay && pathname !== '/dashboard' ? (
           <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border px-4 py-3 md:px-6">
             <div className="flex flex-wrap items-baseline gap-x-3">
               <span className="text-label uppercase text-text-dim">Business day</span>

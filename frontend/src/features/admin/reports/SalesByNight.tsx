@@ -22,10 +22,13 @@ const PADDING = { top: 20, right: 8, bottom: 28, left: 44 };
 export function SalesByNight({
   days,
   breakEven,
+  showBestNight = true,
 }: {
   days: PeriodDay[];
   /** Null when not computable; then there is no line. */
   breakEven: number | null;
+  /** Suppress the ranking while a dashboard night is still in progress. */
+  showBestNight?: boolean;
 }) {
   const [hovered, setHovered] = useState<number | null>(null);
   // A phone gets the whole month in view rather than a scrollbar that hides the last week.
@@ -60,7 +63,7 @@ export function SalesByNight({
   const long = days.length > 62;
 
   const best = days.reduce((a, b) => (b.gross > a.gross ? b : a), days[0]);
-  const shown = hovered === null ? best : days[hovered];
+  const shown = hovered === null ? (showBestNight ? best : days[days.length - 1]) : days[hovered];
 
   return (
     <div>
@@ -69,7 +72,7 @@ export function SalesByNight({
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           width="100%"
           role="img"
-          aria-label="Sales per night across the period, with the break-even line"
+          aria-label={`Sales per night across the period${breakEven === null ? '' : ', with the break-even line'}`}
           className="block"
           onMouseLeave={() => setHovered(null)}
         >
@@ -159,7 +162,7 @@ export function SalesByNight({
         </svg>
       </div>
       <p className="tabular mt-2 text-label text-text-dim" aria-live="polite">
-        {hovered === null ? 'Best night: ' : ''}
+        {hovered === null && showBestNight ? 'Best night: ' : ''}
         {shortNight(shown.businessDate)} {dayMonth(shown.businessDate).split(' ')[1]} ·{' '}
         {formatPesos(shown.gross)} · {shown.bills} {shown.bills === 1 ? 'bill' : 'bills'}
       </p>

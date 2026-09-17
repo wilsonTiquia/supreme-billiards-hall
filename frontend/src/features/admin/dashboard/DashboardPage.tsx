@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { lastCompletedNight, nightHasEnded, validNight, cashStatus } from './morning';
+import { dashboardNight, shiftDay, nightHasEnded, validNight, cashStatus } from './morning';
 import { LossesDetail, type LossKind } from './LossesDetail';
 import { HourChart } from './HourChart';
 import { fetchDailyReport, fetchPeriodReport } from '@/api/endpoints/reports';
@@ -14,27 +14,31 @@ import { fetchUnsettledBills } from '@/api/endpoints/bills';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { CashCount, DailyReport, Losses, TimeRevenueByMode } from '@/api/types';
-import { AdminPage } from '../AdminPage';
-import { comparedClause, describeChange } from '../Comparison';
+import { useScreenTheme } from '@/app/useTheme';
+import { Banner } from '@/components/Banner';
 import { AnalyticsPanel, AnalyticsLoading, RankedBars, Stat } from '../analytics/Analytics';
 import { SalesByNight } from '../reports/SalesByNight';
 import { presetRange } from '../reports/periodDates';
 import { Disclosure } from '@/components/Disclosure';
 import { formatPesos } from '@/lib/money';
 import { formatHours, weekdayOf } from '@/lib/datetime';
+import './dashboard.css';
 
 /**
  * The owner's morning. Ten seconds, on a phone, without scrolling: how much was made, is that
- * better or worse than usual, is there anything to do. Everything else is a detail and lives
- * below, collapsed, with its one key figure showing.
+ * better or worse than usual, is there anything to do. Charts and operational details follow
+ * the headline and attention banner in equal-width rows.
  *
  * "Usual" is the same weekday last week. A Saturday against the Friday before it was a
  * comparison of two different nights, and made every Sunday read as a collapse.
  */
 export function DashboardPage() {
+  useScreenTheme('admin');
+  const definitionsId = useId();
   const [params, setParams] = useSearchParams();
   const requestedDate = params.get('date') || '';
   const setDate = (value: string) => {
+    if (!validNight(value) || value > (currentDay.data?.businessDate ?? '')) return;
     setOpenLoss(null);
     setParams((old) => { const next = new URLSearchParams(old); next.set('date', value); return next; });
   };
@@ -48,9 +52,7 @@ export function DashboardPage() {
     refetchInterval: 60_000,
   });
 
-  const latestCompleted = currentDay.data ? lastCompletedNight(currentDay.data) : '';
-  const date = validNight(requestedDate) && requestedDate <= (currentDay.data?.businessDate || '')
-    ? requestedDate : latestCompleted;
+  const date = dashboardNight(requestedDate, currentDay.data?.businessDate ?? '');
   useEffect(() => {
     if (date && date !== requestedDate) {
       setParams((old) => { const next = new URLSearchParams(old); next.set('date', date); return next; }, { replace: true });
@@ -60,6 +62,7 @@ export function DashboardPage() {
     queryKey: queryKeys.dailyReport(date),
     queryFn: () => fetchDailyReport(date),
     enabled: Boolean(date),
+    refetchInterval: 60_000,
   });
 
   /*
@@ -71,54 +74,67 @@ export function DashboardPage() {
     queryKey: queryKeys.unsettledBills,
     queryFn: fetchUnsettledBills,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   const uncounted = useQuery({
     queryKey: queryKeys.uncountedDays,
     queryFn: fetchUncountedDays,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
-  const shownDate = date || currentDay.data?.businessDate || '';
+  const shownDate = date;
   const trendRange = shownDate ? presetRange('thisWeek', shownDate) : null;
   const trend = useQuery({
     queryKey: queryKeys.periodReport(trendRange?.from ?? '', trendRange?.to ?? ''),
     queryFn: () => fetchPeriodReport(trendRange!.from, trendRange!.to),
     enabled: Boolean(trendRange),
+    refetchInterval: 60_000,
   });
   const cashCount = useQuery({
     queryKey: queryKeys.cashCount(shownDate),
     queryFn: () => fetchCashCount(shownDate),
     enabled: Boolean(shownDate),
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   const data = report.data;
   const tonight = Boolean(currentDay.data && !nightHasEnded(shownDate, currentDay.data.serverNow));
 
   return (
-    <AdminPage title="Dashboard" intro="Your hall, at a glance." error={report.isError ? messageOf(report.error) : null}>
-      <div className="analytics">
-      <div className="analytics-toolbar">
-        <div>
-        <p className="analytics-eyebrow">Owner overview · Business day</p>
-        <h2 className="text-heading text-text">
-          {shownDate ? `${new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(`${shownDate}T12:00:00Z`))} · ${tonight ? 'in progress since 10am' : 'complete'}` : 'Loading business night…'}
-        </h2>
+    <div className="dashboard analytics mx-auto max-w-[112rem]">
+      <div className="dashboard-heading">
+        <div className="dashboard-title-row">
+          <div className="flex items-center gap-2">
+            <h1 className="text-[28px] font-semibold tracking-tight text-text">Dashboard</h1>
+            <button type="button" popoverTarget={definitionsId} aria-label="How these numbers are worked out"
+              className="hit flex w-11 items-center justify-center rounded-lg text-text-dim hover:bg-raised">
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
+                <circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7v1" />
+              </svg>
+            </button>
+          </div>
+          {shownDate && <Link className="hit inline-flex items-center text-body text-info underline underline-offset-4"
+            to={`/admin/reports?from=${shownDate}&to=${shownDate}`}>View report</Link>}
         </div>
-        <div className="analytics-actions">
-          <button type="button" onClick={() => setDate(tonight ? latestCompleted : currentDay.data!.businessDate)}
-            disabled={!currentDay.data || (!tonight && nightHasEnded(currentDay.data.businessDate, currentDay.data.serverNow))}
-            className="analytics-button">
-            {tonight ? 'Last completed night' : 'Tonight so far'}
-          </button>
-          <input type="date" aria-label="Business day" value={shownDate} max={currentDay.data?.businessDate}
-            onInput={(event) => setDate(event.currentTarget.value)}
-            className="analytics-button" />
-          <Link className="analytics-button analytics-button-primary" to={`/admin/reports?from=${shownDate}&to=${shownDate}`}>View report</Link>
+        <div className="dashboard-date-heading">
+          <div className="dashboard-date-control" role="group" aria-label="Business night">
+            <button type="button" aria-label="Previous night" disabled={!shownDate} onClick={() => setDate(shiftDay(shownDate, -1))}>‹</button>
+            <input type="date" aria-label="Business night date" value={shownDate} max={currentDay.data?.businessDate}
+              disabled={!currentDay.data} onChange={(event) => setDate(event.currentTarget.value)} />
+            <button type="button" aria-label="Next night" disabled={!shownDate || shownDate >= (currentDay.data?.businessDate ?? '')}
+              onClick={() => setDate(shiftDay(shownDate, 1))}>›</button>
+          </div>
+          <span className="text-label text-text-dim" role="status">
+            {shownDate ? `${weekdayOf(shownDate)} · ${tonight ? 'in progress since 10am' : 'complete'}` : 'Loading business night…'}
+          </span>
         </div>
       </div>
-      {currentDay.isError && <p role="alert">The business clock is unavailable. Refresh to try again.</p>}
+      <HowWorkedOut id={definitionsId} against={data?.comparedTo ? `last ${weekdayOf(data.comparedTo)}` : 'last week'} />
+      {currentDay.isError && <Banner tone="danger">The business clock is unavailable. Refresh to try again.</Banner>}
+      {report.isError && <Banner tone="danger">{messageOf(report.error)}</Banner>}
 
       {report.isPending ? (
         <AnalyticsLoading label="Loading the night…" />
@@ -127,14 +143,15 @@ export function DashboardPage() {
           data={data}
           tonight={tonight}
           notCheckedOut={unsettled.data?.length ?? 0}
-          uncountedNights={uncounted.data?.length ?? 0}
+          uncountedNights={uncounted.data?.filter(day => day.businessDate !== shownDate).length ?? 0}
+          oldestUncounted={uncounted.data?.filter(day => day.businessDate !== shownDate).map(day => day.businessDate).sort()[0]}
           cashCount={cashCount.data ?? null}
           cashLoading={cashCount.isPending}
           cashError={cashCount.isError}
           checksError={unsettled.isError || uncounted.isError}
           trend={
-            <AnalyticsPanel title="How are sales changing?" subtitle="This week through the selected day · Monday start">
-              {trend.data ? <SalesByNight days={trend.data.byDay} breakEven={null} /> :
+            <AnalyticsPanel title="Sales this week">
+              {trend.data ? <SalesByNight days={trend.data.byDay} breakEven={null} showBestNight={!tonight} /> :
                 <p role="status" className="analytics-note">{trend.isError ? 'The weekly trend could not be loaded.' : 'Loading weekly sales…'}</p>}
             </AnalyticsPanel>
           }
@@ -150,8 +167,7 @@ export function DashboardPage() {
           onClose={() => setOpenLoss(null)}
         />
       ) : null}
-      </div>
-    </AdminPage>
+    </div>
   );
 }
 
@@ -160,6 +176,7 @@ function Night({
   tonight,
   notCheckedOut,
   uncountedNights,
+  oldestUncounted,
   cashCount,
   cashLoading,
   cashError,
@@ -172,6 +189,7 @@ function Night({
   tonight: boolean;
   notCheckedOut: number;
   uncountedNights: number;
+  oldestUncounted?: string;
   cashCount: CashCount | null;
   cashLoading: boolean;
   cashError: boolean;
@@ -186,52 +204,25 @@ function Night({
   const heldTables = [...data.tableUtilisation].sort((a, b) => b.occupiedMinutes - a.occupiedMinutes);
   const cash = cashStatus(cashCount, tonight, cashLoading, cashError);
 
-  const attention = (
-    <Attention
-      lowStock={data.lowStock}
-      notCheckedOut={notCheckedOut}
-      uncountedNights={uncountedNights}
-      outstanding={data.outstanding}
-      unsettledTonight={data.unsettledTonight}
-    />
-  );
-
-  const clause = comparedClause(
-    describeChange({ now: totals.gross, before: previous.gross, against }),
-    against,
-  );
-
   return (
     <div className="flex flex-col gap-3">
       <div className="analytics-stats">
-        <Stat primary label="Sales" value={formatPesos(totals.gross)}
+        <Stat label="Sales" value={formatPesos(totals.gross)}
           comparison={tonight || totals.bills === 0 ? undefined : { now: totals.gross, before: previous.gross, against }}
-          note="Closed bills, including sales left unpaid" />
-        <Stat label="Collected" value={formatPesos(payments)} note="Payments actually taken on this night" />
+          />
+        <Stat label="Collected" value={formatPesos(payments)} />
         <Stat label="After cost of goods" value={formatPesos(totals.profit)}
           comparison={tonight || totals.bills === 0 ? undefined : { now: totals.profit, before: previous.profit, against }}
-          note="Sales − recorded product costs" />
-        <Stat label="Closed bills" value={totals.bills.toLocaleString('en-PH')} note="Table bills and quick sales" />
+          />
+        <Stat label="Closed bills" value={totals.bills.toLocaleString('en-PH')} />
       </div>
-      {attention}
-      <Link to={`/end-of-day?date=${data.businessDate}`} className={`text-body ${cash.danger ? 'text-danger' : 'text-text'} underline decoration-dotted`}>
-        {cash.text}{cash.amount !== undefined ? formatPesos(cash.amount) : ''}
-      </Link>
-      {checksError && <p role="status" className="text-danger">Some unpaid-bill or close-out checks are unavailable.</p>}
-      <p className="max-w-prose text-body text-text">
-        {totals.bills} closed {totals.bills === 1 ? 'bill' : 'bills'}; {formatPesos(data.unsettledTonight.amount)} left unpaid on this night
-        {data.collectedToday.amount > 0 ? `; collections include ${formatPesos(data.collectedToday.amount)} from older bills` : ''}
-        {!tonight && totals.bills > 0 && clause ? `; sales ${clause}` : ''}.
-      </p>
-      <p className="text-body text-text">
-        Paid out {formatPesos(data.expenses.total)}{data.expenses.byCategory.length ? ` · ${data.expenses.byCategory.map(row => row.category).join(', ')}` : ''}
-      </p>
+      <Attention data={data} cash={cash} notCheckedOut={notCheckedOut} uncountedNights={uncountedNights}
+        oldestUncounted={oldestUncounted} checksError={checksError} />
 
-      <div className="analytics-grid">
+      <div className="analytics-grid analytics-grid-equal">
         {trend}
         <AnalyticsPanel
           title="Where did the sales come from?"
-          subtitle="Table time and products, reconciled to total sales"
         >
           {subtotal > 0 && (
             <div className="analytics-split" aria-hidden>
@@ -268,15 +259,11 @@ function Night({
               <strong>{formatPesos(totals.gross)}</strong>
             </div>
           </div>
-          <p className="analytics-note">
-            Table and product amounts are before bill-level discounts and vouchers.
-          </p>
         </AnalyticsPanel>
       </div>
       <div className="analytics-grid analytics-grid-equal">
         <AnalyticsPanel
           title="Which tables were used most?"
-          subtitle="Hours held on closed bills · includes pauses"
         >
           <RankedBars
             empty="No table time on closed bills for this day."
@@ -292,7 +279,6 @@ function Night({
         </AnalyticsPanel>
         <AnalyticsPanel
           title="What are customers buying?"
-          subtitle="Top products by sales · before bill-level discounts"
         >
           <RankedBars
             rows={data.topItems
@@ -306,15 +292,11 @@ function Night({
           />
         </AnalyticsPanel>
       </div>
-      <div className="analytics-grid">
+      <div className="analytics-grid analytics-grid-equal">
         <AnalyticsPanel
           title="When were sales closed?"
-          subtitle="Sales by checkout hour · Asia/Manila"
         >
           <HourChart hours={data.salesByHour} />
-          <p className="analytics-note">
-            Checkout time shows when a bill closed, not when a table session started.
-          </p>
         </AnalyticsPanel>
         <AnalyticsPanel
           title="How did customers pay?"
@@ -330,9 +312,6 @@ function Night({
                 detail: `${row.payments} ${row.payments === 1 ? 'payment' : 'payments'}${payments > 0 ? ` · ${((row.amount / payments) * 100).toFixed(1)}% of collections` : ''}`,
               }))}
           />
-          <p className="analytics-note">
-            Collections can include older debts and exclude bills left unpaid.
-          </p>
           {data.collectedToday.count > 0 && (
             <p className="analytics-note">
               Includes {formatPesos(data.collectedToday.amount)} collected against earlier sales.
@@ -357,84 +336,54 @@ function Night({
           <PerEmployee rows={data.perEmployee} />
         </Disclosure>
       </section>
-      <HowWorkedOut against={against} />
     </div>
   );
 }
 
-/**
- * The actionable band. Each row names the thing to do and links to where it gets done. When
- * there is nothing, the band does not render — an empty band trains the eye to skip the
- * place that matters on the night it is not empty.
- */
-function Attention({
-  lowStock,
-  notCheckedOut,
-  uncountedNights,
-  outstanding,
-  unsettledTonight,
-}: {
-  lowStock: { name: string; qtyOnHand: number }[];
+/** One banner for the selected night's close-out and current follow-up work. */
+function Attention({ data, cash, notCheckedOut, uncountedNights, oldestUncounted, checksError }: {
+  data: DailyReport;
+  cash: ReturnType<typeof cashStatus>;
   notCheckedOut: number;
   uncountedNights: number;
-  /** Every debt still open, across all dates. A live figure, not a fact about this night. */
-  outstanding: { count: number; amount: number };
-  unsettledTonight: { count: number; amount: number };
+  oldestUncounted?: string;
+  checksError: boolean;
 }) {
   const items: { key: string; text: string; to: string; action: string }[] = [];
-
-  if (uncountedNights > 0) {
-    items.push({
-      key: 'uncounted',
-      text: `${uncountedNights} ${uncountedNights === 1 ? 'night was' : 'nights were'} never counted`,
-      to: '/end-of-day',
-      action: uncountedNights === 1 ? 'Count it' : 'Count them',
-    });
-  }
-  if (notCheckedOut > 0) {
-    items.push({
-      key: 'not-checked-out',
-      text: `${notCheckedOut} ${notCheckedOut === 1 ? 'bill was' : 'bills were'} never checked out`,
-      to: '/end-of-day',
-      action: 'See them',
-    });
-  }
-  if (outstanding.count > 0) {
-    items.push({
-      key: 'owed',
-      text: `${formatPesos(outstanding.amount)} owed across ${outstanding.count} ${outstanding.count === 1 ? 'bill' : 'bills'}${
-        unsettledTonight.count > 0 ? `, ${formatPesos(unsettledTonight.amount)} of it from this night` : ''
-      }`,
-      to: '/unsettled',
-      action: 'Chase it',
-    });
-  }
-  if (lowStock.length > 0) {
-    items.push({
-      key: 'stock',
-      text: `Low stock: ${lowStock.map((line) => `${line.name} (${line.qtyOnHand})`).join(', ')}`,
-      to: '/admin/stock',
-      action: 'View stock',
-    });
-  }
-
-  if (items.length === 0) return null;
-
+  if (uncountedNights > 0) items.push({ key: 'uncounted',
+    text: `${uncountedNights} other ${uncountedNights === 1 ? 'night needs' : 'nights need'} a drawer count`,
+    to: `/end-of-day${oldestUncounted ? `?date=${oldestUncounted}` : ''}`, action: 'Count the drawer' });
+  if (notCheckedOut > 0) items.push({ key: 'checkout',
+    text: `${notCheckedOut} ${notCheckedOut === 1 ? 'bill needs' : 'bills need'} checkout`,
+    to: '/end-of-day', action: 'Finish checkout' });
+  if (data.outstanding.count > 0) items.push({ key: 'owed',
+    text: `${formatPesos(data.outstanding.amount)} owed across ${data.outstanding.count} ${data.outstanding.count === 1 ? 'bill' : 'bills'}${data.unsettledTonight.count > 0 ? ` · ${formatPesos(data.unsettledTonight.amount)} from this night` : ''}`,
+    to: '/unsettled', action: 'Chase unpaid' });
+  if (data.lowStock.length > 0) items.push({ key: 'stock',
+    text: `Low stock: ${data.lowStock.map(line => `${line.name} (${line.qtyOnHand})`).join(', ')}`,
+    to: '/admin/stock', action: 'View stock' });
+  const needsAttention = cash.danger || items.length > 0 || checksError;
   return (
-    <section
-      aria-label="Needs attention"
-      className="rounded-xl border border-border border-l-4 border-l-danger bg-surface px-5 py-2"
-    >
-      <ul className="divide-y divide-border">
-        {items.map((item) => (
-          <li key={item.key} className="flex items-center justify-between gap-3 py-1">
-            <span className="min-w-0 flex-1 text-body text-danger">{item.text}</span>
-            <Link to={item.to} className="hit inline-flex shrink-0 items-center text-body text-info underline">
-              {item.action}
-            </Link>
-          </li>
-        ))}
-      </ul>
+    <section aria-label="Night check" className={`dashboard-attention ${needsAttention ? 'dashboard-attention-needed' : ''}`}>
+      <h2>Night check</h2>
+      <div className="dashboard-attention-row">
+        <div>
+          <p className={cash.danger ? 'text-danger font-semibold' : 'font-semibold'}>
+            {cash.text}{cash.amount !== undefined ? formatPesos(cash.amount) : ''}
+          </p>
+          <p className="mt-1 text-body text-text-dim">
+            {data.totals.bills} closed {data.totals.bills === 1 ? 'bill' : 'bills'} · Paid out {formatPesos(data.expenses.total)}
+            {data.expenses.byCategory.length > 0 ? ` · ${data.expenses.byCategory.map(row => row.category).join(', ')}` : ''}
+          </p>
+        </div>
+        <Link to={`/end-of-day?date=${data.businessDate}`}>
+          {cash.text === 'Cash balanced' ? 'View drawer count' : 'Count the drawer'}
+        </Link>
+      </div>
+      {items.map(item => <div key={item.key} className="dashboard-attention-row">
+        <p>{item.text}</p><Link to={item.to}>{item.action}</Link>
+      </div>)}
+      {checksError && <p role="status" className="mt-3 text-danger">Some unpaid-bill or close-out checks are unavailable.</p>}
     </section>
   );
 }
@@ -585,10 +534,15 @@ function PerEmployee({ rows }: { rows: DailyReport['perEmployee'] }) {
 }
 
 /** The one place a definition lives. Everything above shows a figure and nothing else. */
-function HowWorkedOut({ against }: { against: string }) {
+function HowWorkedOut({ against, id }: { against: string; id: string }) {
   return (
-    <Disclosure title="How these numbers are worked out">
+    <div id={id} popover="auto" role="dialog" aria-label="How these numbers are worked out" className="dashboard-definitions">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <h2 className="text-heading">How these numbers are worked out</h2>
+        <button type="button" popoverTarget={id} popoverTargetAction="hide" aria-label="Close definitions" className="hit w-11 shrink-0 rounded-lg hover:bg-raised">×</button>
+      </div>
       <dl className="grid gap-x-8 gap-y-3 text-body md:grid-cols-[max-content_1fr]">
+        <Definition term="Sales this week">Monday through the selected night, including the current night if selected.</Definition>
         <Definition term="Sales">
           Every bill closed on the night, including ones left unpaid. Voided lines are left out.
         </Definition>
@@ -597,7 +551,7 @@ function HowWorkedOut({ against }: { against: string }) {
         </Definition>
         <Definition term={`vs ${against}`}>
           The same weekday a week earlier — a Saturday is compared to a Saturday, never to a
-          Friday. Under one per cent either way reads as about the same.
+          Friday. Under one per cent either way reads as about the same. In-progress nights have no comparison.
         </Definition>
         <Definition term="The night">
           Runs from 10am to 5am. A sale at 2am belongs to the night before.
@@ -612,6 +566,9 @@ function HowWorkedOut({ against }: { against: string }) {
           Table time and products sold below the standard price, and what was voided. Comps are
           valued at today's average cost, so that one is an estimate; the rest are exact.
         </Definition>
+        <Definition term="Sales breakdown">Table time and product amounts are before bill-level discounts and vouchers, shown separately to reconcile to total sales.</Definition>
+        <Definition term="Top products">Ranked by sales before bill-level discounts.</Definition>
+        <Definition term="Sales by hour">Checkout time in Asia/Manila: when a bill closed, not when a table session started.</Definition>
         <Definition term="Per employee">Whoever took the payment.</Definition>
         <Definition term="Table use">
           Time the table was held, pauses included, out of the 19-hour night. Not what was
@@ -621,7 +578,7 @@ function HowWorkedOut({ against }: { against: string }) {
           Every unpaid bill across all nights, as of right now.
         </Definition>
       </dl>
-    </Disclosure>
+    </div>
   );
 }
 
