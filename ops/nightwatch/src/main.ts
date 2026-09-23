@@ -107,21 +107,28 @@ async function check(explicitDate: string | undefined, notify: (text: string) =>
             }
         };
 
-        // A dead app supersedes everything below: "not closed" is noise when the reason is that
-        // the system was not running to close it.
-        if (!(await appAnswers(appUrl))) {
-            await send(`Supreme Billiards: the POS did not answer at ${clock.manila_time}. `
-                + `The night of ${target.label} may not have been closed.`);
-            return 0;
-        }
-
         const branches = (await db.query<{ id: string; name: string }>(
             "SELECT id, name FROM branch WHERE is_active ORDER BY code")).rows;
         if (branches.length === 0) throw new Error("no active branch in the branch table — nothing to check");
 
+        // The night first, then the app, so a dead app is reported with what the database knows:
+        // "may not have been closed" about a night that closed at 02:15 is a false worry, and a
+        // false worry at 06:00 costs the same trust as a missed alarm.
+        const nights = [];
         for (const branch of branches) {
+            nights.push({ branch, night: await nightClosed(db, branch.id, target.business_date) });
+        }
+        const appUp = await appAnswers(appUrl);
+
+        for (const { branch, night } of nights) {
             const who = branches.length > 1 ? `Supreme Billiards (${branch.name})` : "Supreme Billiards";
-            const night = await nightClosed(db, branch.id, target.business_date);
+            if (!appUp) {
+                // A dead app replaces "not closed": the likely reason is that nothing was running.
+                await send(`${who}: the POS did not answer at ${clock.manila_time}. ` + (night.state === "closed"
+                    ? `The night of ${target.label} was closed normally at ${night.closedAt}.`
+                    : `The night of ${target.label} may not have been closed.`));
+                continue;
+            }
             switch (night.state) {
                 case "closed":
                     console.log(`${branch.name}: closed at ${night.closedAt} Manila, nothing to send`);

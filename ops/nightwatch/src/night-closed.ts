@@ -5,13 +5,13 @@ import type { ClientBase } from "pg";
 export type Night =
     | { state: "uncounted" }
     | { state: "counted-not-closed" }
-    | { state: "closed"; closedAt: string };
+    | { state: "closed"; closedAt: string }; // Manila HH:MM
 
 // The cash_count row is the day-end record (V3__cash_count_close.sql): a night is closed iff its
 // row exists with closed_at set. UNIQUE (branch_id, business_date) means zero rows or one.
 export async function nightClosed(db: ClientBase, branchId: string, businessDate: string): Promise<Night> {
     const { rows } = await db.query<{ closed_at: string | null }>(
-        `SELECT to_char(closed_at AT TIME ZONE 'Asia/Manila', 'YYYY-MM-DD HH24:MI') AS closed_at
+        `SELECT to_char(closed_at AT TIME ZONE 'Asia/Manila', 'HH24:MI') AS closed_at
            FROM cash_count
           WHERE branch_id = $1 AND business_date = $2::date`,
         [branchId, businessDate]);

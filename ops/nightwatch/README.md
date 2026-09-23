@@ -14,7 +14,8 @@ still report when the app is down.
 |---|---|---|
 | *the night of Tuesday 23 September was never closed. Nobody counted the drawer.* | No cash count exists for that night. Nobody did the end-of-day count, so nobody closed the day either. | Ask the closing staff. Count the drawer and close the day from Close day, today, before the 10:00 opening. |
 | *the night of … was counted but never closed.* | The drawer was counted, but nobody pressed the final close. | Open Close day and finish it. The count is already saved. |
-| *the POS did not answer at 06:00. The night of … may not have been closed.* | The app itself was down or unreachable. This message replaces the other two, because "not closed" means nothing when the system wasn't running. | Open the site. If it does not load, the server needs looking at (`docker compose ps` on the VPS). |
+| *the POS did not answer at 06:00. The night of … was closed normally at 02:15.* | The app is down now, but the night was closed before it went down. Nothing was lost. | Open the site before 10:00. If it does not load, the server needs looking at (`docker compose ps` on the VPS). |
+| *the POS did not answer at 06:00. The night of … may not have been closed.* | The app is down and the night was not closed. This message replaces the other two, because "not closed" means nothing when the system wasn't running. | Same as above, then close the night once the site is back. |
 | *the 06:00 night check could not run. Check the server.* | Nightwatch itself failed: usually the database was unreachable. It exits non-zero and the unit shows as failed. | `journalctl -u supreme-nightwatch` on the VPS shows the error. |
 
 **No message means the night was closed.** With more than one active branch, each message names
@@ -27,6 +28,8 @@ sent.
 
 - A night is closed when its `cash_count` row has `closed_at` set (V3). There are three
   outcomes: no row, a row that was counted but not closed, and a closed row.
+  It checks the night first and the app second, so an app-down message can say whether the
+  night was closed.
 - The night to check is `business_date_of(now())`, and the database computes it (V1). At 06:00
   that is the night that ended at 05:00. The program never computes a date or reads its own clock.
 - Without a date argument it runs only between 05:00 and 10:00 Manila. Before 05:00 the night is
