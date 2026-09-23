@@ -1,6 +1,8 @@
 package com.supremebilliardshall.billiards_hall_system.service.impl;
 
 import com.supremebilliardshall.billiards_hall_system.dto.product.ProductRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.stock.StockDeliveryRequestDTO;
+import com.supremebilliardshall.billiards_hall_system.dto.stock.StockDeliveryLineRequestDTO;
 import com.supremebilliardshall.billiards_hall_system.dto.product.ProductResponseDTO;
 import com.supremebilliardshall.billiards_hall_system.entity.Category;
 import com.supremebilliardshall.billiards_hall_system.entity.Product;
@@ -13,6 +15,7 @@ import com.supremebilliardshall.billiards_hall_system.repository.ProductReposito
 import com.supremebilliardshall.billiards_hall_system.security.BranchContext;
 import com.supremebilliardshall.billiards_hall_system.service.AuditService;
 import com.supremebilliardshall.billiards_hall_system.service.ProductService;
+import com.supremebilliardshall.billiards_hall_system.service.StockService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,17 +34,20 @@ public class ProductServiceImpl implements ProductService {
     private final ProductMapper productMapper;
     private final BranchContext branchContext;
     private final AuditService auditService;
+    private final StockService stockService;
 
     public ProductServiceImpl(ProductRepository productRepository,
                               CategoryRepository categoryRepository,
                               ProductMapper productMapper,
                               BranchContext branchContext,
-                              AuditService auditService) {
+                              AuditService auditService,
+                              StockService stockService) {
         this.productRepository = productRepository;
         this.categoryRepository = categoryRepository;
         this.productMapper = productMapper;
         this.branchContext = branchContext;
         this.auditService = auditService;
+        this.stockService = stockService;
     }
 
 
@@ -80,12 +86,22 @@ public class ProductServiceImpl implements ProductService {
         // A log that records edits but not creations implies a completeness it does not have.
         auditService.record("PRODUCT_CREATED", "product", savedProduct.getId(),
                 null, auditSnapshot(savedProduct), null);
+        if (productRequestDTO.getOpeningStock() != null) {
+            var opening = productRequestDTO.getOpeningStock();
+            // Joins this transaction: a failed delivery rolls back the product and its audit too.
+            stockService.receiveDelivery(new StockDeliveryRequestDTO(null, null, "Opening stock",
+                    List.of(new StockDeliveryLineRequestDTO(savedProduct.getId(),
+                            opening.getQuantity(), opening.getUnitCost()))));
+        }
         return toResponseDto(savedProduct);
     }
 
     @Override
     @Transactional
     public ProductResponseDTO updateProduct(UUID id, ProductRequestDTO productRequestDTO) {
+        if (productRequestDTO.getOpeningStock() != null) {
+            throw new BusinessRuleException("Opening stock is only for new products. Use Add stock to receive a delivery.");
+        }
         Product existing = productRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Product", id));
 

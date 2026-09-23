@@ -158,6 +158,7 @@ export interface ProductRequest {
   categoryId?: UUID;
   sellingPrice: Money;
   isActive?: boolean;
+  openingStock?: { quantity: number; unitCost: number };
 }
 
 export interface ProductImage {

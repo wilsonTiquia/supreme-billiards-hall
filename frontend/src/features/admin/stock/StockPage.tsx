@@ -1,21 +1,21 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchProductsAdmin } from '@/api/endpoints/products';
 import {
   fetchLowStock,
   recordComp,
   recordCorrection,
-  recordDelivery,
 } from '@/api/endpoints/stock';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
-import type { ProductAdmin, StockDeliveryRequest } from '@/api/types';
+import type { ProductAdmin } from '@/api/types';
 import { AdminPage } from '../AdminPage';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
 import { ProductPicker } from '@/components/ProductPicker';
 import { useToast } from '@/components/Toast';
+import { DeliveryForm } from './DeliveryForm';
 import { Spinner } from '@/components/Spinner';
 
 export function StockPage() {
@@ -49,7 +49,7 @@ export function StockPage() {
   return (
     <AdminPage
       title="Stock"
-      intro="Stock only ever moves through the ledger, and the ledger is append-only. A correction is a new compensating row, never an edit."
+      intro="Receive deliveries, correct shelf counts and record give-aways."
       error={error ?? (products.isError ? messageOf(products.error) : null)}
     >
       {products.isPending ? (
@@ -57,12 +57,15 @@ export function StockPage() {
           <Spinner label="Loading stock…" />
         </div>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <DeliveryForm
-            products={rows}
-            onError={fail}
-            onDone={() => refresh('Delivery recorded. Average costs have been recomputed.')}
-          />
+        <div className="grid items-start gap-6 lg:grid-cols-2">
+          <Card>
+            <h2 className="text-heading text-text">Receive a delivery</h2>
+            <DeliveryForm
+              products={rows}
+              onError={fail}
+              onDone={() => refresh('Delivery recorded. Average costs have been recomputed.')}
+            />
+          </Card>
           <div className="flex flex-col gap-6">
             <CorrectionForm
               products={rows}
@@ -106,115 +109,6 @@ export function StockPage() {
         )}
       </Card>
     </AdminPage>
-  );
-}
-
-/* ── Deliveries ─────────────────────────────────────────────────────────────── */
-
-function DeliveryForm({
-  products,
-  onError,
-  onDone,
-}: {
-  products: ProductAdmin[];
-  onError: (message: string) => void;
-  onDone: () => void;
-}) {
-  const [lines, setLines] = useState<{ productId: string; quantity: string; unitCost: string }[]>([
-    { productId: '', quantity: '', unitCost: '' },
-  ]);
-
-  const deliver = useMutation({
-    mutationFn: (body: StockDeliveryRequest) => recordDelivery(body),
-    onSuccess: () => {
-      setLines([{ productId: '', quantity: '', unitCost: '' }]);
-      onDone();
-    },
-    onError: (caught) => onError(messageOf(caught)),
-  });
-
-  const usable = lines.filter(
-    (line) => line.productId !== '' && line.quantity.trim() !== '' && line.unitCost.trim() !== '',
-  );
-
-  function handleSubmit(event: FormEvent) {
-    event.preventDefault();
-    if (usable.length === 0) return;
-    deliver.mutate({
-      lines: usable.map((line) => ({
-        productId: line.productId,
-        quantity: Number(line.quantity),
-        unitCost: Number(line.unitCost),
-      })),
-    });
-  }
-
-  return (
-    <Card>
-      <h2 className="text-heading text-text">Receive a delivery</h2>
-      <p className="mt-1 text-body text-text-dim">
-        Each line's unit cost feeds the moving weighted average, which is what profit is
-        measured against.
-      </p>
-
-      <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-4">
-        {lines.map((line, index) => (
-          <div key={index} className="rounded-lg border border-border p-3">
-            <ProductPicker
-              label={`Line ${index + 1}`}
-              products={products}
-              value={line.productId}
-              onChange={(productId) =>
-                setLines((current) =>
-                  current.map((l, i) => (i === index ? { ...l, productId } : l)),
-                )
-              }
-            />
-            <div className="mt-3 grid grid-cols-2 gap-3">
-              <Field
-                label="Quantity"
-                type="number"
-                step="0.001"
-                min="0"
-                value={line.quantity}
-                onChange={(event) =>
-                  setLines((current) =>
-                    current.map((l, i) => (i === index ? { ...l, quantity: event.target.value } : l)),
-                  )
-                }
-              />
-              <Field
-                label="Unit cost"
-                type="number"
-                step="0.01"
-                min="0"
-                value={line.unitCost}
-                onChange={(event) =>
-                  setLines((current) =>
-                    current.map((l, i) => (i === index ? { ...l, unitCost: event.target.value } : l)),
-                  )
-                }
-              />
-            </div>
-          </div>
-        ))}
-
-        <div className="flex justify-between gap-3">
-          <Button
-            type="button"
-            variant="secondary"
-            onClick={() =>
-              setLines((current) => [...current, { productId: '', quantity: '', unitCost: '' }])
-            }
-          >
-            Add a line
-          </Button>
-          <Button type="submit" pending={deliver.isPending} disabled={usable.length === 0}>
-            Record delivery
-          </Button>
-        </div>
-      </form>
-    </Card>
   );
 }
 

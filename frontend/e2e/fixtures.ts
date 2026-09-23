@@ -217,7 +217,7 @@ export const test = base.extend<{ signIn: (who: typeof OWNER) => Promise<void> }
       await page.context().clearCookies();
       await page.goto('/login');
       await page.getByLabel('Username').fill(who.username);
-      await page.getByLabel('Password').fill(who.password);
+      await page.getByLabel('Password', { exact: true }).fill(who.password);
       await page.getByRole('button', { name: 'Sign in' }).click();
       await expect(page).not.toHaveURL(/\/login/);
     });
