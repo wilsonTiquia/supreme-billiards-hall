@@ -10,7 +10,7 @@
     "typecheck": "tsc -b --noEmit",
     "e2e": "playwright test",
     "e2e:headed": "playwright test --headed",
-    "test:reports": "node --test tests/reportData.test.mjs"
+    "test:reports": "node --test tests/report*.test.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.62.0",

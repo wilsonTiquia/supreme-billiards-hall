@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode, type ComponentProps } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { fetchPeriodReport } from '@/api/endpoints/reports';
@@ -19,7 +19,10 @@ import {
   Stat,
 } from '../analytics/Analytics';
 import { ReportExplorer } from './ReportExplorer';
-import { downloadReport, reportDataset, rangeError } from './reportData';
+import { initialView, type ExplorerView } from './reportView';
+import { ReportExport } from './ReportExport';
+import './reports.css';
+import { rangeError } from './reportData';
 import { formatPesos } from '@/lib/money';
 import { formatHours } from '@/lib/datetime';
 import { SalesByNight } from './SalesByNight';
@@ -47,14 +50,21 @@ export function ReportsPage() {
   const [params, setParams] = useSearchParams();
   const from = params.get('from') ?? '';
   const to = params.get('to') ?? '';
+  const [view, setView] = useState<ExplorerView>(initialView);
   const [draftFrom, setDraftFrom] = useState(from);
   const [draftTo, setDraftTo] = useState(to);
   useEffect(() => {
     setDraftFrom(from);
     setDraftTo(to);
+    setView((old) => ({ ...old, page: 1 }));
   }, [from, to]);
   const invalidRange = from || to ? rangeError(from, to) : null;
   const draftError = rangeError(draftFrom, draftTo);
+  const changeRange = (nextFrom: string, nextTo: string) => {
+    setDraftFrom(nextFrom);
+    setDraftTo(nextTo);
+    if (!rangeError(nextFrom, nextTo)) setParams({ from: nextFrom, to: nextTo });
+  };
 
   const currentDay = useQuery({
     queryKey: queryKeys.businessDayCurrent,
@@ -82,6 +92,7 @@ export function ReportsPage() {
   const selected = current && from && to ? presetOf(from, to, current) : null;
 
   return (
+    <div className="reports-page">
     <AdminPage
       title="Reports"
       intro="Understand what drives your business."
@@ -102,7 +113,11 @@ export function ReportsPage() {
                 key={preset.key}
                 type="button"
                 disabled={!current}
-                onClick={() => current && setParams(presetRange(preset.key, current))}
+                onClick={() => {
+                  if (!current) return;
+                  const range = presetRange(preset.key, current);
+                  changeRange(range.from, range.to);
+                }}
                 aria-pressed={selected === preset.key}
                 className={`hit rounded-full border px-4 text-label transition ${
                   selected === preset.key
@@ -114,54 +129,25 @@ export function ReportsPage() {
               </button>
             ))}
           </div>
-          <div className="analytics-actions">
-            <input
+          <div className="analytics-actions reports-range-actions">
+            <div className="reports-range" role="group" aria-label="Report date range">
+            <label><span>From</span><input
               type="date"
               aria-label="From"
               value={draftFrom}
-              max={draftTo || undefined}
-              onInput={(event) => setDraftFrom(event.currentTarget.value)}
+              onInput={(event) => changeRange(event.currentTarget.value, draftTo)}
               className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
             />
-            <span className="text-label text-text-dim">to</span>
+            </label><span className="reports-range-separator" aria-hidden>–</span><label><span>To</span>
             <input
               type="date"
               aria-label="To"
               value={draftTo}
-              min={draftFrom || undefined}
-              onInput={(event) => setDraftTo(event.currentTarget.value)}
+              onInput={(event) => changeRange(draftFrom, event.currentTarget.value)}
               className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
             />
-            <button
-              type="button"
-              className="analytics-button analytics-button-primary"
-              disabled={Boolean(draftError) || (draftFrom === from && draftTo === to)}
-              onClick={() => setParams({ from: draftFrom, to: draftTo })}
-            >
-              Apply dates
-            </button>
-            <button
-              type="button"
-              onClick={() => window.print()}
-              disabled={!data}
-              className="hit rounded-lg border border-border bg-surface px-4 text-label text-text disabled:opacity-50"
-            >
-              Print / Save PDF
-            </button>
-            <button
-              type="button"
-              className="analytics-button"
-              disabled={!data || report.isFetching || report.isError}
-              onClick={() =>
-                data &&
-                downloadReport(
-                  reportDataset(data, 'sales'),
-                  `supreme-sales-${data.from}-to-${data.to}.csv`,
-                )
-              }
-            >
-              ↓ Sales CSV
-            </button>
+            </label></div>
+            <ReportExport data={data} view={view} disabled={!data || report.isFetching || report.isError || Boolean(draftError)} />
             <button
               type="button"
               className="analytics-button"
@@ -178,12 +164,12 @@ export function ReportsPage() {
 
         {draftError && (draftFrom !== from || draftTo !== to) && (
           <p role="status" className="text-danger text-body">
-            {draftError}
+            {draftError} The report below keeps the last valid range.
           </p>
         )}
         {invalidRange ? (
           <EmptyState title="Select a valid date range">
-            Update the dates above and choose Apply dates.
+            Update the dates above. A valid range applies automatically.
           </EmptyState>
         ) : !from || !to || report.isPending ? (
           currentDay.isError && (!from || !to) ? (
@@ -200,15 +186,16 @@ export function ReportsPage() {
                 Showing the last successful report. Refresh before relying on these figures.
               </p>
             )}
-            <Report data={data} />
+            <Report data={data} view={view} onViewChange={setView} />
           </>
         )}
       </div>
     </AdminPage>
+    </div>
   );
 }
 
-function Report({ data }: { data: PeriodReport }) {
+function Report({ data, view, onViewChange }: { data: PeriodReport; view: ExplorerView; onViewChange: (view: ExplorerView) => void }) {
   const { headline, previousHeadline: previous, breakEven, cash } = data;
   const period = formatRange(data.from, data.to);
   // "vs July", not "vs July 2026", when the year is the same one: the year is on the line
@@ -417,12 +404,12 @@ function Report({ data }: { data: PeriodReport }) {
           />
         </AnalyticsPanel>
       </div>
-      <ReportExplorer key={`${data.from}-${data.to}`} data={data} />
+      <ReportExplorer data={data} view={view} onViewChange={onViewChange} />
       {/* Supporting financial details also expand when printed. */}
       <section>
-        <h2 className="analytics-eyebrow mb-3">Financial detail & controls</h2>
+        <h2 className="reports-section-title mb-4">Financial detail & controls</h2>
 
-        <Disclosure
+        <ReportDetail
           title="Bills and averages"
           summary={`${headline.bills.toLocaleString('en-PH')} bills over ${headline.tradingDays} trading ${headline.tradingDays === 1 ? 'day' : 'days'}`}
         >
@@ -469,9 +456,9 @@ function Report({ data }: { data: PeriodReport }) {
                 : `${previous.grossMarginPercent}% ${against}`}
             </p>
           </FigureRow>
-        </Disclosure>
+        </ReportDetail>
 
-        <Disclosure
+        <ReportDetail
           title="Day of week"
           summary={
             strongestDay?.avgGross == null
@@ -506,15 +493,15 @@ function Report({ data }: { data: PeriodReport }) {
               };
             })}
           />
-        </Disclosure>
+        </ReportDetail>
 
         <div className="hidden print:block" data-print-report-detail>
-          <Disclosure title="Every night" summary={plural(data.byDay.length, 'night')}>
+          <ReportDetail title="Every night" summary={plural(data.byDay.length, 'night')}>
             <EveryNight days={data.byDay} />
-          </Disclosure>
+          </ReportDetail>
         </div>
 
-        <Disclosure
+        <ReportDetail
           title="Sales by hour"
           summary={(() => {
             const busiest = data.byHour.reduce(
@@ -525,13 +512,13 @@ function Report({ data }: { data: PeriodReport }) {
           })()}
         >
           <HourChart hours={data.byHour} />
-        </Disclosure>
+        </ReportDetail>
       </section>
 
       {/* 5 — WHAT IT COST TO BE OPEN, and the rest. A new page when printed. */}
       <section className="-mt-6 print:break-before-page">
         <div className="hidden print:block" data-print-report-detail>
-          <Disclosure
+          <ReportDetail
             title="Expenses"
             summary={
               data.expensesByCategory.length === 0
@@ -563,11 +550,11 @@ function Report({ data }: { data: PeriodReport }) {
                 ]}
               />
             )}
-          </Disclosure>
+          </ReportDetail>
         </div>
 
         <div className="hidden print:block" data-print-report-detail>
-          <Disclosure
+          <ReportDetail
             title="Tables"
             summary={
               weakestTable
@@ -590,11 +577,11 @@ function Report({ data }: { data: PeriodReport }) {
                 ],
               }))}
             />
-          </Disclosure>
+          </ReportDetail>
         </div>
 
         <div className="hidden print:block" data-print-report-detail>
-          <Disclosure
+          <ReportDetail
             title="Products"
             summary={
               data.products.length === 0
@@ -624,11 +611,11 @@ function Report({ data }: { data: PeriodReport }) {
                 }))}
               />
             )}
-          </Disclosure>
+          </ReportDetail>
         </div>
 
         {data.expensesByMonth.rows.length > 0 && (
-          <Disclosure title="Expense history — six months" summary="By month and category">
+          <ReportDetail title="Expense history — six months" summary="By month and category">
             <div>
               <Table
                 head={['Category', ...data.expensesByMonth.months.map(formatMonth), 'Total']}
@@ -651,10 +638,10 @@ function Report({ data }: { data: PeriodReport }) {
                 ]}
               />
             </div>
-          </Disclosure>
+          </ReportDetail>
         )}
         {data.unsoldProducts.length > 0 && (
-          <Disclosure
+          <ReportDetail
             title="Unsold stock"
             summary={`${data.unsoldProducts.length} products still on the shelf`}
           >
@@ -672,10 +659,10 @@ function Report({ data }: { data: PeriodReport }) {
                 }))}
               />
             </div>
-          </Disclosure>
+          </ReportDetail>
         )}
 
-        <Disclosure
+        <ReportDetail
           title="Given away"
           summary={`${formatPesos(data.givenAway.total)}${
             data.givenAway.percentOfGross === null
@@ -720,9 +707,9 @@ function Report({ data }: { data: PeriodReport }) {
               value={formatPesos(data.givenAway.compEstimatedCost)}
             />
           </div>
-        </Disclosure>
+        </ReportDetail>
 
-        <Disclosure
+        <ReportDetail
           title="Drawer"
           summary={`${cash.varianceTotal > 0 ? '+' : cash.varianceTotal < 0 ? '−' : ''}${formatPesos(Math.abs(cash.varianceTotal))} over ${cash.countedNights} counted ${cash.countedNights === 1 ? 'night' : 'nights'}`}
           tone={cash.varianceTotal < 0 ? 'danger' : undefined}
@@ -738,9 +725,9 @@ function Report({ data }: { data: PeriodReport }) {
             value={String(cash.uncountedTradingDays)}
             dim={cash.uncountedTradingDays === 0}
           />
-        </Disclosure>
+        </ReportDetail>
 
-        <Disclosure
+        <ReportDetail
           title="Still owed"
           summary={owed === 0 ? 'Nothing' : `${formatPesos(owedAmount)} · ${plural(owed, 'bill')}`}
           tone={owed > 0 ? 'danger' : undefined}
@@ -757,10 +744,10 @@ function Report({ data }: { data: PeriodReport }) {
             label={`Older · ${plural(cash.unsettled.older.count, 'bill')}`}
             value={formatPesos(cash.unsettled.older.amount)}
           />
-        </Disclosure>
+        </ReportDetail>
       </section>
 
-      <Disclosure title="How these numbers are worked out">
+      <ReportDetail title="How these numbers are worked out">
         <dl className="grid gap-x-8 gap-y-3 text-body md:grid-cols-[max-content_1fr]">
           <Definition term="Sales">
             Every bill closed in the period, including ones left unpaid. Voided lines are left out.
@@ -808,7 +795,7 @@ function Report({ data }: { data: PeriodReport }) {
             collected.
           </Definition>
         </dl>
-      </Disclosure>
+      </ReportDetail>
     </div>
   );
 }
@@ -994,4 +981,8 @@ function percent(value: number | null): string {
 
 function plural(count: number, noun: string): string {
   return `${count} ${count === 1 ? noun : `${noun}s`}`;
+}
+
+function ReportDetail(props: ComponentProps<typeof Disclosure>) {
+  return <div className="reports-detail"><Disclosure {...props} /></div>;
 }

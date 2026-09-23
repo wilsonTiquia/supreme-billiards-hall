@@ -1,15 +1,9 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import type { PeriodReport } from '@/api/types';
 import { formatMoney } from '@/lib/money';
 import { AnalyticsPanel, EmptyState } from '../analytics/Analytics';
-import {
-  downloadReport,
-  reportDataset,
-  type Grouping,
-  type ReportCell,
-  type ReportKind,
-} from './reportData';
+import type { Grouping, ReportCell, ReportKind } from './reportData';
+import { reportView, PAGE_SIZE, type ExplorerView } from './reportView';
 
 const REPORTS: { key: ReportKind; label: string }[] = [
   { key: 'sales', label: 'Sales' },
@@ -34,30 +28,17 @@ function display(value: ReportCell, header: string): string {
   return `${value.toLocaleString('en-PH', { maximumFractionDigits: header === 'Quantity sold' ? 3 : 2 })}${header.includes('(%)') ? '%' : ''}`;
 }
 
-export function ReportExplorer({ data }: { data: PeriodReport }) {
-  const [kind, setKind] = useState<ReportKind>('sales');
-  const [grouping, setGrouping] = useState<Grouping>('day');
-  const [search, setSearch] = useState('');
-  const [sort, setSort] = useState('source');
+export function ReportExplorer({ data, view, onViewChange }: {
+  data: PeriodReport; view: ExplorerView; onViewChange: (view: ExplorerView) => void;
+}) {
+  const navigate = useNavigate();
+  const { kind, grouping, search, sort } = view;
+  const update = (change: Partial<ExplorerView>) => onViewChange({ ...view, page: 1, ...change });
   const belowCost = data.products.filter((product) => product.margin <= 0).length;
   const weakestTable = data.tables.find((table) => table.occupiedMinutes > 0);
-  const dataset = reportDataset(data, kind, grouping);
-  const rows = dataset.rows.filter((row) =>
-    String(row[0]).toLowerCase().includes(search.trim().toLowerCase()),
-  );
-  if (sort !== 'source') {
-    const index = kind === 'sales' || kind === 'products' ? 2 : kind === 'tables' ? 3 : 1;
-    rows.sort((a, b) =>
-      sort === 'name'
-        ? String(a[0]).localeCompare(String(b[0]))
-        : Number(b[index]) - Number(a[index]),
-    );
-  }
-  const download = () =>
-    downloadReport(
-      { headers: dataset.headers, rows },
-      `supreme-${kind}-${data.from}-to-${data.to}.csv`,
-    );
+  const dataset = reportView(data, view);
+  const { rows, visibleRows, page, pages, searchable } = dataset;
+  const daily = kind === 'sales' && grouping === 'day';
   return (
     <AnalyticsPanel
       title="Explore the numbers"
@@ -71,9 +52,7 @@ export function ReportExplorer({ data }: { data: PeriodReport }) {
             key={report.key}
             aria-pressed={kind === report.key}
             onClick={() => {
-              setKind(report.key);
-              setSearch('');
-              setSort('source');
+              update({ kind: report.key, search: '', sort: 'source' });
             }}
           >
             {report.label}
@@ -88,41 +67,36 @@ export function ReportExplorer({ data }: { data: PeriodReport }) {
               <select
                 aria-label="Group sales by"
                 value={grouping}
-                onChange={(event) => setGrouping(event.target.value as Grouping)}
+                onChange={(event) => update({ grouping: event.target.value as Grouping })}
               >
                 <option value="day">Day</option>
                 <option value="week">Week</option>
                 <option value="month">Month</option>
               </select>
             </label>
-          ) : (
+          ) : null}
+          {searchable && (
             <input
               type="search"
               aria-label={`Filter ${kind}`}
               placeholder={`Search ${kind === 'expenses' ? 'categories' : kind}…`}
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={(event) => update({ search: event.target.value })}
             />
           )}
           <select
             aria-label="Sort report"
             value={sort}
-            onChange={(event) => setSort(event.target.value)}
+            onChange={(event) => update({ sort: event.target.value as ExplorerView['sort'] })}
           >
             <option value="source">Default order</option>
             <option value="amount">Highest amount</option>
             <option value="name">Name / date</option>
           </select>
         </div>
-        <button className="analytics-button" onClick={download} disabled={!rows.length}>
-          ↓ Export {kind} CSV
-        </button>
       </div>
       <p className="analytics-note">
-        {NOTES[kind]}{' '}
-        {kind === 'sales' &&
-          grouping === 'day' &&
-          'Open a date to view settled receipts; bills left unpaid appear under Unsettled.'}
+        {NOTES[kind]}
       </p>
       {kind === 'products' && belowCost > 0 && (
         <p className="mt-2 text-sm text-danger">
@@ -155,37 +129,41 @@ export function ReportExplorer({ data }: { data: PeriodReport }) {
                     {header.replace(' (PHP)', '')}
                   </th>
                 ))}
+                {daily && <th scope="col"><span className="sr-only">View sales</span></th>}
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, i) => (
+              {visibleRows.map((row, i) => (
                 <tr
                   key={`${row[0]}-${i}`}
-                  className={kind === 'products' && Number(row[4]) <= 0 ? 'text-danger' : undefined}
+                  className={daily ? 'reports-night-row' : kind === 'products' && Number(row[4]) <= 0 ? 'text-danger' : undefined}
+                  onClick={daily ? (event) => {
+                    if (!(event.target as Element).closest('a')) navigate(`/admin/sales?date=${row[0]}`);
+                  } : undefined}
                 >
                   {row.map((cell, index) => (
                     <td key={index}>
-                      {kind === 'sales' && grouping === 'day' && index === 0 ? (
-                        <Link
-                          className="text-info underline underline-offset-4"
-                          to={`/admin/sales?date=${cell}`}
-                        >
-                          {String(cell)}
-                        </Link>
-                      ) : (
-                        display(cell, dataset.headers[index])
-                      )}
+                      {display(cell, dataset.headers[index])}
                     </td>
                   ))}
+                  {daily && <td><Link to={`/admin/sales?date=${row[0]}`} aria-label={`View sales for ${row[0]}`} className="reports-row-link">›</Link></td>}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      <p className="analytics-note">
-        {rows.length} of {dataset.rows.length} rows · All amounts in PHP · {data.from} to {data.to}
-      </p>
+      <div className="reports-pagination">
+        <p className="analytics-note" role="status">
+          {rows.length ? `${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, rows.length)} of ${rows.length}` : '0'} rows
+          {rows.length !== dataset.total ? ` (${dataset.total} before filtering)` : ''} · All amounts in PHP
+        </p>
+        {pages > 1 && <nav aria-label="Report pages">
+          <button type="button" className="analytics-button" disabled={page === 1} onClick={() => update({ page: page - 1 })}>Previous</button>
+          <span>Page {page} of {pages}</span>
+          <button type="button" className="analytics-button" disabled={page === pages} onClick={() => update({ page: page + 1 })}>Next</button>
+        </nav>}
+      </div>
     </AnalyticsPanel>
   );
 }
