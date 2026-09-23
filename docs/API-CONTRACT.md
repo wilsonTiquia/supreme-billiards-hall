@@ -160,6 +160,14 @@ Request: `{ "name", "categoryId"?, "sellingPrice", "isActive"? }`. `avgCost` and
 **not settable** — stock moves only through the ledger, and the image moves only through its own
 routes below.
 
+On **POST only**, optional `openingStock: { "quantity": 12, "unitCost": 62.50 }` records the
+initial inventory through the existing stock delivery service. Omit it (or send `null`) for no
+opening stock. When present, both fields are required: quantity ≥ 0.001 (up to three decimal
+places), unit cost ≥ 0 (up to four decimal places). Incomplete or invalid pairs return **400**.
+The product, creation audit, delivery header and ledger movement commit together; a delivery
+failure leaves none of them behind. The response includes the resulting quantity and average
+cost. Sending opening stock on **PUT returns 409**; use `/stock/deliveries` for later receipts.
+
 **Response shape depends on the caller's role.** An EMPLOYEE receives:
 
 ```json

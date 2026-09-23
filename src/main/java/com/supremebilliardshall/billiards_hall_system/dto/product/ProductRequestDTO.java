@@ -1,5 +1,6 @@
 package com.supremebilliardshall.billiards_hall_system.dto.product;
 
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -29,4 +30,7 @@ public class ProductRequestDTO {
     private BigDecimal sellingPrice;
 
     private Boolean isActive;
+
+    @Valid
+    private OpeningStockRequestDTO openingStock;
 }

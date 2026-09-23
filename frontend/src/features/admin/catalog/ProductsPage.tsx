@@ -20,6 +20,9 @@ import { Field } from '@/components/Field';
 import { Select } from '@/components/Select';
 import { Modal } from '@/components/Modal';
 import { ProductImage } from '@/components/ProductImage';
+import { DeliveryForm } from '../stock/DeliveryForm';
+import { useToast } from '@/components/Toast';
+import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
 import { formatMoney } from '@/lib/money';
 import { formatDateTime } from '@/lib/datetime';
@@ -32,6 +35,9 @@ function margin(product: ProductAdmin): string {
 
 export function ProductsPage() {
   const queryClient = useQueryClient();
+  const { notify, dismiss } = useToast();
+  const [stocking, setStocking] = useState<ProductAdmin | null>(null);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ProductAdmin | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,12 +54,14 @@ export function ProductsPage() {
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ['products'] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.lowStock });
   }
 
   const save = useMutation({
     mutationFn: ({ id, body }: { id: string | null; body: ProductRequest }) =>
       id ? updateProduct(id, body) : createProduct(body),
-    onSuccess: () => {
+    onSuccess: (_product, { id, body }) => {
+      notify(id ? 'Product saved.' : body.openingStock ? 'Product created with opening stock.' : 'Product created.');
       setError(null);
       setEditing(null);
       setCreating(false);
@@ -96,7 +104,7 @@ export function ProductsPage() {
   return (
     <AdminPage
       title="Products"
-      intro="Cost and margin are visible here and nowhere the counter can reach. Archiving keeps the row: last month's bills still reference it."
+      intro="Manage your menu, prices and stock on hand."
       error={error ?? (products.isError ? messageOf(products.error) : null)}
     >
       <div className="mb-4 flex flex-wrap items-center gap-3">
@@ -121,7 +129,7 @@ export function ProductsPage() {
           />
           Include archived
         </label>
-        <Button className="ml-auto" onClick={() => setCreating(true)}>
+        <Button className="ml-auto" onClick={() => { setError(null); setCreating(true); }}>
           New product
         </Button>
       </div>
@@ -132,27 +140,27 @@ export function ProductsPage() {
             <Spinner label="Loading products…" />
           </div>
         ) : (
-          <table className="w-full min-w-[720px] text-left">
-            <thead>
+          <table className="block w-full text-left md:table">
+            <thead className="hidden md:table-header-group">
               <tr className="border-b border-border text-label uppercase text-text-dim">
                 <th className="py-2 w-14"><span className="sr-only">Image</span></th>
                 <th className="py-2">Name</th>
-                <th className="py-2 text-right">Price</th>
-                <th className="py-2 text-right">Avg cost</th>
-                <th className="py-2 text-right">Margin</th>
-                <th className="py-2 text-right">On hand</th>
+                <th className="py-2 pl-3 text-right">Price</th>
+                <th className="py-2 pl-3 text-right">Avg cost</th>
+                <th className="py-2 pl-3 text-right">Margin</th>
+                <th className="py-2 pl-3 text-right">On hand</th>
                 <th className="py-2" />
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block md:table-row-group">
               {rows.map((product) => (
                 <tr
                   key={product.id}
                   // Dimmed and struck rather than hidden: it has to be recognisable at a
                   // glance as a row that is not on the counter.
-                  className={`border-b border-border ${product.archivedAt ? 'opacity-55' : ''}`}
+                  className={`grid grid-cols-2 gap-x-4 border-b border-border py-4 md:table-row md:py-0 ${product.archivedAt ? 'opacity-55' : ''}`}
                 >
-                  <td className="py-3 pr-3">
+                  <td className="hidden py-3 pr-3 md:table-cell">
                     <ProductImage
                       productId={product.id}
                       name={product.name}
@@ -160,7 +168,7 @@ export function ProductsPage() {
                       size="thumb"
                     />
                   </td>
-                  <td className="py-3 text-body text-text">
+                  <td className="col-span-2 py-3 text-heading text-text md:pr-3 md:text-body">
                     <span className={product.archivedAt ? 'line-through' : ''}>{product.name}</span>
                     {product.archivedAt ? (
                       <span className="ml-2 text-label uppercase text-danger">Archived</span>
@@ -173,20 +181,26 @@ export function ProductsPage() {
                       </div>
                     ) : null}
                   </td>
-                  <td className="tabular py-3 text-right text-amount text-amount">
+                  <td className="tabular py-3 text-body text-amount md:text-right">
+                    <span className="block text-label text-text-dim md:hidden">Price</span>
                     {formatMoney(product.sellingPrice)}
                   </td>
-                  <td className="tabular py-3 text-right text-body text-text-dim">
+                  <td className="tabular py-3 text-body text-text-dim md:pl-3 md:text-right">
+                    <span className="block text-label text-text-dim md:hidden">Avg cost</span>
                     {formatMoney(product.avgCost)}
                   </td>
-                  <td className="tabular py-3 text-right text-heading text-text">{margin(product)}</td>
+                  <td className="tabular py-3 text-body text-text md:pl-3 md:text-right"><span className="block text-label text-text-dim md:hidden">Margin</span>{margin(product)}</td>
                   <td
-                    className={`tabular py-3 text-right text-body ${product.qtyOnHand <= 0 ? 'text-danger' : 'text-text'}`}
+                    className={`tabular py-3 text-body md:pl-3 md:text-right ${product.qtyOnHand <= 0 ? 'text-danger' : 'text-text'}`}
                   >
+                    <span className="block text-label text-text-dim md:hidden">On hand</span>
                     {product.qtyOnHand}
                   </td>
-                  <td className="py-3 text-right">
-                    <div className="flex justify-end gap-2">
+                  <td className="col-span-2 py-3 md:pl-4 md:text-right">
+                    <div className="flex flex-wrap gap-2 md:justify-end">
+                      <Button variant="secondary" onClick={() => { dismiss(); setDeliveryError(null); setStocking(product); }}>
+                        Add stock
+                      </Button>
                       {product.archivedAt ? (
                         <Button
                           variant="secondary"
@@ -197,7 +211,7 @@ export function ProductsPage() {
                         </Button>
                       ) : (
                         <>
-                          <Button variant="secondary" onClick={() => setEditing(product)}>
+                          <Button variant="secondary" onClick={() => { dismiss(); setError(null); setEditing(product); }}>
                             Edit
                           </Button>
                           {/* Confirmed, because this sits one click from Edit and the row
@@ -218,6 +232,18 @@ export function ProductsPage() {
           </table>
         )}
       </Card>
+
+      {stocking ? (
+        <Modal title={`Add stock · ${stocking.name}`} onClose={() => setStocking(null)}>
+          {deliveryError ? <div className="mb-4"><Banner tone="danger">{deliveryError}</Banner></div> : null}
+          <DeliveryForm
+            products={products.data ?? []}
+            initialProductId={stocking.id}
+            onError={(message) => { dismiss(); setDeliveryError(message); }}
+            onDone={() => { setStocking(null); refresh(); notify('Delivery recorded. Average costs have been recomputed.'); }}
+          />
+        </Modal>
+      ) : null}
 
       {confirmingArchive ? (
         <Modal
@@ -257,6 +283,7 @@ export function ProductsPage() {
           product={editing}
           categories={categories.data ?? []}
           pending={save.isPending}
+          error={error}
           onClose={() => {
             setEditing(null);
             setCreating(false);
@@ -273,6 +300,7 @@ function ProductForm({
   product,
   categories,
   pending,
+  error,
   onClose,
   onSave,
   onImageChanged,
@@ -280,6 +308,7 @@ function ProductForm({
   product: ProductAdmin | null;
   categories: { id: string; name: string }[];
   pending: boolean;
+  error: string | null;
   onClose: () => void;
   onSave: (body: ProductRequest) => void;
   onImageChanged: () => void;
@@ -289,25 +318,35 @@ function ProductForm({
   const [sellingPrice, setSellingPrice] = useState(
     product ? String(product.sellingPrice) : '',
   );
+  const [openingQuantity, setOpeningQuantity] = useState('');
+  const [openingCost, setOpeningCost] = useState('');
+  const hasOpeningStock = openingQuantity !== '' || openingCost !== '';
   const [isActive, setIsActive] = useState(product?.isActive ?? true);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (name.trim() === '' || sellingPrice.trim() === '') return;
-    // avgCost and qtyOnHand are not settable: stock moves only through the ledger.
+    if (pending) return;
+    // Opening stock is a delivery recorded by the server in the same transaction.
     onSave({
       name: name.trim(),
       categoryId: categoryId === '' ? undefined : categoryId,
       sellingPrice: Number(sellingPrice),
       isActive,
+      ...(!product && hasOpeningStock ? {
+        openingStock: { quantity: Number(openingQuantity), unitCost: Number(openingCost) },
+      } : {}),
     });
   }
 
   return (
     <Modal title={product ? `Edit ${product.name}` : 'New product'} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="flex flex-col gap-6">
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+        {error ? <Banner tone="danger">{error}</Banner> : null}
         <Field
           label="Name"
+          required
+          maxLength={100}
           value={name}
           data-autofocus
           onChange={(event) => setName(event.target.value)}
@@ -316,12 +355,7 @@ function ProductForm({
             is lost by that: a product without a picture is a normal product. */}
         {product ? (
           <ProductImageField product={product} onChanged={onImageChanged} />
-        ) : (
-          <p className="text-body text-text-dim">
-            Save the product first, then reopen it to add a picture. The counter finds a
-            product faster from one, but it is optional — the grid reads fine without.
-          </p>
-        )}
+        ) : null}
         <Select
           label="Category"
           value={categoryId}
@@ -336,14 +370,28 @@ function ProductForm({
         </Select>
         <Field
           label="Selling price"
+          required
           type="number"
           step="0.01"
           min="0"
           inputMode="decimal"
           value={sellingPrice}
-          hint="Changing this never rewrites history — past bills keep the price they were sold at."
           onChange={(event) => setSellingPrice(event.target.value)}
         />
+        {!product ? (
+          <fieldset className="rounded-lg border border-border p-4">
+            <legend className="px-1 text-body font-semibold text-text">Opening stock</legend>
+            <p className="mb-4 text-label text-text-dim">Already on the shelf? Enter both fields, or leave both empty.</p>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Quantity" type="number" min="0.001" max="999999999.999" step="0.001"
+                inputMode="decimal" required={hasOpeningStock} value={openingQuantity}
+                onChange={(event) => setOpeningQuantity(event.target.value)} />
+              <Field label="Unit cost" type="number" min="0" max="99999999.9999" step="0.0001"
+                inputMode="decimal" required={hasOpeningStock} value={openingCost}
+                onChange={(event) => setOpeningCost(event.target.value)} />
+            </div>
+          </fieldset>
+        ) : null}
         <label className="hit flex cursor-pointer items-center gap-3 text-body text-text">
           <input
             type="checkbox"
