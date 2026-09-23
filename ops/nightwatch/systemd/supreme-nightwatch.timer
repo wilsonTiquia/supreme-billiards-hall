@@ -1,0 +1,13 @@
+# 06:00 Manila: the night ended at 05:00 and the next one starts at 10:00, so
+# business_date_of(now()) is the night that just ended. The zone is written out rather than
+# taken from the box, so a changed host timezone cannot move the alarm.
+[Unit]
+Description=Run supreme-nightwatch at 06:00 Asia/Manila
+
+[Timer]
+OnCalendar=*-*-* 06:00:00 Asia/Manila
+# A missed 06:00 (box was off) is NOT run late: at 15:00 the default date would be tonight.
+Persistent=false
+
+[Install]
+WantedBy=timers.target
