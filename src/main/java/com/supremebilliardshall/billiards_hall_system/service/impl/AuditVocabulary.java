@@ -19,6 +19,19 @@ final class AuditVocabulary {
     }
 
     private static final Map<String, String> ACTIONS = Map.ofEntries(
+            Map.entry("CATEGORY_DELETED", "Category deleted"),
+            Map.entry("CATEGORY_RESTORED", "Category restored"),
+            Map.entry("POOL_TABLE_DELETED", "Table deleted"),
+            Map.entry("POOL_TABLE_RESTORED", "Table restored"),
+            Map.entry("CUSTOMER_TYPE_DELETED", "Customer type deleted"),
+            Map.entry("CUSTOMER_TYPE_RESTORED", "Customer type restored"),
+            Map.entry("EXPENSE_CATEGORY_DELETED", "Expense category deleted"),
+            Map.entry("EXPENSE_CATEGORY_RESTORED", "Expense category restored"),
+            Map.entry("VOUCHER_BATCH_DELETED", "Voucher batch deleted"),
+            Map.entry("VOUCHER_BATCH_RESTORED", "Voucher batch restored"),
+            Map.entry("USER_DELETED", "Staff member deleted"),
+            Map.entry("USER_RESTORED", "Staff member restored"),
+            Map.entry("VOUCHER_BATCH_ARCHIVED", "Voucher batch archived"),
             Map.entry("BILL_LINE_VOIDED", "Line voided"),
             Map.entry("BILL_DISCOUNTED", "Discount given"),
             Map.entry("BILL_DISCOUNT_CLEARED", "Discount cleared"),
@@ -68,6 +81,7 @@ final class AuditVocabulary {
 
     // What kind of thing the row is about, for the column that sits beside the subject.
     private static final Map<String, String> ENTITIES = Map.ofEntries(
+            Map.entry("voucher_batch", "Voucher batch"),
             Map.entry("product", "Product"),
             Map.entry("product_category", "Category"),
             Map.entry("customer_type", "Customer type"),

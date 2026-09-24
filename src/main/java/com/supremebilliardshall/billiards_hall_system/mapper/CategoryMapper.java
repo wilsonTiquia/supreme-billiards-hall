@@ -17,6 +17,7 @@ public interface CategoryMapper {
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "branchId", ignore = true)
     @Mapping(target = "archivedAt", ignore = true)
+    @Mapping(target = "referencedAt", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     Category toEntity(CategoryRequestDTO categoryRequestDTO);
@@ -24,6 +25,7 @@ public interface CategoryMapper {
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "branchId", ignore = true)
     @Mapping(target = "archivedAt", ignore = true)
+    @Mapping(target = "referencedAt", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target = "updatedAt", ignore = true)
     void updateEntityFromDto(CategoryRequestDTO dto, @MappingTarget Category entity);

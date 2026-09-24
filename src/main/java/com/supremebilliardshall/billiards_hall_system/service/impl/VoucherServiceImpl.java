@@ -212,6 +212,14 @@ public class VoucherServiceImpl implements VoucherService {
                     VoucherCodes.display(code == null ? redeemVoucherRequestDTO.getCode() : code));
         }
 
+        // Serialize redemption with setup archive/delete. A code cannot become used between
+        // the lifecycle eligibility check and removal of its batch.
+        VoucherBatch batch = voucherBatchRepository.findByIdForUpdate(voucher.getBatchId())
+                .orElseThrow(() -> new ResourceNotFoundException("Voucher batch", voucher.getBatchId()));
+        if (batch.getArchivedAt() != null) {
+            throw new BusinessRuleException("That voucher batch is archived. Ask an administrator to restore it first.");
+        }
+
         /*
          * Expiry is judged against the BUSINESS date, not the calendar date.
          *

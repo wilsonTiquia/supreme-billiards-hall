@@ -1532,3 +1532,13 @@ export interface Paged<T> {
   totalElements: number;
   totalPages: number;
 }
+
+export type SetupKind = 'categories' | 'tables' | 'customer-types' | 'expense-categories' | 'vouchers' | 'staff';
+export interface SetupItem {
+  id: UUID;
+  name: string;
+  archivedAt: string | null;
+  canDelete: boolean;
+  deletionReason: string | null;
+  blockedReason: string | null;
+}

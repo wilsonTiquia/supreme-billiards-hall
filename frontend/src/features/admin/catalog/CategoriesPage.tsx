@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  archiveCategory,
   createCategory,
   fetchCategories,
   updateCategory,
@@ -10,6 +9,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { Category, CategoryRequest } from '@/api/types';
 import { AdminPage } from '../AdminPage';
+import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
@@ -24,7 +24,10 @@ export function CategoriesPage() {
 
   const categories = useQuery({ queryKey: queryKeys.categories, queryFn: fetchCategories });
 
+  const lifecycle = useSetupLifecycle('categories', refresh);
+
   function refresh() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.setup('categories') });
     void queryClient.invalidateQueries({ queryKey: queryKeys.categories });
   }
 
@@ -40,22 +43,14 @@ export function CategoriesPage() {
     onError: (caught) => setError(messageOf(caught)),
   });
 
-  const archive = useMutation({
-    mutationFn: (id: string) => archiveCategory(id),
-    onSuccess: () => {
-      setError(null);
-      refresh();
-    },
-    onError: (caught) => setError(messageOf(caught)),
-  });
-
   return (
     <AdminPage
       title="Categories"
-      intro="Archiving frees the name for reuse; products already sold under it are untouched."
+      intro="Delete unused categories, or archive categories with products. Show archived to restore them."
       error={error ?? (categories.isError ? messageOf(categories.error) : null)}
     >
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {lifecycle.toggle}
         <Button onClick={() => setCreating(true)}>New category</Button>
       </div>
 
@@ -69,24 +64,18 @@ export function CategoriesPage() {
         ) : (
           <ul className="divide-y divide-border">
             {(categories.data ?? []).map((category) => (
-              <li key={category.id} className="flex items-center justify-between gap-3 py-3">
+              <li key={category.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div>
                   <div className="text-body text-text">{category.name}</div>
                   <div className="text-label text-text-dim">
                     Sort order {category.sortOrder ?? '—'}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button variant="secondary" onClick={() => setEditing(category)}>
                     Edit
                   </Button>
-                  <Button
-                    variant="secondary"
-                    pending={archive.isPending && archive.variables === category.id}
-                    onClick={() => archive.mutate(category.id)}
-                  >
-                    Archive
-                  </Button>
+                  {lifecycle.action(category.id)}
                 </div>
               </li>
             ))}
@@ -105,6 +94,8 @@ export function CategoriesPage() {
           onSave={(body) => save.mutate({ id: editing?.id ?? null, body })}
         />
       ) : null}
+      {lifecycle.panel}
+      {lifecycle.dialog}
     </AdminPage>
   );
 }

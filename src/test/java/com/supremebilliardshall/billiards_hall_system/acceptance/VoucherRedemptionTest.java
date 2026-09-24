@@ -539,6 +539,47 @@ class VoucherRedemptionTest {
          */
     }
 
+    @Test
+    void anArchivedBatchStopsRedemptionAndRestoringMakesItsUnusedCodeSpendable() throws Exception {
+        String code = givenVoucherCode(2, LocalDate.now().plusMonths(1), "Archive test");
+        UUID batchId = asUser(() -> voucherBatchRepository.findAll().get(0).getId());
+        UUID billId = givenClosedSessionOf(90, false);
+        mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/archive").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(messageOf(redeem(billId, code).andExpect(status().isConflict()))).contains("archived");
+        assertThat(body(mockMvc.perform(get("/api/v1/voucher-batches").with(user(principal())))
+                .andExpect(status().isOk())).get("data")).isEmpty();
+        mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/restore").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        redeem(billId, code).andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(asUser(() -> voucherRepository.findAll().get(0).getRedeemedBillId())).isEqualTo(billId);
+    }
+
+    @Test
+    void releasingAVoucherDoesNotMakeItsHistoryDeletable() throws Exception {
+        String code = givenVoucherCode(2, LocalDate.now().plusMonths(1), "Released code");
+        UUID batchId = asUser(() -> voucherBatchRepository.findAll().get(0).getId());
+        UUID billId = givenClosedSessionOf(90, false);
+        redeem(billId, code).andExpect(status().isOk());
+        mockMvc.perform(delete("/api/v1/bills/" + billId + "/voucher").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(asUser(() -> voucherRepository.findAll().get(0).getRedeemedAt())).isNull();
+        mockMvc.perform(delete("/api/v1/setup/vouchers/" + batchId).with(user(principal())))
+                .andExpect(status().isConflict());
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(asUser(() -> voucherRepository.findAll().size())).isEqualTo(1);
+        assertThat(auditActions()).contains("VOUCHER_REDEEMED", "VOUCHER_RELEASED");
+    }
+
     // ---- fixtures ------------------------------------------------------------------
 
     /** One batch through the API, returning the first code in its display form. */

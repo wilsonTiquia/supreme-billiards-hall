@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  archiveExpenseCategory,
   createExpenseCategory,
   fetchExpenseCategories,
   updateExpenseCategory,
@@ -10,6 +9,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { ExpenseCategory, ExpenseCategoryRequest } from '@/api/types';
 import { AdminPage } from '../AdminPage';
+import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
@@ -27,7 +27,10 @@ export function ExpenseCategoriesPage() {
     queryFn: fetchExpenseCategories,
   });
 
+  const lifecycle = useSetupLifecycle('expense-categories', refresh);
+
   function refresh() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.setup('expense-categories') });
     void queryClient.invalidateQueries({ queryKey: queryKeys.expenseCategories });
   }
 
@@ -43,22 +46,14 @@ export function ExpenseCategoriesPage() {
     onError: (caught) => setError(messageOf(caught)),
   });
 
-  const archive = useMutation({
-    mutationFn: (id: string) => archiveExpenseCategory(id),
-    onSuccess: () => {
-      setError(null);
-      refresh();
-    },
-    onError: (caught) => setError(messageOf(caught)),
-  });
-
   return (
     <AdminPage
       title="Expense categories"
       intro="What the counter can file an expense under, and how the dashboard breaks the night's operating cost down. Archiving one hides it from the dropdown; every expense already recorded under it keeps reporting."
       error={error ?? (categories.isError ? messageOf(categories.error) : null)}
     >
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {lifecycle.toggle}
         <Button onClick={() => setCreating(true)}>New expense category</Button>
       </div>
 
@@ -70,22 +65,16 @@ export function ExpenseCategoriesPage() {
         ) : (
           <ul className="divide-y divide-border">
             {(categories.data ?? []).map((category) => (
-              <li key={category.id} className="flex items-center justify-between gap-3 py-3">
+              <li key={category.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div>
                   <div className="text-body text-text">{category.name}</div>
                   <div className="text-label text-text-dim">Sort order {category.sortOrder}</div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button variant="secondary" onClick={() => setEditing(category)}>
                     Edit
                   </Button>
-                  <Button
-                    variant="secondary"
-                    pending={archive.isPending && archive.variables === category.id}
-                    onClick={() => archive.mutate(category.id)}
-                  >
-                    Archive
-                  </Button>
+                  {lifecycle.action(category.id)}
                 </div>
               </li>
             ))}
@@ -104,6 +93,8 @@ export function ExpenseCategoriesPage() {
           onSave={(body) => save.mutate({ id: editing?.id ?? null, body })}
         />
       ) : null}
+      {lifecycle.panel}
+      {lifecycle.dialog}
     </AdminPage>
   );
 }

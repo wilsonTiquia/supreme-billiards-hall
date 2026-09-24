@@ -6,16 +6,23 @@ import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
+import jakarta.persistence.LockModeType;
+import org.springframework.data.jpa.repository.Lock;
 import java.util.UUID;
 
 public interface VoucherBatchRepository extends BranchScopedRepository<VoucherBatch> {
 
     @Query("""
             select b from VoucherBatch b
-            where b.branchId = :#{@branchContext.currentBranchId}
+            where b.branchId = :#{@branchContext.currentBranchId} and b.archivedAt is null
             order by b.createdAt desc
             """)
     List<VoucherBatch> findAllNewestFirst();
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select b from VoucherBatch b where b.id = :id and b.branchId = :#{@branchContext.currentBranchId}")
+    Optional<VoucherBatch> findByIdForUpdate(@Param("id") UUID id);
 
     /*
      * What is still in the wild, for every batch, in one grouped query rather than four counts

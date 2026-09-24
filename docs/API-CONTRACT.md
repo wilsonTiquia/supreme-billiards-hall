@@ -126,6 +126,54 @@ All timestamps everywhere are **ISO-8601 UTC** (`...Z`). Render in Asia/Manila l
 
 ---
 
+## Setup lifecycle — ADMIN only
+
+The six setup screens use these routes. `{kind}` is `categories`, `tables`, `customer-types`,
+`expense-categories`, `vouchers` (whole batches), or `staff`. All reads and writes are scoped to
+the current branch; manageable global administrators also appear in Staff.
+
+| Method | Path | Effect |
+|---|---|---|
+| GET | `/api/v1/setup/{kind}` | Active and archived items, with deletion eligibility |
+| DELETE | `/api/v1/setup/{kind}/{id}` | Permanently delete an unused item |
+| POST | `/api/v1/setup/{kind}/{id}/archive` | Archive and preserve history |
+| POST | `/api/v1/setup/{kind}/{id}/restore` | Restore to the active list |
+
+GET returns an array in `data`:
+
+```json
+{ "id": "uuid", "name": "League players", "archivedAt": null,
+  "canDelete": false, "deletionReason": "Bills or sessions use this customer type. Archive it to keep their history.",
+  "blockedReason": null }
+```
+
+Use **Delete** when `canDelete`, otherwise **Archive**. A `blockedReason` disables removal
+(self/last-administrator protection). The server locks and rechecks at deletion time, so an
+item used since the list loaded returns **409 with a human reason**. Foreign keys remain the
+last line of protection against concurrent references. Historical, archived and voided records
+all count. Table rate rows and generated voucher codes are owned children, so they are deleted
+with an otherwise unused table/batch. Deletion and restoration write named audit snapshots.
+
+Categories retain a usage timestamp when a product moves away. V22 backfills existing links and
+product audit history; ambiguous reused historical category names are conservatively retained.
+Staff with recorded activity or a previous login cannot be hard-deleted. Voucher redemption
+history counts even if the voucher was later released. Redemption and batch archive/delete
+share a batch lock. Archived batches leave the normal batch list and their outstanding codes
+cannot be redeemed; restoring allows unexpired unused codes again. Existing redemptions and
+bill totals are untouched.
+
+Restore returns **409** if the name or username was reused, or the item is already
+active. Restored staff stay inactive until explicitly enabled in Edit. A restored former
+default customer type does not replace a newer active default. Open tables still cannot be
+archived; staff self/last-admin guards and session invalidation remain in force.
+
+Mutations return the usual 200 envelope with `data: null`. A foreign-branch or missing ID is
+404; an employee receives 403. Existing `DELETE /categories/{id}`, `/tables/{id}`,
+`/customer-types/{id}`, `/expense-categories/{id}` and `/users/{id}` keep their archive semantics
+for compatibility; only the explicit `/setup/...` DELETE routes permanently remove records.
+
+---
+
 ## 4. Catalog
 
 ### Categories
