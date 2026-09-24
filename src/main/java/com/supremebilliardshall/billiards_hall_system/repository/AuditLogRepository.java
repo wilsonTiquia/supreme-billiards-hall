@@ -88,7 +88,9 @@ public interface AuditLogRepository extends BranchScopedRepository<AuditLog> {
                               -- an empty subject is the one line in this log that has to say
                               -- WHOSE role, and the username is what the owner knows them by.
                               au.username,
-                              to_char(cc.business_date, 'FMDay DD Mon YYYY'))              AS entity_label,
+                              to_char(cc.business_date, 'FMDay DD Mon YYYY'),
+                              a.after->>'name', a.before->>'name',
+                              a.after->>'note', a.before->>'note')                  AS entity_label,
                      -- The customer type the session was opened on, so a rate override can be
                      -- named after it: "Happy Hour rate", not "Friend rate given" for every
                      -- type the owner has since added.

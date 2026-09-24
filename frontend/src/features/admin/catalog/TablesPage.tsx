@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  archiveTable,
   changeTableRate,
   createTable,
   fetchFloor,
@@ -11,6 +10,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { PoolTable, PoolTableRateRequest, PoolTableRequest } from '@/api/types';
 import { AdminPage } from '../AdminPage';
+import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
@@ -23,7 +23,6 @@ import {
   formatHourlyRate,
   formatMoney,
   formatPreciseRate,
-  formatRate,
 } from '@/lib/money';
 
 export function TablesPage() {
@@ -35,7 +34,10 @@ export function TablesPage() {
 
   const floor = useQuery({ queryKey: queryKeys.floor, queryFn: fetchFloor });
 
+  const lifecycle = useSetupLifecycle('tables', refresh);
+
   function refresh() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.setup('tables') });
     void queryClient.invalidateQueries({ queryKey: queryKeys.floor });
   }
 
@@ -62,16 +64,6 @@ export function TablesPage() {
     onError: (caught) => setError(messageOf(caught)),
   });
 
-  const archive = useMutation({
-    mutationFn: (id: string) => archiveTable(id),
-    onSuccess: () => {
-      setError(null);
-      refresh();
-    },
-    // Rejected while a session is open on the table. That is guidance, not a fault.
-    onError: (caught) => setError(messageOf(caught)),
-  });
-
   const tables = floor.data?.tables ?? [];
 
   return (
@@ -80,7 +72,8 @@ export function TablesPage() {
       intro="Changing a rate opens a new rate period. It never edits the old one, so a bill from last month keeps the rate it was charged at."
       error={error ?? (floor.isError ? messageOf(floor.error) : null)}
     >
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {lifecycle.toggle}
         <Button onClick={() => setCreating(true)}>New table</Button>
       </div>
 
@@ -107,22 +100,16 @@ export function TablesPage() {
                     {describeRate(table)}
                     {table.tableNumber != null ? ` · No. ${table.tableNumber}` : ''}
                   </div>
-                  <RoundingNote table={table} />
+                  <RateInfo table={table} />
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button variant="secondary" onClick={() => setRepricing(table)}>
                     Change rate
                   </Button>
                   <Button variant="secondary" onClick={() => setEditing(table)}>
                     Edit
                   </Button>
-                  <Button
-                    variant="secondary"
-                    pending={archive.isPending && archive.variables === table.id}
-                    onClick={() => archive.mutate(table.id)}
-                  >
-                    Archive
-                  </Button>
+                  {lifecycle.action(table.id, table.session ? 'Close the open session before archiving this table.' : undefined)}
                 </div>
               </li>
             ))}
@@ -150,6 +137,8 @@ export function TablesPage() {
           onSave={(body) => reprice.mutate({ id: repricing.id, body })}
         />
       ) : null}
+      {lifecycle.panel}
+      {lifecycle.dialog}
     </AdminPage>
   );
 }
@@ -303,11 +292,24 @@ function initialRateValue(table: PoolTable | null): string {
   return String(table.ratePerHour ?? table.ratePerMinute);
 }
 
-/** The rate as the admin configured it: their hourly figure if they typed one, else per minute. */
+/** Display the configured hourly amount or its server-calculated hourly equivalent. */
 function describeRate(table: PoolTable): string {
-  return table.ratePerHour != null
-    ? formatHourlyRate(table.ratePerHour)
-    : formatRate(table.ratePerMinute);
+  const hourly = table.ratePerHour ?? table.effectiveRatePerHour;
+  return hourly == null ? 'Rate unavailable' : formatHourlyRate(hourly);
+}
+
+function RateInfo({ table }: { table: PoolTable }) {
+  return (
+    <details className="mt-1 max-w-md text-label text-text-dim">
+      <summary aria-label={`Rate details for ${table.name}`} className="hit flex w-fit cursor-pointer list-none items-center gap-2 rounded-lg px-2 text-text-dim hover:bg-raised">
+        <span aria-hidden>ⓘ</span><span>Rate details</span>
+      </summary>
+      <div className="rounded-lg border border-border bg-raised p-3">
+        <p className="tabular">Billed by the minute at {formatPreciseRate(table.ratePerMinute)}.</p>
+        <RoundingNote table={table} />
+      </div>
+    </details>
+  );
 }
 
 /**

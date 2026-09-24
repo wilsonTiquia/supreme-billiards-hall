@@ -5,6 +5,7 @@ import type { AuditFeedQuery, AuditQuery, BusinessDate, ProductQuery, UUID } fro
  * family — invalidating ['bills'] catches every bill, its checkout preview and its receipt.
  */
 export const queryKeys = {
+  setup: (kind: string) => ['setup', kind] as const,
   me: ['auth', 'me'] as const,
   time: ['time'] as const,
 

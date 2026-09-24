@@ -37,6 +37,9 @@ public class Category implements BranchScoped {
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
 
+    @Column(name = "referenced_at", insertable = false, updatable = false)
+    private OffsetDateTime referencedAt;
+
     @Column(name = "created_at", nullable = false, updatable = false)
     @CreationTimestamp
     private OffsetDateTime createdAt;

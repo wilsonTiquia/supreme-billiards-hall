@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  archiveCustomerType,
   createCustomerType,
   fetchCustomerTypes,
   updateCustomerType,
@@ -10,6 +9,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { CustomerType, CustomerTypeRequest } from '@/api/types';
 import { AdminPage } from '../AdminPage';
+import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
@@ -24,7 +24,10 @@ export function CustomerTypesPage() {
 
   const types = useQuery({ queryKey: queryKeys.customerTypes, queryFn: fetchCustomerTypes });
 
+  const lifecycle = useSetupLifecycle('customer-types', refresh);
+
   function refresh() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.setup('customer-types') });
     void queryClient.invalidateQueries({ queryKey: queryKeys.customerTypes });
   }
 
@@ -40,22 +43,14 @@ export function CustomerTypesPage() {
     onError: (caught) => setError(messageOf(caught)),
   });
 
-  const archive = useMutation({
-    mutationFn: (id: string) => archiveCustomerType(id),
-    onSuccess: () => {
-      setError(null);
-      refresh();
-    },
-    onError: (caught) => setError(messageOf(caught)),
-  });
-
   return (
     <AdminPage
       title="Customer types"
       intro="The start-session dropdown reads this. Allowing a rate override is what lets the counter charge this type something other than the table's standard rate — and every override is recorded against the session."
       error={error ?? (types.isError ? messageOf(types.error) : null)}
     >
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {lifecycle.toggle}
         <Button onClick={() => setCreating(true)}>New customer type</Button>
       </div>
 
@@ -67,7 +62,7 @@ export function CustomerTypesPage() {
         ) : (
           <ul className="divide-y divide-border">
             {(types.data ?? []).map((type) => (
-              <li key={type.id} className="flex items-center justify-between gap-3 py-3">
+              <li key={type.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div>
                   <div className="text-body text-text">
                     {type.name}
@@ -79,17 +74,11 @@ export function CustomerTypesPage() {
                     {type.allowsRateOverride ? 'Rate override allowed' : 'Standard rate only'}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button variant="secondary" onClick={() => setEditing(type)}>
                     Edit
                   </Button>
-                  <Button
-                    variant="secondary"
-                    pending={archive.isPending && archive.variables === type.id}
-                    onClick={() => archive.mutate(type.id)}
-                  >
-                    Archive
-                  </Button>
+                  {lifecycle.action(type.id)}
                 </div>
               </li>
             ))}
@@ -108,6 +97,8 @@ export function CustomerTypesPage() {
           onSave={(body) => save.mutate({ id: editing?.id ?? null, body })}
         />
       ) : null}
+      {lifecycle.panel}
+      {lifecycle.dialog}
     </AdminPage>
   );
 }

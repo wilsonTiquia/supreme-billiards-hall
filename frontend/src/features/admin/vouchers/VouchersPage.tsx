@@ -9,6 +9,7 @@ import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { Voucher, VoucherBatch, VoucherBatchRequest } from '@/api/types';
 import { AdminPage } from '../AdminPage';
+import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
@@ -39,6 +40,12 @@ export function VouchersPage() {
     queryFn: fetchVoucherBatches,
   });
 
+  const lifecycle = useSetupLifecycle('vouchers', refresh);
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.voucherBatches });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.setup('vouchers') });
+  }
+
   const create = useMutation({
     mutationFn: (body: VoucherBatchRequest) => createVoucherBatch(body),
     onSuccess: (batch) => {
@@ -49,7 +56,7 @@ export function VouchersPage() {
       // this without copying them is recoverable — they are on the batch — but making him go
       // looking is not what you want at the end of creating fifty of them.
       setGenerated(batch);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.voucherBatches });
+      refresh();
     },
     onError: (caught) => setError(messageOf(caught)),
   });
@@ -60,7 +67,8 @@ export function VouchersPage() {
       intro="Free table time, given away as a prize. A voucher covers a number of HOURS at whatever the table charges — play longer and the customer pays the difference, play less and the rest is forfeited. Codes are single use and only work on a session billed at the standard rate."
       error={error ?? (batches.isError ? messageOf(batches.error) : null)}
     >
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {lifecycle.toggle}
         <Button onClick={() => setCreating(true)}>New batch</Button>
       </div>
 
@@ -76,7 +84,7 @@ export function VouchersPage() {
         ) : (
           <ul className="divide-y divide-border">
             {(batches.data ?? []).map((batch) => (
-              <li key={batch.id} className="flex items-center justify-between gap-3 py-3">
+              <li key={batch.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
                 <div>
                   <div className="text-body text-text">
                     {batch.quantity} × {batch.hoursLabel}
@@ -89,7 +97,7 @@ export function VouchersPage() {
                     {formatDateTime(batch.createdAt)}
                   </div>
                 </div>
-                <div className="flex items-center gap-6">
+                <div className="flex flex-wrap items-center gap-3">
                   {/* Outstanding first and largest: it is the only one of the four that is
                       still a liability. The other three are what happened. */}
                   <dl className="flex gap-5 text-right">
@@ -100,6 +108,7 @@ export function VouchersPage() {
                   <Button variant="secondary" onClick={() => setInspecting(batch)}>
                     Codes
                   </Button>
+                  {lifecycle.action(batch.id)}
                 </div>
               </li>
             ))}
@@ -122,6 +131,8 @@ export function VouchersPage() {
       {inspecting ? (
         <BatchCodes batch={inspecting} onClose={() => setInspecting(null)} />
       ) : null}
+      {lifecycle.panel}
+      {lifecycle.dialog}
     </AdminPage>
   );
 }

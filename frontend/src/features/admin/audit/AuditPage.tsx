@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchAuditFeed, fetchAuditFilters } from '@/api/endpoints/reports';
 import { queryKeys } from '@/api/queryKeys';
@@ -34,7 +34,7 @@ function Changes({ entry }: { entry: AuditFeedEntry }) {
   if (!rate && rest.length === 0) return null;
 
   return (
-    <table className="mt-3 w-full text-left">
+    <table className="mt-3 w-full table-fixed break-words text-left">
       <thead>
         <tr className="text-label uppercase text-text-dim">
           <th className="py-1 font-normal">Field</th>
@@ -187,6 +187,7 @@ export function AuditPage() {
   const [action, setAction] = useState('');
   const [actor, setActor] = useState('');
   const [page, setPage] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const query = {
     action: action || undefined,
@@ -258,57 +259,42 @@ export function AuditPage() {
         </Card>
       ) : (
         <>
-          <ul className="flex flex-col gap-3">
-            {data.content.map((entry) => (
-              <li key={entry.id}>
-                <Card>
-                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-                    <div className="min-w-0">
-                      <span className="text-body font-semibold text-text">
-                        {entry.actionLabel}
-                      </span>
-                      {entry.subject ? (
-                        <span className="text-body text-text-dim">
-                          {' · '}
-                          {needsEntityLabel(entry) ? `${entry.entityLabel} ` : ''}
-                          <span className="text-text">{entry.subject}</span>
-                        </span>
-                      ) : null}
-                    </div>
-                    <div className="shrink-0 text-label text-text-dim">
-                      {entry.actorName ?? 'system'} · {formatDateTime(entry.occurredAt)}
-                    </div>
-                  </div>
+          <div className="overflow-hidden rounded-xl border border-border bg-surface">
+            <table className="w-full table-fixed border-collapse text-left text-xs leading-5 tracking-normal sm:text-body" aria-label="Audit log">
+              <colgroup><col className="w-[22%]" /><col className="w-[18%]" /><col className="w-[28%]" /><col className="w-[32%]" /></colgroup>
+              <thead className="bg-raised text-label uppercase text-text-dim">
+                <tr>{['When', 'Who', 'What', 'Target'].map((heading) => <th key={heading} scope="col" className="px-2 py-3 font-normal sm:px-4">{heading}</th>)}</tr>
+              </thead>
+              <tbody>
+                {data.content.map((entry) => {
+                  const open = expanded.has(entry.id);
+                  const details = Boolean(entry.before || entry.after || entry.note || entry.quantityDelta !== null);
+                  return <Fragment key={entry.id}>
+                    <tr className="border-t border-border align-top">
+                      <td className="break-words px-2 py-3 text-text-dim sm:px-4"><time dateTime={entry.occurredAt}>{formatDateTime(entry.occurredAt)}</time></td>
+                      <td className="break-words px-2 py-3 text-text-dim sm:px-4">{entry.actorName ?? 'system'}</td>
+                      <td className="break-words px-2 py-3 font-semibold text-text sm:px-4">{entry.actionLabel}
+                        {details ? <button type="button" aria-expanded={open} aria-controls={`audit-${entry.id}`}
+                          className="hit mt-1 flex items-center rounded px-1 text-xs font-normal tracking-normal text-text-dim hover:bg-raised"
+                          onClick={() => setExpanded((previous) => { const next = new Set(previous); if (open) next.delete(entry.id); else next.add(entry.id); return next; })}>
+                          {open ? '− Hide' : '+ Details'}<span className="sr-only"> for {entry.actionLabel} {entry.subject}</span>
+                        </button> : null}
+                      </td>
+                      <td className="break-words px-2 py-3 text-text sm:px-4">{entry.subject ? `${needsEntityLabel(entry) ? `${entry.entityLabel} ` : ''}${entry.subject}` : entry.entityLabel ?? '—'}</td>
+                    </tr>
+                    {open ? <tr id={`audit-${entry.id}`} className="border-t border-border bg-raised/50"><td colSpan={4} className="px-3 pb-4 pt-2 sm:px-4">
+                      {entry.quantityDelta !== null ? <p className="mt-2 text-body text-text-dim">Stock <Quantity delta={entry.quantityDelta} /></p> : null}
+                      {entry.note ? <p className="mt-2 whitespace-pre-wrap break-words text-body text-text">{entry.note}</p>
+                        : entry.quantityDelta !== null && entry.quantityDelta < 0 ? <p className="mt-2 text-body text-danger">No reason given.</p> : null}
+                      <Changes entry={entry} />
+                    </td></tr> : null}
+                  </Fragment>;
+                })}
+              </tbody>
+            </table>
+          </div>
 
-                  {entry.quantityDelta !== null ? (
-                    <p className="mt-2 text-body text-text-dim">
-                      Stock <Quantity delta={entry.quantityDelta} />
-                    </p>
-                  ) : null}
-
-                  {/* The reason gets room and is never truncated. On a give-away or a
-                      correction it is the only thing separating a recount from someone
-                      helping themselves, so it reads at body size, not as a footnote. */}
-                  {entry.note ? (
-                    <p className="mt-2 whitespace-pre-wrap break-words text-body text-text">
-                      {entry.note}
-                    </p>
-                  ) : entry.quantityDelta !== null && entry.quantityDelta < 0 ? (
-                    // Only stock leaving without a reason is worth flagging. A delivery is a
-                    // routine inflow and needs no justification; a give-away or a correction
-                    // that removes stock is exactly the row the reason exists for, and the
-                    // schema makes it mandatory — so this should never fire, and says so
-                    // loudly if it ever does.
-                    <p className="mt-2 text-body text-danger">No reason given.</p>
-                  ) : null}
-
-                  <Changes entry={entry} />
-                </Card>
-              </li>
-            ))}
-          </ul>
-
-          <div className="mt-4 flex items-center justify-between gap-3">
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <span className="text-label text-text-dim">
               Page {data.page + 1} of {data.totalPages} · {data.totalElements} entries
             </span>

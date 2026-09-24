@@ -1,7 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  archiveUser,
   createUser,
   listUsers,
   resetUserPassword,
@@ -10,8 +9,8 @@ import {
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { CreateUserRequest, Role, StaffUser, UpdateUserRequest } from '@/api/types';
-import { useAuth } from '@/auth/useAuth';
 import { AdminPage } from '../AdminPage';
+import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
@@ -34,7 +33,6 @@ const MIN_LENGTH = 8;
  * able to clear a login lockout, with only the break-glass procedure in HELP.md to get back in.
  */
 export function StaffPage() {
-  const { user: me } = useAuth();
   const queryClient = useQueryClient();
   const [resetting, setResetting] = useState<StaffUser | null>(null);
   const [editing, setEditing] = useState<StaffUser | null>(null);
@@ -47,31 +45,11 @@ export function StaffPage() {
     queryFn: listUsers,
   });
 
+  const lifecycle = useSetupLifecycle('staff', refresh);
+
   function refresh() {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.setup('staff') });
     void queryClient.invalidateQueries({ queryKey: queryKeys.users });
-  }
-
-  const archive = useMutation({
-    mutationFn: (id: string) => archiveUser(id),
-    onSuccess: (archived) => {
-      setError(null);
-      setBanner(`${archived.fullName} was archived. Their username is free to reuse.`);
-      refresh();
-    },
-    onError: (caught) => setError(messageOf(caught)),
-  });
-
-  // The server is the authority; this only decides what to grey out. Counted across everyone
-  // the list shows, which includes the global admins — they are the ones who usually hold the
-  // last administrator role.
-  const activeAdmins = (users.data ?? []).filter((u) => u.role === 'ADMIN' && u.active).length;
-
-  function archiveBlockedBecause(staff: StaffUser): string | null {
-    if (me && staff.id === me.id) return 'You cannot archive your own account.';
-    if (staff.role === 'ADMIN' && staff.active && activeAdmins <= 1) {
-      return 'This is the last administrator. Add another before archiving this one.';
-    }
-    return null;
   }
 
   return (
@@ -80,7 +58,8 @@ export function StaffPage() {
       intro="Who can sign in, what they may do, and their password status. A password you set here is always temporary — the person sets their own the next time they sign in. A forgotten administrator password cannot be reset by another administrator; see HELP.md."
       error={error ?? (users.isError ? messageOf(users.error) : null)}
     >
-      <div className="mb-4 flex justify-end">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        {lifecycle.toggle}
         <Button
           onClick={() => {
             setBanner(null);
@@ -102,9 +81,9 @@ export function StaffPage() {
           <Spinner label="Loading staff…" />
         </div>
       ) : users.data && users.data.length > 0 ? (
-        <Card className="overflow-x-auto p-0">
+        <div className="overflow-x-auto rounded-xl border border-border bg-surface">
           <table className="w-full border-collapse text-body">
-            <thead>
+            <thead className="hidden lg:table-header-group">
               <tr className="border-b border-border text-left text-label uppercase text-text-dim">
                 <th className="px-4 py-3 font-normal">Name</th>
                 <th className="px-4 py-3 font-normal">Username</th>
@@ -115,24 +94,25 @@ export function StaffPage() {
             </thead>
             <tbody>
               {users.data.map((staff) => (
-                <tr key={staff.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3 text-text">
+                <tr key={staff.id} className="grid grid-cols-2 border-b border-border py-3 last:border-0 lg:table-row lg:py-0">
+                  <td className="col-span-2 break-words px-4 py-1 text-text lg:py-3">
                     {staff.fullName}
                     {staff.active ? null : (
                       <span className="ml-2 text-label uppercase text-text-dim">inactive</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-text-dim">{staff.username}</td>
-                  <td className="px-4 py-3 text-text-dim">{staff.role}</td>
-                  <td className="px-4 py-3">
+                  <td className="break-words px-4 py-1 text-text-dim lg:py-3"><span className="block text-label lg:hidden">Username</span>{staff.username}</td>
+                  <td className="px-4 py-1 text-text-dim lg:py-3"><span className="block text-label lg:hidden">Role</span>{staff.role}</td>
+                  <td className="col-span-2 px-4 py-1 lg:py-3">
+                    <span className="mr-2 text-label text-text-dim lg:hidden">Password:</span>
                     {staff.mustChangePassword ? (
                       <span className="text-amount">Temporary — change pending</span>
                     ) : (
                       <span className="text-text-dim">Set</span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
-                    <div className="flex justify-end gap-2">
+                  <td className="col-span-2 px-4 py-3">
+                    <div className="flex flex-wrap gap-2 lg:justify-end">
                       <Button
                         variant="secondary"
                         onClick={() => {
@@ -153,24 +133,14 @@ export function StaffPage() {
                       >
                         Reset password
                       </Button>
-                      {/* Disabled with the reason on the button itself, so the rule is
-                          readable before it is met rather than as a 409 afterwards. */}
-                      <Button
-                        variant="danger"
-                        disabled={archiveBlockedBecause(staff) !== null}
-                        title={archiveBlockedBecause(staff) ?? undefined}
-                        pending={archive.isPending && archive.variables === staff.id}
-                        onClick={() => archive.mutate(staff.id)}
-                      >
-                        Archive
-                      </Button>
+                      {lifecycle.action(staff.id)}
                     </div>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </Card>
+        </div>
       ) : (
         <Card>
           <p className="text-body text-text-dim">Nobody can sign in yet.</p>
@@ -203,6 +173,8 @@ export function StaffPage() {
           }}
         />
       ) : null}
+      {lifecycle.panel}
+      {lifecycle.dialog}
     </AdminPage>
   );
 }

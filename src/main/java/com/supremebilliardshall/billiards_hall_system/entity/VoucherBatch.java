@@ -48,4 +48,7 @@ public class VoucherBatch implements BranchScoped {
     @Column(name = "created_at", nullable = false, updatable = false)
     @CreationTimestamp
     private OffsetDateTime createdAt;
+
+    @Column(name = "archived_at")
+    private OffsetDateTime archivedAt;
 }
