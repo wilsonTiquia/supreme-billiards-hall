@@ -54,7 +54,7 @@ export function TableCard({
     <button
       type="button"
       onClick={() => (session ? onOpen(table) : onStart(table))}
-      className={`group relative flex min-h-[19rem] w-full flex-col overflow-hidden rounded-2xl text-left transition hover:brightness-110 ${skin}`}
+      className={`group relative flex min-h-[19rem] min-w-0 w-full flex-col overflow-hidden rounded-2xl text-left transition hover:brightness-110 ${skin}`}
     >
       {/* Racked and waiting, or broken and in play — the illustration IS the state.
           Both sit behind everything and both are told to lose: the running total is what
@@ -68,7 +68,7 @@ export function TableCard({
         </div>
       )}
 
-      <div className="relative flex flex-1 items-start justify-between gap-4 p-6">
+      <div className="relative flex flex-1 flex-wrap items-start justify-between gap-4 p-5">
         {/* Centred in the head, which on a free card is the empty space, and raised to 0.55.
             At 0.13 it read as a smudge; these are the unused tables and the rack is the only
             character they have.
@@ -113,19 +113,19 @@ export function TableCard({
       </div>
 
       {/* The felt. Its own solid ground, so no figure ever sits on the gradient. */}
-      <div className="relative bg-raised px-6 pb-6 pt-4">
+      <div className="relative min-w-0 bg-raised px-5 pb-5 pt-4">
         {session ? (
           <>
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="figure-amount text-amount">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-2">
+              <span className="figure-amount min-w-0 max-w-full [overflow-wrap:anywhere] text-amount">
                 {formatMoney(session.runningTotal)}
               </span>
-              <span className="figure-timer text-text-dim">{formatElapsed(elapsedMs)}</span>
+              <span className="figure-timer max-w-full [overflow-wrap:anywhere] text-text-dim">{formatElapsed(elapsedMs)}</span>
             </div>
 
             {/* What is on the bill so far. The money alone cannot say whether that is one
                 round or six, and the counter is usually being asked exactly that. */}
-            <div className="mt-4 flex items-baseline justify-between gap-4 border-t border-border pt-3 text-label uppercase text-text-dim">
+            <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-2 border-t border-border pt-3 text-label uppercase text-text-dim">
               <span className="tabular">
                 {session.itemCount > 0
                   ? `${session.itemCount} on the bill · ${formatMoney(session.itemTotal)}`
@@ -138,7 +138,7 @@ export function TableCard({
                 on a fixed fee. That is plausible enough that nobody would ever question it,
                 which is worse than a figure that looks broken.
               */}
-              <span className="tabular shrink-0 normal-case">
+              <span className="tabular min-w-0 [overflow-wrap:anywhere] normal-case">
                 {session.flatAmount !== null
                   ? `Flat ${formatMoney(session.flatAmount)}`
                   : // The SESSION's rate, which on an override is not the table's. Reading
@@ -153,21 +153,9 @@ export function TableCard({
         ) : (
           <>
             {/*
-              Both units, hourly first: the owner prices the hall in pesos per hour and the
-              meter bills per minute, and this is the figure someone reads before deciding
-              whether to start the table.
-
-              The leading figure keeps the size the rate has always had here — this card is
-              read standing up across a dim room, and buying room for the second line by
-              shrinking the first would trade the thing that works for the thing that is new.
-              It costs nothing: measured at the counter's width the felt grows 18.2px, a plain
-              card stays exactly at its 19rem floor because the extra comes out of the head's
-              flex-1 slack, and only a tagged card grows at all — well inside the grid's 23rem
-              row ceiling.
-
-              NOT uppercase, unlike every other text-label on this card. The occupied footer
-              already overrides rates back to normal-case, and "₱4.00 / MIN" is why.
-            */}
+              Hourly first, with the billed per-minute rate underneath. Let the row grow
+              for both figures instead of shrinking the amount staff read across the counter.
+                        */}
             <div className="tabular text-heading text-text">{rates.hourly ?? rates.perMinute}</div>
             {/* Only when there is an hourly figure to lead with. A table with no current rate
                 returns every rate field null, and one "—" is the honest answer there. */}

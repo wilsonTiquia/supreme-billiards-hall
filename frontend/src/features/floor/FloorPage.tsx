@@ -71,14 +71,8 @@ export function FloorPage() {
 
       {unsettled.data ? <UnsettledStrip bills={unsettled.data} /> : null}
 
-      {/* The floor owns the screen. This is a single-purpose view on a machine that does
-          nothing else, so the cards fill the viewport rather than sitting in one thin band
-          across the top. Three columns on the counter's monitor gives a card near the 2:1 of
-          a real table, and rows stretch to fill the height but stop at 23rem — past that the
-          card is mostly empty gradient, which reads as something that failed to load rather
-          than as breathing room. The cap is also headroom: more tables add rows at the same
-          size instead of shrinking every card. */}
-      <div className="grid min-h-[calc(100dvh-6.5rem)] auto-rows-[minmax(16rem,23rem)] grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      {/* Rows may grow with large totals or enlarged text; a fixed ceiling clips the felt. */}
+      <div className="grid min-h-[calc(100dvh-6.5rem)] auto-rows-[minmax(19rem,auto)] grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {floor.data?.tables.map((table) => (
           <TableCard
             key={table.id}

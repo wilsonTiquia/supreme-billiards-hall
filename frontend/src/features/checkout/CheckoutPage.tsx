@@ -27,6 +27,7 @@ import { NoteThread } from '@/features/notes/NoteThread';
 import { BillSummary } from './BillSummary';
 import { LeaveUnpaidModal } from './LeaveUnpaidModal';
 import { PaymentForm } from './PaymentForm';
+import { attachSelectedPhoto } from './paymentPhoto';
 
 /** What went wrong, and what the operator can do about it. */
 type Recovery =
@@ -97,8 +98,9 @@ export function CheckoutPage() {
   }, [bill]);
 
   const pay = useMutation({
-    mutationFn: (body: PaymentRequest) => payBill(billId, body),
-    onSuccess: (payment) => {
+    mutationFn: ({ body }: { body: PaymentRequest; photo: File | null }) => payBill(billId, body),
+    onSuccess: async (payment, { photo }) => {
+      const photoNote = await attachSelectedPhoto(payment, photo);
       setRecovery({ kind: 'none' });
       void queryClient.invalidateQueries({ queryKey: queryKeys.floor });
       void queryClient.invalidateQueries({ queryKey: queryKeys.unsettledBills });
@@ -119,6 +121,7 @@ export function CheckoutPage() {
         replace: true,
         state: {
           justPaid: payment,
+          photoNote,
           from: rect ? { x: rect.x, width: rect.width } : null,
         },
       });
@@ -671,16 +674,12 @@ export function CheckoutPage() {
               idempotencyKey={idempotencyKey.current}
               duplicateOverride={recovery.kind === 'duplicateReference'}
               pending={pay.isPending}
-              onSubmit={(body) => pay.mutate(body)}
+              onSubmit={(body, photo) => pay.mutate({ body, photo })}
             />
           )}
         </Card>
 
-        <Link to="/floor" className="hit inline-flex items-center text-body text-info underline">
-          Back to the floor
-        </Link>
-
-        {/* Deliberately down here, below the way out, and never beside Take payment.
+        {/* Deliberately down here, below the payment form, and never beside Take payment.
             Completing a sale without collecting the money is the one action on this screen
             that cannot be undone by taking the payment again, and a control for it sitting
             next to the one pressed forty times a night is a mis-click waiting to happen.

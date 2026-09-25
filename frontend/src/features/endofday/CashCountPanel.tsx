@@ -330,9 +330,9 @@ export function CashCountPanel({
             {/* The heading belongs to the read-only state only. Once the field opens it carries
                 its own label, and showing both stacks two headings on one control. */}
             {!floatEditable ? (
-              <div className="flex items-baseline justify-between gap-3">
+              <div className="flex flex-wrap items-baseline justify-between gap-3">
                 <span className="text-label uppercase text-text-dim">
-                  Float in the drawer at open
+                  Change float (cash in the drawer before opening)
                 </span>
                 <button
                   type="button"
@@ -342,7 +342,7 @@ export function CashCountPanel({
                     setFloatEditable(true);
                   }}
                 >
-                  It was different tonight
+                  Tonight’s float was different
                 </button>
               </div>
             ) : null}
@@ -351,7 +351,7 @@ export function CashCountPanel({
             ) : (
               <div>
                 <Field
-                  label="Float in the drawer at open"
+                  label="Change float (cash in the drawer before opening)"
                   type="text"
                   inputMode="decimal"
                   autoComplete="off"

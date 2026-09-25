@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { fetchReceipt, uploadPaymentPhoto } from '@/api/endpoints/bills';
 import type { Payment } from '@/api/types';
@@ -78,8 +78,9 @@ export function ReceiptPage() {
   useScreenTheme('pos');
   const { billId = '' } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const state = location.state as
-    | { origin?: ReceiptOrigin; justPaid?: Payment; from?: CardRect | null }
+    | { origin?: ReceiptOrigin; justPaid?: Payment; photoNote?: string | null; from?: CardRect | null }
     | null;
   const origin: ReceiptOrigin = state?.origin ?? FLOOR;
 
@@ -106,11 +107,14 @@ export function ReceiptPage() {
     // A replayed payment gets no morph: nothing became anything, another till took the money.
     user?.checkoutAnimation === true && justPaid !== null && !justPaid.replayed,
   );
-  const [photoNote, setPhotoNote] = useState<string | null>(null);
+  const [photoNote, setPhotoNote] = useState<string | null>(() => state?.photoNote ?? null);
 
   const attachPhoto = useMutation({
     mutationFn: (file: File) => uploadPaymentPhoto((justPaid as Payment).id, file),
-    onSuccess: () => setPhotoNote('Photo attached.'),
+    onSuccess: () => {
+      setPhotoNote('Photo attached.');
+      navigate(location.pathname, { replace: true, state: { ...state, photoNote: 'Photo attached.' } });
+    },
     onError: (caught) => setPhotoNote(messageOf(caught)),
   });
 
@@ -336,26 +340,25 @@ export function ReceiptPage() {
         </p>
       </Card>
 
-      {/* Digital payments only, and only straight after taking one — the confirmation photo is
-          evidence attached at the moment of payment, not something to go back and add. It sits
-          below the receipt so it never delays anyone: the common path is the button row. */}
+      {/* A missed or failed upload can be completed here without taking payment again. */}
       {justPaid && justPaid.method !== 'CASH' ? (
         <Card className="mt-4 print:hidden">
           <label className="text-label uppercase text-text-dim" htmlFor="payment-photo">
-            Attach a photo of the confirmation (optional)
+            Add photo (optional confirmation)
           </label>
           <input
             id="payment-photo"
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/png,image/webp"
             disabled={attachPhoto.isPending || photoNote === 'Photo attached.'}
             onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) attachPhoto.mutate(file);
+              event.currentTarget.value = '';
             }}
             className="mt-2 block w-full text-body text-text-dim"
           />
-          {photoNote ? <p className="mt-2 text-label text-text-dim">{photoNote}</p> : null}
+          {photoNote ? <p role="status" className="mt-2 text-label text-text-dim">{photoNote}</p> : null}
         </Card>
       ) : null}
 
