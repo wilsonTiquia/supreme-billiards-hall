@@ -1,0 +1,15 @@
+# Runs nightwatch once. Started by supreme-nightwatch.timer; see ops/nightwatch/README.md.
+# A non-zero exit (could not check, or refused) marks this unit failed in `systemctl --failed`.
+[Unit]
+Description=Supreme Billiards nightwatch: was last night closed?
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=pos
+WorkingDirectory=/opt/supreme
+# --build: nightwatch sits under a compose profile, so the Deploy button's `up -d --build` never
+# rebuilds it. Building here (cached, seconds) is what makes each run use the code on disk.
+# -T: no terminal under systemd.
+ExecStart=/usr/bin/docker compose run --rm --build -T nightwatch
