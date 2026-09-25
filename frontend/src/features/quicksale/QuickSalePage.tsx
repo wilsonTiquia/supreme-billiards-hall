@@ -19,6 +19,7 @@ import { Spinner } from '@/components/Spinner';
 import { ProductImage } from '@/components/ProductImage';
 import { ProductGrid } from '@/features/session/ProductGrid';
 import { PaymentForm } from '@/features/checkout/PaymentForm';
+import { attachSelectedPhoto } from '@/features/checkout/paymentPhoto';
 
 /**
  * A sale with no table — a bottle of water bought on the way past the counter.
@@ -44,6 +45,7 @@ export function QuickSalePage() {
 
   const [basket, setBasket] = useState<{ product: Product; quantity: number }[]>([]);
   const [customerTypeId, setCustomerTypeId] = useState('');
+  const [photoNote, setPhotoNote] = useState<string | null>(null);
   const [settled, setSettled] = useState<Payment | null>(null);
   const [givenAway, setGivenAway] = useState<number | null>(null);
   const [compReason, setCompReason] = useState('');
@@ -86,9 +88,10 @@ export function QuickSalePage() {
   }
 
   const sell = useMutation({
-    mutationFn: (body: PaymentRequest) =>
+    mutationFn: ({ body }: { body: PaymentRequest; photo: File | null }) =>
       recordQuickSale({ customerTypeId: selectedCustomerTypeId, lines, payment: body }),
-    onSuccess: (payment) => {
+    onSuccess: async (payment, { photo }) => {
+      setPhotoNote(await attachSelectedPhoto(payment, photo));
       setError(null);
       setDuplicateReference(false);
       setSettled(payment);
@@ -214,8 +217,9 @@ export function QuickSalePage() {
             <p className="mt-4 text-body text-text-dim">Reference {settled.referenceNo}</p>
           )}
 
+          {photoNote ? <p role="status" className="mt-4 text-body text-text-dim">{photoNote}</p> : null}
           <div className="mt-6 flex gap-3">
-            <Button onClick={() => navigate(`/receipt/${settled.billId}`)}>View receipt</Button>
+            <Button onClick={() => navigate(`/receipt/${settled.billId}`, { state: { justPaid: settled, photoNote } })}>View receipt</Button>
             <Button variant="secondary" onClick={() => navigate('/floor')}>
               Back to floor
             </Button>
@@ -397,7 +401,7 @@ export function QuickSalePage() {
                 idempotencyKey={idempotencyKey.current}
                 duplicateOverride={duplicateReference}
                 pending={sell.isPending}
-                onSubmit={(body) => sell.mutate(body)}
+                onSubmit={(body, photo) => sell.mutate({ body, photo })}
               />
             )}
           </Card>

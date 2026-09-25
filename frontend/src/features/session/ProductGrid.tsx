@@ -18,9 +18,11 @@ import { Spinner } from '@/components/Spinner';
 export function ProductGrid({
   onAdd,
   pendingProductId,
+  compact = false,
 }: {
   onAdd: (product: Product) => void;
   pendingProductId: string | null;
+  compact?: boolean;
 }) {
   const [term, setTerm] = useState('');
   // null is "All", and it is where the screen starts and returns to.
@@ -116,7 +118,7 @@ export function ProductGrid({
             : 'Nothing in this category yet.'}
         </p>
       ) : (
-        <div className="mt-4 grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4 overflow-y-auto">
+        <div className={`mt-4 grid min-h-0 flex-1 auto-rows-min gap-4 overflow-y-auto ${compact ? 'grid-cols-[repeat(auto-fill,minmax(min(100%,160px),1fr))]' : 'grid-cols-[repeat(auto-fill,minmax(220px,1fr))]'}`}>
           {matches.map((product) => (
             <button
               key={product.id}

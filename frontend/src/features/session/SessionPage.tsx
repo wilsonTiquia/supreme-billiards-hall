@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { closeSession, fetchSession, pauseSession, resumeSession } from '@/api/endpoints/sessions';
@@ -9,6 +9,7 @@ import type { BillLine, Product } from '@/api/types';
 import { useClock } from '@/time/useClock';
 import { useTicker } from '@/time/useTicker';
 import { useElapsed } from '@/time/useElapsed';
+import { useMediaQuery } from '@/lib/useMediaQuery';
 import { useScreenTheme } from '@/app/useTheme';
 import { BreakFlourish } from './BreakFlourish';
 import { formatElapsed } from '@/lib/datetime';
@@ -42,6 +43,13 @@ export function SessionPage() {
   const [error, setError] = useState<string | null>(null);
   const [voiding, setVoiding] = useState<BillLine | null>(null);
   const [voidError, setVoidError] = useState<string | null>(null);
+  const wide = useMediaQuery('(min-width: 900px)');
+  const [productsOpen, setProductsOpen] = useState(false);
+  const addButton = useRef<HTMLButtonElement>(null);
+  function closeProducts() {
+    setProductsOpen(false);
+    addButton.current?.focus();
+  }
   const [confirmingClose, setConfirmingClose] = useState(false);
 
   useTicker(true);
@@ -104,6 +112,7 @@ export function SessionPage() {
       addBillLine(billId as string, { productId: product.id, quantity: 1 }),
     onSuccess: (result) => {
       setError(null);
+      closeProducts();
       // Selling below zero succeeds. Warn, never block — a stale count must not stop a
       // paying customer.
       setNotice(result.belowZeroStock ? result.warning : null);
@@ -174,9 +183,21 @@ export function SessionPage() {
   const total = bill.data?.totalAmount ?? null;
 
   return (
-    <div className="grid gap-6 lg:h-[calc(100dvh-6.5rem)] lg:grid-cols-[minmax(380px,32rem)_1fr]">
+    <div className="grid items-start gap-6 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      {wide && !finished ? (
+        <Card className="min-w-0 min-[900px]:sticky min-[900px]:top-6 min-[900px]:h-[calc(100dvh-6.5rem)] flex flex-col">
+          <h2 className="mb-4 text-heading text-text">Add to the bill</h2>
+          <ProductGrid
+            compact
+            pendingProductId={addLine.isPending ? addLine.variables?.id ?? null : null}
+            onAdd={(product) => addLine.mutate(product)}
+          />
+        </Card>
+      ) : null}
       {/* ── The running session ─────────────────────────────────────────────── */}
-      <div className="flex min-h-0 flex-col gap-4">
+      <div className={`flex min-w-0 flex-col gap-4 ${finished ? 'min-[900px]:col-span-2' : ''}`}>
+        {error ? <Banner tone="danger">{error}</Banner> : null}
+        {notice ? <Banner tone="warning">{notice}</Banner> : null}
         {/* The same card the floor shows, opened up. A table in play is under a lamp: the head
             is lit while the session runs, dimmer when it is paused, dark once it is finished.
             Nothing dim sits on the light — every figure lives on the solid felt below it. */}
@@ -208,7 +229,7 @@ export function SessionPage() {
                 runningTotal is authoritative until then and the bill is after. Neither is
                 added up here. */}
             <div>
-              <div className="figure-amount text-amount">
+              <div className="figure-amount [overflow-wrap:anywhere] text-amount">
                 {formatMoney(finished ? total : live.runningTotal)}
               </div>
               {/* Under the money rather than beside it: this column is narrow, and the two
@@ -299,7 +320,12 @@ export function SessionPage() {
         </div>
 
         <Card className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          <h2 className="text-heading text-text">Bill</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-heading text-text">Bill</h2>
+            {!wide && !finished ? (
+              <button ref={addButton} type="button" className="hit rounded-lg bg-green px-4 font-semibold text-ink" onClick={() => setProductsOpen(true)}>Add items</button>
+            ) : null}
+          </div>
           {bill.isPending ? (
             <div className="py-6 text-center">
               <Spinner label="Loading the bill…" />
@@ -334,28 +360,17 @@ export function SessionPage() {
         ) : null}
       </div>
 
-      {/* ── Ordering ────────────────────────────────────────────────────────── */}
-      <div className="flex min-h-0 flex-col gap-4">
-        {error ? <Banner tone="danger">{error}</Banner> : null}
-        {notice ? <Banner tone="warning">{notice}</Banner> : null}
-        {finished ? (
-          <Banner tone="info">
-            This session is {live.status.toLowerCase()}. Nothing more can be added to it.
-          </Banner>
-        ) : null}
-
-        <Card className="flex min-h-0 flex-1 flex-col">
-          <h2 className="mb-4 shrink-0 text-heading text-text">Add to the bill</h2>
-          {finished ? (
-            <p className="text-body text-text-dim">Ordering is closed for this session.</p>
-          ) : (
+      {!wide && productsOpen && !finished ? (
+        <Modal title={`Add items to ${live.poolTableName}`} onClose={closeProducts}>
+          {error ? <Banner tone="danger">{error}</Banner> : null}
+          <div className="flex h-[60dvh] min-h-0 flex-col">
             <ProductGrid
               pendingProductId={addLine.isPending ? addLine.variables?.id ?? null : null}
               onAdd={(product) => addLine.mutate(product)}
             />
-          )}
-        </Card>
-      </div>
+          </div>
+        </Modal>
+      ) : null}
 
       {voiding ? (
         <VoidLineModal
