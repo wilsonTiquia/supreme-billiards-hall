@@ -186,7 +186,7 @@ export function ReportsPage() {
                 Showing the last successful report. Refresh before relying on these figures.
               </p>
             )}
-            <Report data={data} view={view} onViewChange={setView} />
+            <Report data={data} view={view} onViewChange={setView} pending={report.isFetching} />
           </>
         )}
       </div>
@@ -195,7 +195,7 @@ export function ReportsPage() {
   );
 }
 
-function Report({ data, view, onViewChange }: { data: PeriodReport; view: ExplorerView; onViewChange: (view: ExplorerView) => void }) {
+function Report({ data, view, onViewChange, pending }: { pending: boolean; data: PeriodReport; view: ExplorerView; onViewChange: (view: ExplorerView) => void }) {
   const { headline, previousHeadline: previous, breakEven, cash } = data;
   const period = formatRange(data.from, data.to);
   // "vs July", not "vs July 2026", when the year is the same one: the year is on the line
@@ -404,7 +404,7 @@ function Report({ data, view, onViewChange }: { data: PeriodReport; view: Explor
           />
         </AnalyticsPanel>
       </div>
-      <ReportExplorer data={data} view={view} onViewChange={onViewChange} />
+      <ReportExplorer data={data} view={view} onViewChange={onViewChange} pending={pending} />
       {/* Supporting financial details also expand when printed. */}
       <section>
         <h2 className="reports-section-title mb-4">Financial detail & controls</h2>

@@ -12,6 +12,7 @@
   --green:     #2FB457;  /*  6.94:1 AA  */
   --danger:    #E5484D;  /*  4.78:1 AA  */
   --info:      #4C8DF6;  /*  5.75:1 AA  */
+  --on-action: #0D0D0D;  /* label on primary/danger controls */
   --ink:       #0D0D0D;  /* label on gold (11.60:1) and green (7.21:1) fills */
 
   /* Fill-only. Deliberately absent from the Tailwind colour namespace — see the guardrail
@@ -46,6 +47,7 @@
   --danger:    #C0343A;  /*  5.54:1 AA  */
   --info:      #1B58C4;
   --ink:       #0D0D0D;
+  --on-action: #FFFFFF;  /* white on the light theme’s darker action fills */
 
   --brand:     #1B8A3A;
   --gold:      #F2C230;
@@ -79,6 +81,7 @@
   --color-danger:   var(--danger);
   --color-info:     var(--info);
   --color-ink:      var(--ink);
+  --color-on-action: var(--on-action);
   --color-amount:   var(--amount);
   --color-chart-bar: var(--chart-bar);
   --color-chart-bar-strong: var(--chart-bar-strong);

@@ -27,8 +27,6 @@
 .reports-night-row { cursor: pointer; }
 .reports-night-row:hover, .reports-night-row:focus-within { background: var(--raised); }
 .reports-row-link { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; font-size: 24px; color: var(--info); border-radius: 6px; }
-.reports-pagination { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 12px; }
-.reports-pagination nav { display: flex; align-items: center; gap: 12px; font-size: 13px; }
 @media (max-width: 600px) {
   .reports-page .analytics-toolbar [aria-label="Presets"] { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .reports-range { width: 100%; }

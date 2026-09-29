@@ -1,4 +1,4 @@
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchSettledBills } from '@/api/endpoints/bills';
 import { fetchCurrentBusinessDay } from '@/api/endpoints/businessDay';
@@ -7,7 +7,8 @@ import type { BillSummary } from '@/api/types';
 import { messageOf } from '@/api/errors';
 import { AdminPage } from '../AdminPage';
 import { Card } from '@/components/Card';
-import { Button } from '@/components/Button';
+import { ButtonLink } from '@/components/Button';
+import { Pagination } from '@/components/Pagination';
 import { Field } from '@/components/Field';
 import { Spinner } from '@/components/Spinner';
 import { formatBusinessDate, formatTime } from '@/lib/datetime';
@@ -125,7 +126,7 @@ export function SalesPage() {
                   <p className="text-body text-text-dim">
                     Taken by {bill.takenByUsername ?? '—'}
                   </p>
-                  <Link
+                  <ButtonLink variant="secondary"
                     to={`/receipt/${bill.id}`}
                     state={{
                       origin: {
@@ -135,8 +136,8 @@ export function SalesPage() {
                     }}
                     className="mt-3 inline-flex"
                   >
-                    <Button variant="secondary">Receipt</Button>
-                  </Link>
+                    Receipt
+                  </ButtonLink>
                 </li>
               ))}
             </ul>
@@ -172,7 +173,7 @@ export function SalesPage() {
                     {/* Carries the day and the page with it, so returning lands on the list
                         you left rather than on the floor. Checking several receipts in a
                         sitting is the normal case. */}
-                    <Link
+                    <ButtonLink variant="secondary"
                       to={`/receipt/${bill.id}`}
                       state={{
                         origin: {
@@ -182,8 +183,8 @@ export function SalesPage() {
                       }}
                       className="inline-flex"
                     >
-                      <Button variant="secondary">Receipt</Button>
-                    </Link>
+                      Receipt
+                    </ButtonLink>
                   </td>
                 </tr>
               ))}
@@ -193,26 +194,9 @@ export function SalesPage() {
         )}
 
         {bills.data && bills.data.totalPages > 1 ? (
-          <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-4">
-            <Button
-              variant="secondary"
-              disabled={page === 0}
-              onClick={() => setPage(page - 1)}
-            >
-              Newer
-            </Button>
-            <span className="text-label uppercase text-text-dim">
-              Page {bills.data.page + 1} of {bills.data.totalPages} · {bills.data.totalElements}{' '}
-              sales
-            </span>
-            <Button
-              variant="secondary"
-              disabled={page >= bills.data.totalPages - 1}
-              onClick={() => setPage(page + 1)}
-            >
-              Older
-            </Button>
-          </div>
+          <Pagination label="Sales pages" page={bills.data.page + 1} pages={bills.data.totalPages}
+            count={`${bills.data.totalElements} sales`} pending={bills.isFetching}
+            onPrevious={() => setPage(page - 1)} onNext={() => setPage(page + 1)} />
         ) : null}
       </Card>
     </AdminPage>

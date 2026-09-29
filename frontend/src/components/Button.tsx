@@ -1,20 +1,30 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, ReactNode, Ref } from 'react';
+import { Link, type LinkProps } from 'react-router-dom';
 
-type Variant = 'primary' | 'secondary' | 'danger';
+type Variant = 'primary' | 'secondary' | 'tertiary' | 'danger';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+  ref?: Ref<HTMLButtonElement>;
   variant?: Variant;
   pending?: boolean;
   children: ReactNode;
 }
 
-/* Green and gold are fills with an ink label, never coloured text — the contrast rules in
-   FRONTEND-SPEC §2. `hit` holds the 44px minimum. */
+/* Filled actions use a theme-aware label; gold retains its separate ink token.
+   `hit` holds the 44px minimum. */
 const variants: Record<Variant, string> = {
-  primary: 'bg-green text-ink hover:brightness-110 disabled:brightness-75',
+  primary: 'bg-green text-on-action hover:brightness-110 disabled:brightness-75',
   secondary: 'bg-raised text-text border border-border hover:border-text-dim',
-  danger: 'bg-danger text-ink hover:brightness-110 disabled:brightness-75',
+  tertiary: 'bg-transparent text-text hover:bg-raised underline underline-offset-4',
+  danger: 'bg-danger text-on-action hover:brightness-110 disabled:brightness-75',
 };
+
+const base = 'hit inline-flex items-center justify-center gap-2 rounded-lg px-4 text-body font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
+
+/** Navigation uses a real router link, including browser open-in-new-tab behavior. */
+export function ButtonLink({ variant = 'primary', className = '', ...props }: LinkProps & { variant?: Variant }) {
+  return <Link {...props} className={`${base} ${variants[variant]} ${className}`} />;
+}
 
 export function Button({
   variant = 'primary',
@@ -29,7 +39,7 @@ export function Button({
       {...rest}
       disabled={disabled || pending}
       aria-busy={pending || undefined}
-      className={`hit inline-flex items-center justify-center gap-2 rounded-lg px-4 text-body font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${variants[variant]} ${className}`}
+      className={`${base} ${variants[variant]} ${className}`}
     >
       {pending ? <Spinner /> : null}
       {children}
