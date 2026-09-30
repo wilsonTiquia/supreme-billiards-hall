@@ -6,7 +6,7 @@ import { messageOf } from '@/api/errors';
 import type { AuditFeedEntry } from '@/api/types';
 import { AdminPage } from '../AdminPage';
 import { Card } from '@/components/Card';
-import { Button } from '@/components/Button';
+import { Pagination } from '@/components/Pagination';
 import { Select } from '@/components/Select';
 import { Spinner } from '@/components/Spinner';
 import { formatDateTime } from '@/lib/datetime';
@@ -294,27 +294,10 @@ export function AuditPage() {
             </table>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <span className="text-label text-text-dim">
-              Page {data.page + 1} of {data.totalPages} · {data.totalElements} entries
-            </span>
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                disabled={data.page === 0}
-                onClick={() => setPage((current) => Math.max(current - 1, 0))}
-              >
-                Newer
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={data.page + 1 >= data.totalPages}
-                onClick={() => setPage((current) => current + 1)}
-              >
-                Older
-              </Button>
-            </div>
-          </div>
+          <Pagination label="Audit pages" page={data.page + 1} pages={data.totalPages}
+            count={`${data.totalElements} entries`} pending={feed.isFetching}
+            onPrevious={() => setPage((current) => Math.max(current - 1, 0))}
+            onNext={() => setPage((current) => current + 1)} />
         </>
       )}
     </AdminPage>

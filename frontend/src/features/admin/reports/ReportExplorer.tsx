@@ -1,3 +1,4 @@
+import { Pagination } from '@/components/Pagination';
 import { Link, useNavigate } from 'react-router-dom';
 import type { PeriodReport } from '@/api/types';
 import { formatMoney } from '@/lib/money';
@@ -28,8 +29,8 @@ function display(value: ReportCell, header: string): string {
   return `${value.toLocaleString('en-PH', { maximumFractionDigits: header === 'Quantity sold' ? 3 : 2 })}${header.includes('(%)') ? '%' : ''}`;
 }
 
-export function ReportExplorer({ data, view, onViewChange }: {
-  data: PeriodReport; view: ExplorerView; onViewChange: (view: ExplorerView) => void;
+export function ReportExplorer({ data, view, onViewChange, pending = false }: {
+  pending?: boolean; data: PeriodReport; view: ExplorerView; onViewChange: (view: ExplorerView) => void;
 }) {
   const navigate = useNavigate();
   const { kind, grouping, search, sort } = view;
@@ -153,17 +154,12 @@ export function ReportExplorer({ data, view, onViewChange }: {
           </table>
         </div>
       )}
-      <div className="reports-pagination">
-        <p className="analytics-note" role="status">
+      <Pagination label="Report pages" page={page} pages={pages} pending={pending}
+        count={<>
           {rows.length ? `${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, rows.length)} of ${rows.length}` : '0'} rows
           {rows.length !== dataset.total ? ` (${dataset.total} before filtering)` : ''} · All amounts in PHP
-        </p>
-        {pages > 1 && <nav aria-label="Report pages">
-          <button type="button" className="analytics-button" disabled={page === 1} onClick={() => update({ page: page - 1 })}>Previous</button>
-          <span>Page {page} of {pages}</span>
-          <button type="button" className="analytics-button" disabled={page === pages} onClick={() => update({ page: page + 1 })}>Next</button>
-        </nav>}
-      </div>
+        </>}
+        onPrevious={() => update({ page: page - 1 })} onNext={() => update({ page: page + 1 })} />
     </AnalyticsPanel>
   );
 }
