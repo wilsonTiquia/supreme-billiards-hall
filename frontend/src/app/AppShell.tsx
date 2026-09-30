@@ -10,13 +10,13 @@ import type { BusinessDayStatus } from '@/api/types';
 import { formatBusinessDate } from '@/lib/datetime';
 import { Sidebar, type NavGroup } from './Sidebar';
 
-/** The counter's destinations. Short enough to live on a collapsed rail. */
+/** The counter's destinations, shared by expanded navigation and the icon rail. */
 const COUNTER: NavGroup[] = [
   {
     label: 'At the counter',
     items: [
-      { to: '/floor', label: 'Floor', short: 'Fl' },
-      { to: '/quick-sale', label: 'Quick sale', short: 'QS' },
+      { to: '/floor', label: 'Floor', icon: 'floor' },
+      { to: '/quick-sale', label: 'Quick sale', icon: 'quick-sale' },
     ],
   },
   {
@@ -24,10 +24,10 @@ const COUNTER: NavGroup[] = [
     items: [
       // Beside End of day rather than up with the floor: money paid out is an occasional
       // errand, and it is the drawer count it has to reconcile with.
-      { to: '/expenses', label: 'Expenses', short: 'Ex' },
+      { to: '/expenses', label: 'Expenses', icon: 'expenses' },
       // Unpaid bills sit with the end-of-night tasks.
-      { to: '/unsettled', label: 'Unsettled', short: 'Un' },
-      { to: '/end-of-day', label: 'End of day', short: 'EOD' },
+      { to: '/unsettled', label: 'Unsettled', icon: 'unsettled' },
+      { to: '/end-of-day', label: 'End of day', icon: 'end-of-day' },
     ],
   },
 ];
@@ -37,31 +37,31 @@ const ADMIN: NavGroup[] = [
   {
     label: 'Manage',
     items: [
-      { to: '/dashboard', label: 'Dashboard', short: 'Db' },
+      { to: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
       // Beside the dashboard, because it is the same question over a longer span: the
       // dashboard answers "how did last night go", this answers "is the business making money".
-      { to: '/admin/reports', label: 'Reports', short: 'Rp' },
-      { to: '/admin/products', label: 'Products', short: 'Pr' },
-      { to: '/admin/stock', label: 'Stock', short: 'St' },
+      { to: '/admin/reports', label: 'Reports', icon: 'reports' },
+      { to: '/admin/products', label: 'Products', icon: 'products' },
+      { to: '/admin/stock', label: 'Stock', icon: 'stock' },
     ],
   },
   {
     label: 'Look up',
     items: [
-      { to: '/admin/sales', label: 'Sales', short: 'Sa' },
-      { to: '/admin/audit', label: 'Audit', short: 'Au' },
+      { to: '/admin/sales', label: 'Sales', icon: 'sales' },
+      { to: '/admin/audit', label: 'Audit', icon: 'audit' },
     ],
   },
   {
     label: 'Set up',
     items: [
-      { to: '/admin/categories', label: 'Categories', short: 'Ca' },
-      { to: '/admin/tables', label: 'Tables', short: 'Tb' },
-      { to: '/admin/customer-types', label: 'Customer types', short: 'CT' },
-      { to: '/admin/expense-categories', label: 'Expense categories', short: 'EC' },
-      { to: '/admin/vouchers', label: 'Vouchers', short: 'Vo' },
-      { to: '/admin/staff', label: 'Staff', short: 'Sf' },
-      { to: '/admin/settings', label: 'Settings', short: 'Se' },
+      { to: '/admin/categories', label: 'Categories', icon: 'categories' },
+      { to: '/admin/tables', label: 'Tables', icon: 'floor' },
+      { to: '/admin/customer-types', label: 'Customer types', icon: 'customer-types' },
+      { to: '/admin/expense-categories', label: 'Expense categories', icon: 'expense-categories' },
+      { to: '/admin/vouchers', label: 'Vouchers', icon: 'vouchers' },
+      { to: '/admin/staff', label: 'Staff', icon: 'staff' },
+      { to: '/admin/settings', label: 'Settings', icon: 'settings' },
     ],
   },
 ];
@@ -113,6 +113,7 @@ export function AppShell() {
   });
 
   const groups = admin ? ADMIN : COUNTER;
+  const floorOverview = /^\/floor\/?$/.test(pathname);
 
   return (
     <div className="flex min-h-dvh bg-bg text-text">
@@ -159,10 +160,10 @@ export function AppShell() {
           </button>
           <span className="text-body font-semibold text-text">Supreme</span>
         </div>
-        {/* The business day is context for what you are looking at, not somewhere to go. It
-            belongs over the content, not in a rail of links. */}
-        {businessDay && pathname !== '/dashboard' ? (
-          <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border px-4 py-3 md:px-6">
+        {/* Only the full floor overview needs this persistent trading-date context.
+            Keep the shared query above available to the other screens. */}
+        {businessDay && floorOverview ? (
+          <header aria-label="Current business day" className="sticky top-0 z-20 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-border bg-bg px-4 py-3 md:px-6">
             <div className="flex flex-wrap items-baseline gap-x-3">
               <span className="text-label uppercase text-text-dim">Business day</span>
               <span className="text-body text-text">
@@ -177,7 +178,7 @@ export function AppShell() {
           </header>
         ) : null}
 
-        <main className="min-w-0 flex-1 p-4 md:p-6">
+        <main className={`min-w-0 flex-1 p-4 md:p-6 ${floorOverview ? 'floor-content' : ''}`}>
           <Outlet />
         </main>
       </div>
