@@ -302,7 +302,7 @@ reads this. `allowsRateOverride` is what enables the friend-rate field.
 
 ```json
 { "tables": [
-    { "id": "uuid", "name": "Table 3", "tableNumber": 3, "isActive": true,
+    { "id": "uuid", "name": "Table 3", "tableNumber": 3, "isActive": true, "isPremium": true,
       "ratePerMinute": 4.0, "ratePerHour": 240.00, "effectiveRatePerHour": 240.0000,
       "session": null }
   ],
@@ -358,11 +358,22 @@ effective hourly rate is `199.9980`. Show the difference rather than hiding it �
 bills ₱200.00 because the line rounds to centavos, but three hours bills ₱599.99 against ₱600.00
 nominal.
 
-**POST/PUT `/tables`** → `{ "name", "tableNumber"?, "ratePerMinute"?, "ratePerHour"?, "isActive"? }`.
+**POST/PUT `/tables`** → `{ "name", "tableNumber"?, "ratePerMinute"?, "ratePerHour"?, "isActive"?, "isPremium"? }`.
 **Exactly one** of the two rates is required — neither is a 400 ("a table with no rate cannot host a
 session"), both is a 400. On PUT, a changed rate opens a new rate period exactly as the dedicated
 endpoint does; switching a table between the two input modes counts as a change, so send back the
 figure the table is currently configured with when you are only renaming it.
+
+`isPremium` is an explicit classification flag, independent of names, table numbers and rates.
+Omitting it (or sending null) on POST creates a Standard table (`false`); on PUT it preserves the
+existing flag, so older clients do not reset it. Explicit `true`/`false` changes the classification
+and appears in the existing table audit snapshot. Only admins can create/edit it, through the
+same branch-scoped table endpoints. Changing only this flag while retaining the configured rate
+opens no rate period and does not modify session rates, bills or receipts.
+
+V23 classifies the verified MAIN table IDs for Tables 1, 2 and 3 as Premium. All other existing
+rows, including archived tables and tables in other branches, default to Standard. Names such as
+"Table 5 (Premium)" remain names; their wording has no effect on classification or billing.
 
 **PUT `/tables/{id}/rate`** → `{ "ratePerMinute"?, "ratePerHour"?, "effectiveFrom"? }`, again
 exactly one of the two rates. Closes the current rate period and opens a new one. Never mutates
@@ -1222,7 +1233,7 @@ threshold (10), which sweeps up anything negative.
                         { "mode": "PROMO",    "sessions": 3, "amount": 450.00  },
                         { "mode": "FRIEND",   "sessions": 1, "amount": 120.00  },
                         { "mode": "FLAT",     "sessions": 1, "amount": 500.00  } ],
-  "tableUtilisation": [ { "tableName", "occupiedMinutes", "utilisationPercent" } ],
+  "tableUtilisation": [ { "tableId", "tableName", "isPremium", "occupiedMinutes", "utilisationPercent" } ],
   "topItems":         [ { "description", "quantity", "revenue" } ],
   "paymentMix":       [ { "method", "payments", "amount" } ],
   "losses":           { "voidCount", "voidAmount",
@@ -1261,6 +1272,10 @@ threshold (10), which sweeps up anything negative.
   and `timeRevenueByMode`; what was given away lives in the losses band. (It was called
   `billedMinutes`, which is what made it look like a bug three separate times.)
 - `utilisationPercent` is against a 19-hour day.
+- Daily `tableUtilisation` and period `tables` include a stable `tableId` and current `isPremium`.
+  The flag is current catalog metadata, not a historical classification snapshot. Renaming or
+  reclassifying a table never recalculates historical revenue, occupied time or receipt data.
+  Report stars and the Premium legend use only this flag, never a rate or name match.
 - `perEmployee` sums exactly to `totals` — attributed to whoever took the payment.
 - **`totals` counts `UNSETTLED` bills as sales.** The regular who plays tonight and pays next
   month was still served tonight, so `gross`, `cost`, `profit`, `salesByHour`, `topItems`,
@@ -1319,7 +1334,7 @@ null — so the nights of a range sum to the range, to the centavo. Reads only.
   "expensesByCategory": [ { "category", "amount", "previousAmount", "percentOfGross" } ],
   "expensesByMonth":  { "months": [ "2026-04", "…", "2026-09" ],
                         "rows": [ { "category", "amounts": [ 0, 0, 0, 0, 45000.00, 45000.00 ], "total" } ] },
-  "tables":           [ { "tableName", "occupiedMinutes", "utilisationPercent", "timeRevenue",
+  "tables":           [ { "tableId", "tableName", "isPremium", "occupiedMinutes", "utilisationPercent", "timeRevenue",
                           "revenuePerOccupiedHour" } ],
   "products":         [ { "name", "quantity", "revenue", "cost", "margin", "marginPercent" } ],
   "unsoldProducts":   [ { "name", "qtyOnHand", "avgCost", "capitalOnShelf" } ],

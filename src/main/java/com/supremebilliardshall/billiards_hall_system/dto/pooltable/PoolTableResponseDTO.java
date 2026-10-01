@@ -16,6 +16,7 @@ public class PoolTableResponseDTO {
     private String name;
     private Integer tableNumber;
     private Boolean isActive;
+    private Boolean isPremium;
     // The rate in force now, read from the open-ended pool_table_rate row. This is the figure
     // that bills; the two below are for the admin screen and charge nothing.
     private BigDecimal ratePerMinute;

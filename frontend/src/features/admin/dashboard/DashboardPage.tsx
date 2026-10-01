@@ -267,7 +267,9 @@ function Night({
             empty="No table time on closed bills for this day."
             rows={(heldTables.some((row) => row.occupiedMinutes > 0) ? heldTables : []).map(
               (row) => ({
+                id: row.tableId,
                 label: row.tableName,
+                isPremium: row.isPremium,
                 value: row.occupiedMinutes,
                 display: formatHours(row.occupiedMinutes),
                 detail: `${row.utilisationPercent.toFixed(1)}% in use`,

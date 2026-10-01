@@ -35,6 +35,7 @@ public class PoolTableRequestDTO {
     private BigDecimal ratePerHour;
 
     private Boolean isActive;
+    private Boolean isPremium;
 
     // Mirrors PoolTableRateRequestDTO: two checks, so the message names which mistake was made.
     @JsonIgnore

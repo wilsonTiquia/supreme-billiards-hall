@@ -381,7 +381,9 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
             )
               .sort((a, b) => b.timeRevenue - a.timeRevenue)
               .map((row) => ({
+                id: row.tableId,
                 label: row.tableName,
+                isPremium: row.isPremium,
                 value: row.timeRevenue,
                 display: formatPesos(row.timeRevenue),
                 detail: `${formatHours(row.occupiedMinutes)} held · ${formatPesos(row.revenuePerOccupiedHour)} per hour held`,

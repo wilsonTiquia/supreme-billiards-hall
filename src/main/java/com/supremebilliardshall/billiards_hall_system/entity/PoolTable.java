@@ -37,6 +37,10 @@ public class PoolTable implements BranchScoped {
     @Column(name = "is_active", nullable = false)
     private Boolean isActive;
 
+    // Classification is independent of every rate and billing mode.
+    @Column(name = "is_premium", nullable = false)
+    private Boolean isPremium = false;
+
     @Column(name = "archived_at")
     private OffsetDateTime archivedAt;
 

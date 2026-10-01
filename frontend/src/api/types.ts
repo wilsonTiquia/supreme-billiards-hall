@@ -268,6 +268,8 @@ export interface TableSessionSummary {
 
 export interface PoolTable {
   id: UUID;
+  /** Classification only; never selects a rate. */
+  isPremium: boolean;
   name: string;
   tableNumber: number | null;
   isActive: boolean;
@@ -300,6 +302,8 @@ export interface FloorView {
  */
 export interface PoolTableRequest {
   name: string;
+  /** Defaults to Standard on create; omission preserves the flag on update. */
+  isPremium?: boolean;
   tableNumber?: number;
   ratePerMinute?: Rate;
   ratePerHour?: Money;
@@ -947,7 +951,10 @@ export interface HourlySales {
 }
 
 export interface TableUtilisation {
+  tableId: UUID;
   tableName: string;
+  /** Current classification; historical revenue and occupancy remain unchanged. */
+  isPremium: boolean;
   /** Wall clock the table was held, pauses included — occupancy, not what was charged. */
   occupiedMinutes: number;
   /** Against a 19-hour day. */
@@ -1377,7 +1384,10 @@ export interface ExpenseMonthGrid {
 }
 
 export interface PeriodTable {
+  tableId: UUID;
   tableName: string;
+  /** Current classification; historical revenue and occupancy remain unchanged. */
+  isPremium: boolean;
   /** Wall clock, pauses included — the dashboard's definition. */
   occupiedMinutes: number;
   /** Over 19 hours × the period's trading days. Null when there were none. */

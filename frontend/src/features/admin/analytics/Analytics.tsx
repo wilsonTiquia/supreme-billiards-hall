@@ -119,14 +119,17 @@ export function RankedBars({
 
 type SummaryRow = { label: string; display: string; detail?: string };
 
-export function TableTiles({ rows, empty }: { rows: SummaryRow[]; empty: string }) {
+export function TableTiles({ rows, empty }: { rows: (SummaryRow & { id: string; isPremium: boolean })[]; empty: string }) {
   if (!rows.length) return <EmptyState title="No activity yet">{empty}</EmptyState>;
-  return <ul className="analytics-table-tiles">{rows.map((row, index) =>
-    <li key={`${row.label}-${index}`}>
-      <h3>{row.label}</h3><strong>{row.display}</strong>
+  return <>
+    <ul className="analytics-table-tiles">{rows.map(row =>
+    <li key={row.id}>
+      <h3>{row.label} {row.isPremium && <span role="img" aria-label="Premium table">★</span>}</h3><strong>{row.display}</strong>
       <p className="analytics-note">{row.detail}</p>
     </li>)}
-  </ul>;
+  </ul>
+    {rows.some(row => row.isPremium) && <p className="analytics-note">★ Premium</p>}
+  </>;
 }
 
 export function ProductSummary({ rows }: { rows: SummaryRow[] }) {
