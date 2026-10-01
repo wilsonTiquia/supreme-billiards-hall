@@ -188,20 +188,6 @@
 .analytics-ranks li:nth-child(n + 2) .analytics-track > div {
   opacity: 0.65;
 }
-.analytics-split {
-  display: flex;
-  height: 14px;
-  gap: 3px;
-  margin: 20px 0;
-  border-radius: 5px;
-  overflow: hidden;
-}
-.analytics-split > div:first-child {
-  background: var(--analytics-accent);
-}
-.analytics-split > div:last-child {
-  background: var(--analytics-secondary);
-}
 .analytics-ledger > div {
   display: flex;
   justify-content: space-between;
@@ -431,4 +417,52 @@
   .analytics-table {
     white-space: normal;
   }
+}
+
+/* Shared dashboard/report summaries retain their own server-provided measures. */
+.analytics-table-tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.analytics-summary-panels > .analytics-panel { display: flex; flex-direction: column; }
+.analytics-products { flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
+.analytics-table-tiles li { border: 1px solid var(--border); border-radius: 8px; padding: 14px; min-width: 0; }
+.analytics-table-tiles h3 { font-size: 13px; overflow-wrap: anywhere; margin-bottom: 8px; }
+.analytics-table-tiles strong { font-size: 19px; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.analytics-products li { padding: 14px 0; border-bottom: 1px solid var(--border); }
+.analytics-products li:first-child { padding-top: 0; }
+.analytics-products li:last-child { border-bottom: 0; padding-bottom: 0; }
+.analytics-products li > div { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; font-size: 14px; }
+.analytics-products h3 { font-weight: 600; overflow-wrap: anywhere; min-width: 0; }
+.analytics-products strong { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 650; }
+.analytics-sales-mix { display: grid; grid-template-columns: minmax(100px, 0.8fr) minmax(0, 1.2fr); gap: 20px; align-items: center; }
+.analytics-donut { width: 100%; max-width: 220px; justify-self: center; }
+.analytics-sales-mix .analytics-ledger > div { flex-wrap: wrap; }
+.analytics-hour-panel { display: flex; flex-direction: column; }
+.analytics-chart { min-width: 0; }
+.analytics-chart-plot { position: relative; }
+.analytics-chart-tooltip { position: absolute; z-index: 2; transform: translate(-50%, calc(-100% - 8px)); width: 220px; max-width: 100%; padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 2px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); box-shadow: 0 4px 14px #0002; font-size: 12px; pointer-events: none; font-variant-numeric: tabular-nums; }
+.analytics-chart-tooltip > span:first-child { flex-basis: 100%; }
+.analytics-chart-tooltip strong { font-size: 15px; }
+[data-chart-bar] { cursor: pointer; outline: none; }
+[data-chart-bar]:focus-visible .analytics-chart-hit { stroke: var(--info); stroke-width: 2; }
+.analytics-chart-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 12px; font-size: 12px; color: var(--text-dim); }
+.analytics .analytics-chart-picker select { min-height: 44px; min-width: 0; flex: 1; width: 190px; font-size: 12px; }
+.analytics-chart-caption { margin-top: 16px; }
+.analytics-hour-chart { flex: 1; display: flex; flex-direction: column; }
+.analytics-hour-drawing { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+.analytics-hour-chart .analytics-chart-caption { margin-top: auto; padding-top: 16px; }
+/* Keep the reference line; temporarily clear its label for the tooltip. */
+.analytics-break-even-selected { visibility: hidden; }
+.analytics-chart-figures { display: none; }
+@media (max-width: 600px) {
+  .analytics-sales-mix { grid-template-columns: 100px minmax(0, 1fr); gap: 12px; }
+  .analytics-table-tiles li { padding: 12px; }
+}
+@media print {
+  .analytics-chart-tooltip, .analytics-chart-picker { display: none !important; }
+  .analytics-chart-plot { margin-top: 0; }
+  .analytics-break-even-selected { visibility: visible; }
+  .analytics-chart-figures { display: table; width: 100%; margin-top: 12px; font-size: 10px; border-collapse: collapse; }
+  .analytics-chart-figures :is(th, td) { text-align: right; padding: 3px 6px; border-bottom: 1px solid var(--border); }
+  .analytics-chart-figures th:first-child { text-align: left; }
+  .analytics-chart-figures caption { text-align: left; font-weight: 650; }
+  .analytics-chart-figures tr, .analytics-table-tiles li, .analytics-products li { break-inside: avoid; }
 }

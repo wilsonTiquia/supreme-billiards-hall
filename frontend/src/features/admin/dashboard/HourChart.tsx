@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useId } from 'react';
+import { ChartTooltip, ChartPicker, ChartFigures, useChartSelection } from '../analytics/ChartInteraction';
 import type { HourlySales } from '@/api/types';
-import { formatPesos } from '@/lib/money';
+import { formatMoney, formatPesos } from '@/lib/money';
 
 /**
  * Sales by hour, drawn as a rail.
@@ -17,9 +18,9 @@ import { formatPesos } from '@/lib/money';
  */
 const HOURS = [...Array.from({ length: 14 }, (_, i) => i + 10), 0, 1, 2, 3, 4];
 
-const W = 1000;
-const H = 124;
-const RAIL_Y = 104;
+const W = 760;
+const H = 220;
+const RAIL_Y = 194;
 
 function hourLabel(hour: number): string {
   const twelve = hour % 12 === 0 ? 12 : hour % 12;
@@ -27,7 +28,9 @@ function hourLabel(hour: number): string {
 }
 
 export function HourChart({ hours }: { hours: HourlySales[] }) {
-  const [hovered, setHovered] = useState<number | null>(null);
+  const selection = useChartSelection(HOURS.length);
+  const hovered = selection.active;
+  const tooltipId = useId();
   const byHour = new Map(hours.map((entry) => [entry.hour, entry]));
   const peak = Math.max(...HOURS.map((h) => byHour.get(h)?.amount ?? 0), 0);
   const slot = W / HOURS.length;
@@ -42,20 +45,20 @@ export function HourChart({ hours }: { hours: HourlySales[] }) {
     return <p className="text-body text-text-dim">Nothing sold yet.</p>;
   }
 
-  // The caption is the hover readout: the hour under the pointer, or the busiest one when
-  // nothing is. A readout that is always on screen works on a phone, where nothing hovers.
-  const shown = hovered ?? busiest;
-  const shownEntry = byHour.get(shown);
+  const shownEntry = byHour.get(busiest);
+  const activeHour = hovered === null ? null : HOURS[hovered];
+  const active = activeHour === null ? null : byHour.get(activeHour);
 
   return (
-    <div>
+    <div className="analytics-chart analytics-hour-chart">
+      <div className="analytics-hour-drawing">
+      <div className="analytics-chart-plot">
       <svg
         viewBox={`0 0 ${W} ${H}`}
         width="100%"
-        role="img"
+        role="group"
         aria-label={`Sales by hour from 10am to 4am. Busiest hour ${hourLabel(busiest)}.`}
         className="block"
-        onMouseLeave={() => setHovered(null)}
       >
         {HOURS.map((hour, index) => {
           const amount = byHour.get(hour)?.amount ?? 0;
@@ -63,10 +66,12 @@ export function HourChart({ hours }: { hours: HourlySales[] }) {
           const x = index * slot + (slot - barWidth) / 2;
           const cx = index * slot + slot / 2;
           return (
-            <g key={hour} onMouseEnter={() => setHovered(hour)} onClick={() => setHovered(hour)}>
+            <g key={hour} {...selection.barProps(index)}
+              aria-label={`${hourLabel(hour)}: ${formatMoney(amount)}, ${byHour.get(hour)?.bills ?? 0} bills`}
+              aria-describedby={hovered === index ? tooltipId : undefined}>
               {/* The whole column is the hit area, so a thin bar is as easy to point at as a
                   tall one. */}
-              <rect x={index * slot} y="0" width={slot} height={RAIL_Y} fill="transparent" />
+              <rect x={index * slot} y="0" width={slot} height={RAIL_Y} fill="transparent" className="analytics-chart-hit" />
               {height > 0 ? (
                 <rect
                   x={x}
@@ -74,7 +79,7 @@ export function HourChart({ hours }: { hours: HourlySales[] }) {
                   width={barWidth}
                   height={height}
                   rx="3"
-                  className={hour === shown ? 'fill-chart-bar-strong' : 'fill-chart-bar'}
+                  className={hour === (activeHour ?? busiest) ? 'fill-chart-bar-strong' : 'fill-chart-bar'}
                 />
               ) : null}
               {/* The sights. Every third hour — a rail marks positions, it does not fence
@@ -91,6 +96,10 @@ export function HourChart({ hours }: { hours: HourlySales[] }) {
         })}
         <rect x="0" y={RAIL_Y} width={W} height="3" rx="1.5" className="fill-chart-bar" />
       </svg>
+      {activeHour !== null && <ChartTooltip id={tooltipId} x={(hovered! + 0.5) / HOURS.length * 100}
+        y={(RAIL_Y - ((active?.amount ?? 0) / peak) * (RAIL_Y - 14)) / H * 100}
+        label={hourLabel(activeHour)} amount={active?.amount ?? 0} bills={active?.bills ?? 0} />}
+      </div>
 
       {/* Hour labels sit outside the SVG so they keep their real size at any width. min-w-0
           is what stops them forcing the page sideways: nineteen flex items each with the
@@ -111,11 +120,13 @@ export function HourChart({ hours }: { hours: HourlySales[] }) {
         ))}
       </div>
 
-      <p className="tabular mt-2 text-label text-text-dim" aria-live="polite">
-        {hovered === null ? 'Busiest at ' : ''}
-        {hourLabel(shown)} · {formatPesos(shownEntry?.amount ?? 0)}
+      </div>
+      <ChartPicker label="Select hour" options={HOURS.map(hourLabel)} active={hovered} onSelect={selection.select} />
+      <p className="analytics-chart-caption tabular text-label text-text-dim">
+        Busiest at {hourLabel(busiest)} · {formatPesos(shownEntry?.amount ?? 0)}
         {shownEntry ? ` · ${shownEntry.bills} ${shownEntry.bills === 1 ? 'bill' : 'bills'}` : ''}
       </p>
+      <ChartFigures label="Sales by hour" rows={HOURS.map(hour => ({ label: hourLabel(hour), amount: byHour.get(hour)?.amount ?? 0, bills: byHour.get(hour)?.bills ?? 0 }))} />
     </div>
   );
 }

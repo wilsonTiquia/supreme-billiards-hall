@@ -15,7 +15,8 @@ import {
   AnalyticsPanel,
   AnalyticsLoading,
   EmptyState,
-  RankedBars,
+  TableTiles,
+  ProductSummary,
   Stat,
 } from '../analytics/Analytics';
 import { ReportExplorer } from './ReportExplorer';
@@ -367,12 +368,12 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
         />
       </section>
 
-      <div className="analytics-grid analytics-grid-equal">
+      <div className="analytics-grid analytics-grid-equal analytics-summary-panels">
         <AnalyticsPanel
           title="Which tables generate sales?"
           subtitle="Time revenue · before bill-level discounts"
         >
-          <RankedBars
+          <TableTiles
             empty="No table sales or occupied time recorded in this period."
             rows={(data.tables.some((row) => row.occupiedMinutes > 0 || row.timeRevenue > 0)
               ? [...data.tables]
@@ -391,7 +392,7 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
           title="What are the best-selling products?"
           subtitle="Top 5 by sales · before bill-level discounts"
         >
-          <RankedBars
+          <ProductSummary
             rows={[...data.products]
               .sort((a, b) => b.revenue - a.revenue)
               .slice(0, 5)
@@ -399,7 +400,7 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
                 label: row.name,
                 value: row.revenue,
                 display: formatPesos(row.revenue),
-                detail: `${row.quantity} units · ${formatPesos(row.margin)} product margin`,
+                detail: `${row.quantity.toLocaleString('en-PH')} units sold`,
               }))}
           />
         </AnalyticsPanel>

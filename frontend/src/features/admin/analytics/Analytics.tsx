@@ -115,3 +115,44 @@ export function RankedBars({
     </ol>
   );
 }
+
+
+type SummaryRow = { label: string; display: string; detail?: string };
+
+export function TableTiles({ rows, empty }: { rows: SummaryRow[]; empty: string }) {
+  if (!rows.length) return <EmptyState title="No activity yet">{empty}</EmptyState>;
+  return <ul className="analytics-table-tiles">{rows.map((row, index) =>
+    <li key={`${row.label}-${index}`}>
+      <h3>{row.label}</h3><strong>{row.display}</strong>
+      <p className="analytics-note">{row.detail}</p>
+    </li>)}
+  </ul>;
+}
+
+export function ProductSummary({ rows }: { rows: SummaryRow[] }) {
+  if (!rows.length) return <EmptyState title="No activity yet">No products sold in this period.</EmptyState>;
+  return <ul className="analytics-products">{rows.map((row, index) =>
+    <li key={`${row.label}-${index}`}>
+      <div><h3>{row.label}</h3><strong>{row.display}</strong></div>
+      <p className="analytics-note">{row.detail}</p>
+    </li>)}
+  </ul>;
+}
+
+/** Only positive source amounts form slices. Adjustments remain in the numeric ledger. */
+export function SalesDonut({ time, products }: { time: number; products: number }) {
+  const total = Math.max(0, time) + Math.max(0, products);
+  const timeShare = total > 0 ? Math.max(0, time) / total * 100 : 0;
+  return <svg viewBox="0 0 160 160" className="analytics-donut" role="img"
+    aria-label={total > 0 ? 'Sales sources before bill discounts and vouchers; amounts in the legend' : 'No sales sources recorded'}>
+    <circle cx="80" cy="80" r="60" fill="none" stroke="var(--border)" strokeWidth="24" />
+    {total > 0 && <g transform="rotate(-90 80 80)" fill="none" strokeWidth="24">
+      {time > 0 && <circle cx="80" cy="80" r="60" pathLength="100" stroke="var(--analytics-accent)"
+        strokeDasharray={`${timeShare} ${100 - timeShare}`} />}
+      {products > 0 && <circle cx="80" cy="80" r="60" pathLength="100" stroke="var(--analytics-secondary)"
+        strokeDasharray={`${100 - timeShare} ${timeShare}`} strokeDashoffset={-timeShare} />}
+    </g>}
+    <text x="80" y="78" textAnchor="middle" className="fill-text" fontSize="14">{total > 0 ? 'Sales mix' : 'No sales'}</text>
+    <text x="80" y="97" textAnchor="middle" className="fill-text-dim" fontSize="10">Before adjustments</text>
+  </svg>;
+}
