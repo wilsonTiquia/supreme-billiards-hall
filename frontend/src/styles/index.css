@@ -71,6 +71,11 @@
      tablet works later without a redesign. */
   .hit { min-height: 44px; }
 
+  /* Keyboard/browser scrolling must leave floor controls below the sticky date strip. */
+  .floor-content :where(button, a, input, select, textarea, [tabindex]) {
+    scroll-margin-top: 6rem;
+  }
+
   /* ── The light over the table ──────────────────────────────────────────────────
      In the hall a table in play is a table under a lamp and the rest of the room is dark.
      That is how the floor reads from a standing position, so it is how these cards read:

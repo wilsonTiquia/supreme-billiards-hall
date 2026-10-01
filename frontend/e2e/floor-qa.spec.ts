@@ -182,7 +182,7 @@ test('quick sale photo failure keeps the payment and receipt fallback retries on
   }
   await page.getByRole('button', { name: /^Take ₱/ }).click();
   await expect(page.getByRole('heading', { name: 'Sold', exact: true })).toBeVisible();
-  await expect(page.locator('main').getByRole('status')).toContainText('Payment recorded. Photo could not be attached');
+  await expect(page.locator('main').getByRole('status').filter({ hasText: 'Payment recorded.' })).toContainText('Payment recorded. Photo could not be attached');
   expect(payments).toHaveLength(1);
   for (const width of [400, 1280]) for (const theme of ['light', 'dark']) {
     await page.setViewportSize({ width, height: width === 400 ? 800 : 720 });
@@ -197,7 +197,7 @@ test('quick sale photo failure keeps the payment and receipt fallback retries on
   await expect(page.getByLabel('Add photo (optional confirmation)')).toBeEnabled();
   for (const width of [400, 1280]) for (const theme of ['light', 'dark']) {
     await appearance(page, width, theme);
-    await expect(page.locator('main').getByRole('status')).toContainText('Payment recorded. Photo could not be attached');
+    await expect(page.locator('main').getByRole('status').filter({ hasText: 'Payment recorded.' })).toContainText('Payment recorded. Photo could not be attached');
     await capture(page, 'receipt-fallback', width, theme);
   }
   await page.getByLabel('Add photo (optional confirmation)').setInputFiles(photo);
