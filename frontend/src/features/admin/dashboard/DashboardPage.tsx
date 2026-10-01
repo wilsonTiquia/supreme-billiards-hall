@@ -16,7 +16,7 @@ import { messageOf } from '@/api/errors';
 import type { CashCount, DailyReport, Losses, TimeRevenueByMode } from '@/api/types';
 import { useScreenTheme } from '@/app/useTheme';
 import { Banner } from '@/components/Banner';
-import { AnalyticsPanel, AnalyticsLoading, RankedBars, Stat } from '../analytics/Analytics';
+import { AnalyticsPanel, AnalyticsLoading, RankedBars, TableTiles, ProductSummary, SalesDonut, Stat } from '../analytics/Analytics';
 import { SalesByNight } from '../reports/SalesByNight';
 import { presetRange } from '../reports/periodDates';
 import { Disclosure } from '@/components/Disclosure';
@@ -224,55 +224,55 @@ function Night({
         <AnalyticsPanel
           title="Where did the sales come from?"
         >
-          {subtotal > 0 && (
-            <div className="analytics-split" aria-hidden>
-              <div style={{ width: `${(totals.timeRevenue / subtotal) * 100}%` }} />
-              <div style={{ width: `${(totals.itemRevenue / subtotal) * 100}%` }} />
-            </div>
-          )}
-          <div className="analytics-ledger">
-            <div>
-              <span>
-                <i className="analytics-dot" />
-                Table time
-              </span>
-              <strong>{formatPesos(totals.timeRevenue)}</strong>
-            </div>
-            <div>
-              <span>
-                <i className="analytics-dot analytics-dot-secondary" />
-                Products
-              </span>
-              <strong>{formatPesos(totals.itemRevenue)}</strong>
-            </div>
-            {Math.abs(adjustment) >= 0.005 && (
+          <div className="analytics-sales-mix">
+            <SalesDonut time={totals.timeRevenue} products={totals.itemRevenue} />
+            <div className="analytics-ledger">
               <div>
-                <span>Bill discounts & vouchers</span>
-                <strong>
-                  {adjustment >= 0 ? '−' : '+'}
-                  {formatPesos(Math.abs(adjustment))}
-                </strong>
+                <span>
+                  <i className="analytics-dot" />
+                  Table time
+                </span>
+                <strong>{formatPesos(totals.timeRevenue)}</strong>
               </div>
-            )}
-            <div className="analytics-ledger-total">
-              <span>Total sales</span>
-              <strong>{formatPesos(totals.gross)}</strong>
+              <div>
+                <span>
+                  <i className="analytics-dot analytics-dot-secondary" />
+                  Products
+                </span>
+                <strong>{formatPesos(totals.itemRevenue)}</strong>
+              </div>
+              {Math.abs(adjustment) >= 0.005 && (
+                <div>
+                  <span>Bill discounts & vouchers</span>
+                  <strong>
+                    {adjustment >= 0 ? '−' : '+'}
+                    {formatPesos(Math.abs(adjustment))}
+                  </strong>
+                </div>
+              )}
+              <div className="analytics-ledger-total">
+                <span>Total sales</span>
+                <strong>{formatPesos(totals.gross)}</strong>
+              </div>
             </div>
           </div>
         </AnalyticsPanel>
       </div>
-      <div className="analytics-grid analytics-grid-equal">
+      <div className="analytics-grid analytics-grid-equal analytics-summary-panels">
         <AnalyticsPanel
           title="Which tables were used most?"
+          subtitle="Held time · share of the 19-hour business day"
         >
-          <RankedBars
+          <TableTiles
             empty="No table time on closed bills for this day."
             rows={(heldTables.some((row) => row.occupiedMinutes > 0) ? heldTables : []).map(
               (row) => ({
+                id: row.tableId,
                 label: row.tableName,
+                isPremium: row.isPremium,
                 value: row.occupiedMinutes,
                 display: formatHours(row.occupiedMinutes),
-                detail: `${row.utilisationPercent.toFixed(1)}% of the 19-hour business day`,
+                detail: `${row.utilisationPercent.toFixed(1)}% in use`,
               }),
             )}
           />
@@ -280,7 +280,7 @@ function Night({
         <AnalyticsPanel
           title="What are customers buying?"
         >
-          <RankedBars
+          <ProductSummary
             rows={data.topItems
               .slice(0, 5)
               .map((row) => ({
@@ -295,6 +295,7 @@ function Night({
       <div className="analytics-grid analytics-grid-equal">
         <AnalyticsPanel
           title="When were sales closed?"
+          className="analytics-hour-panel"
         >
           <HourChart hours={data.salesByHour} />
         </AnalyticsPanel>

@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.math.BigDecimal;
+import java.util.UUID;
 
 // One pool table over the period. Sorted weakest first by the service's SQL, so a premium
 // table earning less per hour than a standard one is the first row the owner reads.
@@ -13,7 +14,10 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class PeriodTableDTO {
 
+    private UUID tableId;
     private String tableName;
+    // Current table classification, independent of historical billed amounts.
+    private Boolean isPremium;
     // Wall clock the table was held, pauses included -- the daily's definition, and the long
     // comment on its segment_minutes CTE says why. Not the charged figure.
     private Integer occupiedMinutes;

@@ -91,6 +91,10 @@ public class PoolTableServiceImpl implements PoolTableService {
             poolTable.setIsActive(true);
         }
 
+        if (poolTable.getIsPremium() == null) {
+            poolTable.setIsPremium(false);
+        }
+
         PoolTable savedTable = poolTableRepository.save(poolTable);
         // Not routed through changeRate, unlike an update: there is no period to close, and a
         // POOL_TABLE_RATE_CHANGED row for a table that never had a rate would read as a reprice.
@@ -120,9 +124,15 @@ public class PoolTableServiceImpl implements PoolTableService {
 
         Map<String, Object> before = auditSnapshot(existing, currentRateOf(existing.getId()));
         Boolean isActive = existing.getIsActive();
+        Boolean isPremium = existing.getIsPremium();
         poolTableMapper.updateEntityFromDto(poolTableRequestDTO, existing);
         if (existing.getIsActive() == null) {
             existing.setIsActive(isActive);
+        }
+
+        // Older clients omit the classification; an ordinary edit must preserve it.
+        if (existing.getIsPremium() == null) {
+            existing.setIsPremium(isPremium);
         }
 
         PoolTable updated = poolTableRepository.save(existing);
@@ -219,6 +229,7 @@ public class PoolTableServiceImpl implements PoolTableService {
         snapshot.put("ratePerMinute", ratePerMinute);
         snapshot.put("ratePerHour", ratePerHour);
         snapshot.put("isActive", table.getIsActive());
+        snapshot.put("isPremium", table.getIsPremium());
         snapshot.put("archivedAt", table.getArchivedAt());
         return snapshot;
     }

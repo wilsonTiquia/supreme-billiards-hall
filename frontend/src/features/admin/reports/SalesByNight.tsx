@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { ChartTooltip, ChartPicker, ChartFigures, useChartSelection } from '../analytics/ChartInteraction';
 import type { PeriodDay } from '@/api/types';
-import { formatPesos } from '@/lib/money';
+import { formatMoney, formatPesos } from '@/lib/money';
 import { useMediaQuery } from '@/lib/useMediaQuery';
 import { dayMonth, isWeekendNight, shortNight } from './periodDates';
 
@@ -30,7 +31,25 @@ export function SalesByNight({
   /** Suppress the ranking while a dashboard night is still in progress. */
   showBestNight?: boolean;
 }) {
-  const [hovered, setHovered] = useState<number | null>(null);
+  const selection = useChartSelection(days.length);
+  const hovered = selection.active;
+  const tooltipId = useId();
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [labelOverlaps, setLabelOverlaps] = useState(false);
+  useLayoutEffect(() => {
+    const plot = plotRef.current;
+    if (!plot) return;
+    const measure = () => {
+      const tooltip = plot.querySelector('[role="tooltip"]')?.getBoundingClientRect();
+      const label = plot.querySelector('.analytics-break-even-label')?.getBoundingClientRect();
+      setLabelOverlaps(Boolean(tooltip && label && tooltip.left < label.right && tooltip.right > label.left
+        && tooltip.top < label.bottom && tooltip.bottom > label.top));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(plot);
+    return () => observer.disconnect();
+  }, [hovered, days, breakEven]);
   // A phone gets the whole month in view rather than a scrollbar that hides the last week.
   // The drawing scales down with the viewBox, so the text is drawn larger to survive it and
   // half the nights are labelled.
@@ -54,7 +73,7 @@ export function SalesByNight({
   const plotWidth = WIDTH - PADDING.left - PADDING.right;
   const plotHeight = HEIGHT - PADDING.top - PADDING.bottom;
   const slot = plotWidth / days.length;
-  const barWidth = Math.max(slot - 4, 2);
+  const barWidth = Math.max(slot - 4, slot * 0.7);
   const y = (value: number) => PADDING.top + plotHeight - (value / top) * plotHeight;
 
   // Label every night when there is room, otherwise every few; past two months, only the
@@ -63,18 +82,19 @@ export function SalesByNight({
   const long = days.length > 62;
 
   const best = days.reduce((a, b) => (b.gross > a.gross ? b : a), days[0]);
-  const shown = hovered === null ? (showBestNight ? best : days[days.length - 1]) : days[hovered];
+  const shown = showBestNight ? best : days[days.length - 1];
+  const active = hovered === null ? null : days[hovered];
+  const label = (day: PeriodDay) => `${shortNight(day.businessDate)} ${dayMonth(day.businessDate).split(' ')[1]} · ${day.businessDate}`;
 
   return (
-    <div>
-      <div className="overflow-x-auto">
+    <div className="analytics-chart">
+      <div className="analytics-chart-plot" ref={plotRef}>
         <svg
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
           width="100%"
-          role="img"
+          role="group"
           aria-label={`Sales per night across the period${breakEven === null ? '' : ', with the break-even line'}`}
           className="block"
-          onMouseLeave={() => setHovered(null)}
         >
           {ticks.map((value) => (
             <g key={value}>
@@ -96,8 +116,10 @@ export function SalesByNight({
             const x = PADDING.left + index * slot + (slot - barWidth) / 2;
             const weekend = isWeekendNight(day.businessDate);
             return (
-              <g key={day.businessDate} onMouseEnter={() => setHovered(index)} onClick={() => setHovered(index)}>
-                <rect x={PADDING.left + index * slot} y={PADDING.top} width={slot} height={plotHeight} fill="transparent" />
+              <g key={day.businessDate} {...selection.barProps(index)}
+                aria-label={`${label(day)}: ${formatMoney(day.gross)}, ${day.bills} bills`}
+                aria-describedby={hovered === index ? tooltipId : undefined}>
+                <rect x={PADDING.left + index * slot} y={PADDING.top} width={slot} height={plotHeight} fill="transparent" className="analytics-chart-hit" />
                 {day.gross > 0 ? (
                   <rect
                     x={x}
@@ -137,17 +159,19 @@ export function SalesByNight({
               />
               {/* At the left end, on a backing in the card's own colour so it stays legible
                   when the first bars run through it — which on a good month they all do. */}
-              <rect
-                x={PADDING.left + 2}
-                y={y(breakEven) - 5 - 11 * fontScale}
-                width={(`break-even ${formatPesos(breakEven)}`.length * 6.2 + 8) * fontScale}
-                height={15 * fontScale}
-                rx="3"
-                className="fill-surface"
-              />
-              <text x={PADDING.left + 6} y={y(breakEven) - 5} className="fill-text-dim" fontSize={11 * fontScale}>
-                break-even {formatPesos(breakEven)}
-              </text>
+              <g className={`analytics-break-even-label ${labelOverlaps ? 'analytics-break-even-selected' : ''}`}>
+                <rect
+                  x={PADDING.left + 2}
+                  y={y(breakEven) - 5 - 11 * fontScale}
+                  width={(`break-even ${formatPesos(breakEven)}`.length * 6.2 + 8) * fontScale}
+                  height={15 * fontScale}
+                  rx="3"
+                  className="fill-surface"
+                />
+                <text x={PADDING.left + 6} y={y(breakEven) - 5} className="fill-text-dim" fontSize={11 * fontScale}>
+                  break-even {formatPesos(breakEven)}
+                </text>
+              </g>
             </g>
           ) : null}
 
@@ -160,12 +184,16 @@ export function SalesByNight({
             strokeWidth="1"
           />
         </svg>
+        {active && <ChartTooltip id={tooltipId} x={(PADDING.left + (hovered! + 0.5) * slot) / WIDTH * 100}
+          y={y(active.gross) / HEIGHT * 100} label={label(active)} amount={active.gross} bills={active.bills} />}
       </div>
-      <p className="tabular mt-2 text-label text-text-dim" aria-live="polite">
-        {hovered === null && showBestNight ? 'Best night: ' : ''}
+      <ChartPicker label="Select night" options={days.map(label)} active={hovered} onSelect={selection.select} />
+      <p className="analytics-chart-caption tabular text-label text-text-dim">
+        {showBestNight ? 'Best night: ' : ''}
         {shortNight(shown.businessDate)} {dayMonth(shown.businessDate).split(' ')[1]} ·{' '}
         {formatPesos(shown.gross)} · {shown.bills} {shown.bills === 1 ? 'bill' : 'bills'}
       </p>
+      <ChartFigures label="Sales by night" rows={days.map(day => ({ label: day.businessDate, amount: day.gross, bills: day.bills }))} />
     </div>
   );
 }

@@ -39,6 +39,7 @@ export function TablesPage() {
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.setup('tables') });
     void queryClient.invalidateQueries({ queryKey: queryKeys.floor });
+    void queryClient.invalidateQueries({ queryKey: ['reports'] });
   }
 
   const save = useMutation({
@@ -89,6 +90,7 @@ export function TablesPage() {
                 <div>
                   <div className="text-body text-text">
                     {table.name}
+                    <span className="ml-2 text-label text-text-dim">{table.isPremium ? '★ Premium' : 'Standard'}</span>
                     {table.session ? (
                       <span className="ml-2 text-label uppercase text-green">In use</span>
                     ) : null}
@@ -164,6 +166,7 @@ function TableForm({
   const [mode, setMode] = useState<RateMode>(table?.ratePerHour != null ? 'hour' : 'minute');
   const [rate, setRate] = useState(initialRateValue(table));
   const [isActive, setIsActive] = useState(table?.isActive ?? true);
+  const [isPremium, setIsPremium] = useState(table?.isPremium ?? false);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -173,6 +176,7 @@ function TableForm({
       tableNumber: tableNumber.trim() === '' ? undefined : Number(tableNumber),
       ...rateBody(mode, rate),
       isActive,
+      isPremium,
     });
   }
 
@@ -207,6 +211,13 @@ function TableForm({
               : 'Required — a table with no rate cannot host a session.'
           }
         />
+        <div>
+          <label className="hit flex cursor-pointer items-center gap-3 text-body text-text">
+            <input type="checkbox" checked={isPremium} onChange={event => setIsPremium(event.target.checked)} className="size-6" />
+            Premium table
+          </label>
+          <p className="text-label text-text-dim">Classification only. Changing it does not change rates.</p>
+        </div>
         <label className="hit flex cursor-pointer items-center gap-3 text-body text-text">
           <input
             type="checkbox"

@@ -137,7 +137,7 @@ public class ReportRepository {
               WHERE b.business_date = p.d GROUP BY sg.pool_table_id
             ),
             table_util AS (
-              SELECT t.name AS "tableName",
+              SELECT t.id AS "tableId", t.name AS "tableName", t.is_premium AS "isPremium",
                      round(coalesce(sm.minutes, 0))::int AS "occupiedMinutes",
                      -- The business day is 19 hours long: 10:00 to 05:00.
                      round(coalesce(sm.minutes, 0) / (19 * 60) * 100, 1) AS "utilisationPercent"
@@ -868,7 +868,8 @@ public class ReportRepository {
               -- Live tables always; an archived one only if it was played in the period, or its
               -- revenue would be attributed to nothing. Utilisation is over the period's
               -- TRADING days of 19 hours each, and NULL when there were none.
-              SELECT t.name                                                       AS "tableName",
+              SELECT t.id AS "tableId", t.is_premium AS "isPremium",
+                     t.name                                                       AS "tableName",
                      round(coalesce(st.minutes, 0))::int                          AS "occupiedMinutes",
                      CASE WHEN h."tradingDays" > 0
                           THEN round(coalesce(st.minutes, 0) / (19 * 60 * h."tradingDays") * 100, 1) END
