@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from 'react';
+import { Icon, type IconName } from './Icon';
 
 /**
  * A collapsed section with its one key figure on the closed header.
@@ -13,12 +14,15 @@ import { useId, useState, type ReactNode } from 'react';
  */
 export function Disclosure({
   title,
+  icon,
   summary,
   tone,
   defaultOpen = false,
   children,
 }: {
   title: string;
+  /** Opt into an icon-led header with stacked summary and trailing chevron. */
+  icon?: IconName;
   /** The key figure, shown beside the title while the section is closed and open alike. */
   summary?: ReactNode;
   /** Only when the figure itself is a warning. Neutral by default — most figures are facts. */
@@ -38,18 +42,27 @@ export function Disclosure({
         aria-controls={bodyId}
         className="hit flex w-full items-center gap-3 py-3 text-left print:hidden"
       >
-        <span
-          aria-hidden
-          className={`inline-block text-label text-text-dim transition-transform ${open ? 'rotate-90' : ''}`}
-        >
-          ▸
-        </span>
-        <span className="flex-1 text-body text-text">{title}</span>
-        {summary !== undefined ? (
-          <span className={`tabular text-body ${tone === 'danger' ? 'text-danger' : 'text-text-dim'}`}>
-            {summary}
+        {icon ? <>
+          <span className="disclosure-icon"><Icon name={icon} /></span>
+          <span className="disclosure-copy">
+            <span className="disclosure-title">{title}</span>
+            {summary !== undefined && <span className={`disclosure-summary ${tone === 'danger' ? 'text-danger' : 'text-text-dim'}`}>{summary}</span>}
           </span>
-        ) : null}
+          <span className={`disclosure-chevron ${open ? 'rotate-180' : ''}`}><Icon name="chevron-down" /></span>
+        </> : <>
+          <span
+            aria-hidden
+            className={`inline-block text-label text-text-dim transition-transform ${open ? 'rotate-90' : ''}`}
+          >
+            ▸
+          </span>
+          <span className="flex-1 text-body text-text">{title}</span>
+          {summary !== undefined ? (
+            <span className={`tabular text-body ${tone === 'danger' ? 'text-danger' : 'text-text-dim'}`}>
+              {summary}
+            </span>
+          ) : null}
+        </>}
       </button>
       {/* The printed header: the same title and figure, as a heading rather than a control. */}
       <h2 className="hidden print:block print:pt-4 text-heading text-text">

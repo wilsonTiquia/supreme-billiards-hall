@@ -146,7 +146,7 @@ export function AppShell() {
 
       <div className="flex min-w-0 flex-1 flex-col" inert={!desktop && drawerOpen ? true : undefined}>
         {/* The phone's way in. Hidden from 768 up, where the rail is always present. */}
-        <div className="flex items-center gap-3 border-b border-border px-4 py-2 md:hidden">
+        <div className="flex items-center gap-3 border-b border-border px-4 py-2 md:hidden print:hidden">
           <button
             type="button"
             onClick={() => setDrawerOpen(true)}

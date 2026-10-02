@@ -89,9 +89,16 @@ export function toneClass(tone: Change['tone']): string {
 }
 
 /** The comparison as a line under a figure. */
-export function ComparisonLine(props: Parameters<typeof describeChange>[0]) {
+export function ComparisonLine({ compact = false, ...props }: Parameters<typeof describeChange>[0] & { compact?: boolean }) {
   const change = describeChange(props);
-  return <p className={`mt-1 text-label ${toneClass(change.tone)}`}>{change.text}</p>;
+  // Reports names the two ranges once above all figures. Keep the full context for assistive tech.
+  const text = !compact ? change.text : props.before === 0 && props.now !== null
+    ? 'No trading in prior period'
+    : change.text.replace(` vs ${props.against}`, '').replace(` as ${props.against}`, '');
+  return <p className={`mt-1 text-label ${toneClass(change.tone)}`}>
+    <span aria-hidden={compact || undefined}>{text}</span>
+    {compact && <span className="sr-only">{change.text}</span>}
+  </p>;
 }
 
 /**
