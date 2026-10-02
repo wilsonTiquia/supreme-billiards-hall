@@ -10,6 +10,7 @@
   --text:      #EDF2EE;  /* 16.53:1 AAA */
   --text-dim:  #A3AFA7;  /*  8.25:1 AAA */
   --green:     #2FB457;  /*  6.94:1 AA  */
+  --warning:   #F0A24A;
   --danger:    #E5484D;  /*  4.78:1 AA  */
   --info:      #4C8DF6;  /*  5.75:1 AA  */
   --on-action: #0D0D0D;  /* label on primary/danger controls */
@@ -44,6 +45,7 @@
   --text:      #14201A;  /* 16.78:1 AAA */
   --text-dim:  #55635B;  /*  6.32:1 AA  */
   --green:     #14702E;  /*  6.20:1 AA  */
+  --warning:   #98500E;
   --danger:    #C0343A;  /*  5.54:1 AA  */
   --info:      #1B58C4;
   --ink:       #0D0D0D;

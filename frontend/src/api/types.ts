@@ -740,6 +740,8 @@ export interface CashCountRequest {
 }
 
 export interface CashCount {
+  /** Server flag: cash taken or paid out since counting makes the count stale and blocks close. */
+  stale: boolean;
   /**
    * Trading recorded on this business day AFTER it was closed. The night runs to 05:00, so a
    * sale at 03:30 joins a day signed off at 03:00 — and `expectedCash`, frozen at the moment

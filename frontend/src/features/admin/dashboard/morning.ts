@@ -29,6 +29,7 @@ export function cashStatus(count: CashCount | null, running: boolean, loading = 
   if (error) return { text: 'Cash check unavailable', danger: true };
   if (loading) return { text: 'Checking cash…', danger: false };
   if (!count) return { text: 'Not counted yet', danger: !running };
+  if (count.stale) return { text: 'Cash needs recounting · activity since count', danger: true };
   if (count.salesAfterClose > 0 || count.expensesAfterClose > 0) {
     return { text: 'Cash needs recounting · activity after close', danger: true };
   }

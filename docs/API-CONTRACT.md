@@ -1174,8 +1174,14 @@ the only check on the drawer. Refused with 409 once the day is closed, and 409 i
 unchanged. The original is not destroyed — it is written to `audit_log` as `CASH_COUNT_CORRECTED`
 with both the old and new values.
 
-**POST `/close`** → 409 while any session is open, with the message **naming the tables**, and 409
-if the drawer has not been counted. Both are hard preconditions.
+**GET `/cash-count`** also returns `stale`, `cashSinceCount`, `cashExpensesSinceCount`, and
+`staleSince`. These describe cash activity since `countedAt`, including the interval before
+closing. `stale` is true when cash was taken or paid out after counting; digital payments alone
+do not make it stale. The dashboard keeps this condition visible as a recount warning even
+when the recorded variance is zero. These fields already exist on the server.
+
+**POST `/close`** → 409 while any session is open, with the message **naming the tables**, if
+the drawer has not been counted, or if the count is stale. These are hard preconditions.
 
 Closing a day that is already closed → 409 naming when and by whom. The close is recorded on the
 cash count row, so it happens exactly once.

@@ -37,6 +37,8 @@ test('cash distinguishes missing, balanced, short, over, stale and unavailable c
   assert.equal(cashStatus(null, true).danger, false);
   const count = { variance: 0, salesAfterClose: 0, expensesAfterClose: 0 };
   assert.equal(cashStatus(count, false).text, 'Cash balanced');
+  assert.match(cashStatus({ ...count, stale: true }, false).text, /activity since count/);
+  assert.equal(cashStatus({ ...count, stale: true }, false).danger, true);
   assert.deepEqual(cashStatus({ ...count, variance: -120 }, false), { text: 'Short by ', amount: 120, danger: true });
   assert.equal(cashStatus({ ...count, variance: 120 }, false).text, 'Over by ');
   assert.match(cashStatus({ ...count, expensesAfterClose: 1 }, false).text, /recounting/);

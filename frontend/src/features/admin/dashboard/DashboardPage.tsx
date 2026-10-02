@@ -1,6 +1,7 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { dashboardNight, shiftDay, nightHasEnded, validNight, cashStatus } from './morning';
 import { LossesDetail, type LossKind } from './LossesDetail';
 import { HourChart } from './HourChart';
@@ -15,6 +16,8 @@ import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
 import type { CashCount, DailyReport, Losses, TimeRevenueByMode } from '@/api/types';
 import { useScreenTheme } from '@/app/useTheme';
+import { ButtonLink } from '@/components/Button';
+import { Icon, type IconName } from '@/components/Icon';
 import { Banner } from '@/components/Banner';
 import { AnalyticsPanel, AnalyticsLoading, RankedBars, TableTiles, ProductSummary, SalesDonut, Stat } from '../analytics/Analytics';
 import { SalesByNight } from '../reports/SalesByNight';
@@ -35,6 +38,8 @@ import './dashboard.css';
 export function DashboardPage() {
   useScreenTheme('admin');
   const definitionsId = useId();
+  const definitionsTrigger = useRef<HTMLButtonElement>(null);
+  const [definitionsOpen, setDefinitionsOpen] = useState(false);
   const [params, setParams] = useSearchParams();
   const requestedDate = params.get('date') || '';
   const setDate = (value: string) => {
@@ -109,15 +114,13 @@ export function DashboardPage() {
         <div className="dashboard-title-row">
           <div className="flex items-center gap-2">
             <h1 className="text-[28px] font-semibold tracking-tight text-text">Dashboard</h1>
-            <button type="button" popoverTarget={definitionsId} aria-label="How these numbers are worked out"
+            <button type="button" ref={definitionsTrigger} onClick={() => setDefinitionsOpen(true)}
+              aria-haspopup="dialog" aria-expanded={definitionsOpen} aria-controls={definitionsOpen ? definitionsId : undefined}
+              aria-label="How these numbers are worked out"
               className="hit flex w-11 items-center justify-center rounded-lg text-text-dim hover:bg-raised">
-              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden>
-                <circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7v1" />
-              </svg>
+              <Icon name="info" />
             </button>
           </div>
-          {shownDate && <Link className="hit inline-flex items-center text-body text-info underline underline-offset-4"
-            to={`/admin/reports?from=${shownDate}&to=${shownDate}`}>View report</Link>}
         </div>
         <div className="dashboard-date-heading">
           <div className="dashboard-date-control" role="group" aria-label="Business night">
@@ -132,7 +135,8 @@ export function DashboardPage() {
           </span>
         </div>
       </div>
-      <HowWorkedOut id={definitionsId} against={data?.comparedTo ? `last ${weekdayOf(data.comparedTo)}` : 'last week'} />
+      {definitionsOpen && <HowWorkedOut id={definitionsId} trigger={definitionsTrigger} onClose={() => setDefinitionsOpen(false)}
+        against={data?.comparedTo ? `last ${weekdayOf(data.comparedTo)}` : 'last week'} />}
       {currentDay.isError && <Banner tone="danger">The business clock is unavailable. Refresh to try again.</Banner>}
       {report.isError && <Banner tone="danger">{messageOf(report.error)}</Banner>}
 
@@ -149,6 +153,7 @@ export function DashboardPage() {
           cashLoading={cashCount.isPending}
           cashError={cashCount.isError}
           checksError={unsettled.isError || uncounted.isError}
+          checksLoading={unsettled.isPending || uncounted.isPending}
           trend={
             <AnalyticsPanel title="Sales this week">
               {trend.data ? <SalesByNight days={trend.data.byDay} breakEven={null} showBestNight={!tonight} /> :
@@ -181,6 +186,7 @@ function Night({
   cashLoading,
   cashError,
   checksError,
+  checksLoading,
   onOpenLoss,
   trend,
 }: {
@@ -194,6 +200,7 @@ function Night({
   cashLoading: boolean;
   cashError: boolean;
   checksError: boolean;
+  checksLoading: boolean;
   onOpenLoss: (kind: LossKind) => void;
 }) {
   const { totals, previousTotals: previous } = data;
@@ -217,7 +224,7 @@ function Night({
         <Stat label="Closed bills" value={totals.bills.toLocaleString('en-PH')} />
       </div>
       <Attention data={data} cash={cash} notCheckedOut={notCheckedOut} uncountedNights={uncountedNights}
-        oldestUncounted={oldestUncounted} checksError={checksError} />
+        oldestUncounted={oldestUncounted} checksError={checksError} checksLoading={checksLoading} />
 
       <div className="analytics-grid analytics-grid-equal">
         {trend}
@@ -341,50 +348,73 @@ function Night({
   );
 }
 
-/** One banner for the selected night's close-out and current follow-up work. */
-function Attention({ data, cash, notCheckedOut, uncountedNights, oldestUncounted, checksError }: {
+/** Severity follows existing conditions; see docs/qa/pr04/README.md for the mapping. */
+function Attention({ data, cash, notCheckedOut, uncountedNights, oldestUncounted, checksError, checksLoading }: {
   data: DailyReport;
   cash: ReturnType<typeof cashStatus>;
   notCheckedOut: number;
   uncountedNights: number;
   oldestUncounted?: string;
   checksError: boolean;
+  checksLoading: boolean;
 }) {
-  const items: { key: string; text: string; to: string; action: string }[] = [];
-  if (uncountedNights > 0) items.push({ key: 'uncounted',
+  const items: { key: string; text: string; to: string; action: string; icon: IconName }[] = [];
+  if (uncountedNights > 0) items.push({ key: 'uncounted', icon: 'end-of-day',
     text: `${uncountedNights} other ${uncountedNights === 1 ? 'night needs' : 'nights need'} a drawer count`,
     to: `/end-of-day${oldestUncounted ? `?date=${oldestUncounted}` : ''}`, action: 'Count the drawer' });
-  if (notCheckedOut > 0) items.push({ key: 'checkout',
+  if (notCheckedOut > 0) items.push({ key: 'checkout', icon: 'sales',
     text: `${notCheckedOut} ${notCheckedOut === 1 ? 'bill needs' : 'bills need'} checkout`,
     to: '/end-of-day', action: 'Finish checkout' });
-  if (data.outstanding.count > 0) items.push({ key: 'owed',
+  if (data.outstanding.count > 0) items.push({ key: 'owed', icon: 'unsettled',
     text: `${formatPesos(data.outstanding.amount)} owed across ${data.outstanding.count} ${data.outstanding.count === 1 ? 'bill' : 'bills'}${data.unsettledTonight.count > 0 ? ` · ${formatPesos(data.unsettledTonight.amount)} from this night` : ''}`,
     to: '/unsettled', action: 'Chase unpaid' });
-  if (data.lowStock.length > 0) items.push({ key: 'stock',
-    text: `Low stock: ${data.lowStock.map(line => `${line.name} (${line.qtyOnHand})`).join(', ')}`,
-    to: '/admin/stock', action: 'View stock' });
-  const needsAttention = cash.danger || items.length > 0 || checksError;
+  const balanced = cash.text === 'Cash balanced';
+  const checkingCash = cash.text === 'Checking cash…';
+  const unavailable = checksError || cash.text === 'Cash check unavailable';
+  const checking = checksLoading || checkingCash;
+  const cashTone = cash.danger ? 'danger' : balanced ? 'clear' : checkingCash ? 'neutral' : 'warning';
+  const summary = unavailable ? 'Checks unavailable' : checking ? 'Checking the night…'
+    : cash.danger ? 'Needs attention' : items.length ? 'Follow-up needed' : balanced ? 'No financial follow-up found' : 'Drawer count still needed';
   return (
-    <section aria-label="Night check" className={`dashboard-attention ${needsAttention ? 'dashboard-attention-needed' : ''}`}>
-      <h2>Night check</h2>
-      <div className="dashboard-attention-row">
-        <div>
-          <p className={cash.danger ? 'text-danger font-semibold' : 'font-semibold'}>
-            {cash.text}{cash.amount !== undefined ? formatPesos(cash.amount) : ''}
-          </p>
-          <p className="mt-1 text-body text-text-dim">
+    <section aria-label="Night check" className="dashboard-attention">
+      <div className="dashboard-attention-heading">
+        <h2>Night check</h2>
+        <p role="status">{summary}</p>
+      </div>
+      <div className={`dashboard-attention-row dashboard-check-${cashTone}`}>
+        <span className="dashboard-check-icon"><Icon name={cash.danger ? 'warning' : balanced ? 'check' : 'end-of-day'} /></span>
+        <div className="dashboard-check-copy">
+          <p className="dashboard-check-label">{cash.danger ? 'Needs attention' : 'Selected night'} · {data.businessDate}</p>
+          <h3>{cash.text}{cash.amount !== undefined ? formatPesos(cash.amount) : ''}</h3>
+          <p className="dashboard-check-detail">
             {data.totals.bills} closed {data.totals.bills === 1 ? 'bill' : 'bills'} · Paid out {formatPesos(data.expenses.total)}
             {data.expenses.byCategory.length > 0 ? ` · ${data.expenses.byCategory.map(row => row.category).join(', ')}` : ''}
           </p>
         </div>
-        <Link to={`/end-of-day?date=${data.businessDate}`}>
-          {cash.text === 'Cash balanced' ? 'View drawer count' : 'Count the drawer'}
-        </Link>
+        <ButtonLink variant="secondary" to={`/end-of-day?date=${data.businessDate}`}>
+          {balanced ? 'View drawer count' : 'Count the drawer'}
+        </ButtonLink>
       </div>
-      {items.map(item => <div key={item.key} className="dashboard-attention-row">
-        <p>{item.text}</p><Link to={item.to}>{item.action}</Link>
+      {items.map(item => <div key={item.key} className="dashboard-attention-row dashboard-check-warning">
+        <span className="dashboard-check-icon"><Icon name={item.icon} /></span>
+        <div className="dashboard-check-copy"><p className="dashboard-check-label">Follow up · all nights</p><h3>{item.text}</h3></div>
+        <ButtonLink variant="secondary" to={item.to}>{item.action}</ButtonLink>
       </div>)}
-      {checksError && <p role="status" className="mt-3 text-danger">Some unpaid-bill or close-out checks are unavailable.</p>}
+      {checksError ? <div className="dashboard-attention-row dashboard-check-danger" role="status">
+        <span className="dashboard-check-icon"><Icon name="warning" /></span>
+        <div className="dashboard-check-copy"><h3>Some checks are unavailable</h3>
+          <p className="dashboard-check-detail">Unpaid-bill or close-out checks could not be loaded. Review end of day before signing off.</p></div>
+        <ButtonLink variant="secondary" to={`/end-of-day?date=${data.businessDate}`}>Review end of day</ButtonLink>
+      </div> : checksLoading && <p role="status" className="dashboard-check-detail py-3">Checking unpaid bills and earlier drawer counts…</p>}
+      {data.lowStock.length > 0 && <details className="dashboard-other-checks">
+        <summary><Icon name="chevron-down" /><span>Other checks</span><span className="dashboard-other-count">{data.lowStock.length} low-stock {data.lowStock.length === 1 ? 'product' : 'products'}</span></summary>
+        <div className="dashboard-attention-row dashboard-check-neutral">
+          <span className="dashboard-check-icon"><Icon name="stock" /></span>
+          <div className="dashboard-check-copy"><h3>Low stock</h3>
+            <ul>{data.lowStock.map((line, index) => <li key={index}>{line.name} ({line.qtyOnHand})</li>)}</ul></div>
+          <ButtonLink variant="tertiary" to="/admin/stock">View stock</ButtonLink>
+        </div>
+      </details>}
     </section>
   );
 }
@@ -535,14 +565,56 @@ function PerEmployee({ rows }: { rows: DailyReport['perEmployee'] }) {
 }
 
 /** The one place a definition lives. Everything above shows a figure and nothing else. */
-function HowWorkedOut({ against, id }: { against: string; id: string }) {
-  return (
-    <div id={id} popover="auto" role="dialog" aria-label="How these numbers are worked out" className="dashboard-definitions">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <h2 className="text-heading">How these numbers are worked out</h2>
-        <button type="button" popoverTarget={id} popoverTargetAction="hide" aria-label="Close definitions" className="hit w-11 shrink-0 rounded-lg hover:bg-raised">×</button>
+function HowWorkedOut({ against, id, trigger, onClose }: {
+  against: string; id: string; trigger: RefObject<HTMLButtonElement | null>; onClose: () => void;
+}) {
+  const panel = useRef<HTMLDialogElement>(null);
+  const startedOutside = useRef(false);
+  useLayoutEffect(() => {
+    const dialog = panel.current!;
+    const opener = trigger.current;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    // Native modal dialog makes the rest of the page inert and keeps Tab inside the popup.
+    dialog.showModal();
+    const position = () => {
+      const anchor = opener?.getBoundingClientRect();
+      const viewport = window.visualViewport;
+      const width = viewport?.width ?? window.innerWidth;
+      const height = viewport?.height ?? window.innerHeight;
+      // Keep the popup below its trigger where there is reading room; scroll its body
+      // instead of pushing a long definition list over the dashboard title.
+      const top = Math.max(16, Math.min((anchor?.bottom ?? 16) + 8, height - 336));
+      dialog.style.maxHeight = `${Math.max(0, height - top - 16)}px`;
+      const bounds = dialog.getBoundingClientRect();
+      dialog.style.left = `${Math.max(16, Math.min(anchor?.left ?? 16, width - bounds.width - 16))}px`;
+      dialog.style.top = `${top}px`;
+    };
+    position();
+    window.addEventListener('resize', position);
+    window.visualViewport?.addEventListener('resize', position);
+    return () => {
+      window.removeEventListener('resize', position);
+      window.visualViewport?.removeEventListener('resize', position);
+      dialog.close();
+      document.body.style.overflow = previousOverflow;
+      opener?.focus();
+    };
+  }, [trigger]);
+  const outside = (event: React.PointerEvent<HTMLDialogElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom;
+  };
+  return createPortal(
+    <dialog ref={panel} id={id} aria-labelledby={`${id}-title`} className="dashboard-definitions"
+      onCancel={event => { event.preventDefault(); onClose(); }}
+      onPointerDown={event => { startedOutside.current = outside(event); }}
+      onPointerUp={event => { if (startedOutside.current && outside(event)) onClose(); startedOutside.current = false; }}>
+      <div className="dashboard-definitions-heading">
+        <h2 id={`${id}-title`} className="text-heading">How these numbers are worked out</h2>
+        <button type="button" autoFocus onClick={onClose} aria-label="Close definitions" className="hit flex w-11 shrink-0 items-center justify-center rounded-lg hover:bg-raised"><Icon name="close" /></button>
       </div>
-      <dl className="grid gap-x-8 gap-y-3 text-body md:grid-cols-[max-content_1fr]">
+      <dl className="dashboard-definitions-body">
         <Definition term="Sales this week">Monday through the selected night, including the current night if selected.</Definition>
         <Definition term="Sales">
           Every bill closed on the night, including ones left unpaid. Voided lines are left out.
@@ -579,7 +651,7 @@ function HowWorkedOut({ against, id }: { against: string; id: string }) {
           Every unpaid bill across all nights, as of right now.
         </Definition>
       </dl>
-    </div>
+    </dialog>, document.body
   );
 }
 
