@@ -18,12 +18,12 @@ import { PixelTable } from './PixelTable';
  * because that is the order peripheral vision resolves them in; the word only confirms it.
  */
 
-/** "Table 5 (Premium)" is a number and a tier wearing one label. Split them for display. */
-function readName(name: string): { number: string; tag: string | null } {
+/** Keep legacy name suffixes out of the large numeral; classification comes only from the flag. */
+function readNumber(name: string): string {
   const tagged = name.match(/^(.+?)\s*\(([^()]+)\)$/);
   const bare = tagged ? tagged[1] : name;
   const numbered = bare.match(/(\d+)\s*$/);
-  return { number: numbered ? numbered[1].padStart(2, '0') : bare, tag: tagged ? tagged[2] : null };
+  return numbered ? numbered[1].padStart(2, '0') : bare;
 }
 
 export function TableCard({
@@ -38,7 +38,7 @@ export function TableCard({
   const session = table.session;
   const elapsedMs = useElapsed(session);
   const paused = session?.status === 'PAUSED';
-  const { number, tag } = readName(table.name);
+  const number = readNumber(table.name);
 
   // The table's own standing rate, for the free branch below. The occupied branch deliberately
   // shows the SESSION's pricing instead — see the comment on that line.
@@ -83,7 +83,7 @@ export function TableCard({
             className="pointer-events-none absolute inset-0 flex items-center justify-center opacity-[0.55]"
             aria-hidden
           >
-            <RackMark premium={tag !== null} />
+            <RackMark premium={table.isPremium} />
           </div>
         ) : null}
 
@@ -91,9 +91,9 @@ export function TableCard({
           {/* What staff say out loud, at the size that implies. */}
           <div className="figure-table-number tabular text-text">{number}</div>
           <div className="text-label uppercase text-text">Table</div>
-          {tag ? (
-            <span className="mt-3 inline-flex rounded-md border border-border px-2 py-0.5 text-label uppercase text-text-dim">
-              {tag}
+          {table.isPremium ? (
+            <span className="mt-3 inline-flex rounded-md border border-gold bg-raised px-2 py-0.5 text-label uppercase text-text">
+              Premium
             </span>
           ) : null}
         </div>
