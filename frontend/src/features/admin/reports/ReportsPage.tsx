@@ -10,6 +10,7 @@ import { AdminPage } from '../AdminPage';
 import { ComparisonLine, comparedClause, describeChange } from '../Comparison';
 import { Definition, Row } from '../dashboard/DashboardPage';
 import { HourChart } from '../dashboard/HourChart';
+import { Icon, type IconName } from '@/components/Icon';
 import { Disclosure } from '@/components/Disclosure';
 import {
   AnalyticsPanel,
@@ -17,7 +18,6 @@ import {
   EmptyState,
   TableTiles,
   ProductSummary,
-  Stat,
 } from '../analytics/Analytics';
 import { ReportExplorer } from './ReportExplorer';
 import { initialView, type ExplorerView } from './reportView';
@@ -107,7 +107,7 @@ export function ReportsPage() {
       }
     >
       <div className="analytics">
-        <div className="analytics-toolbar print:hidden mb-6 flex flex-wrap items-center gap-2">
+        <div className="analytics-toolbar print:hidden">
           <div className="flex flex-wrap gap-2" role="group" aria-label="Presets">
             {PRESETS.map((preset) => (
               <button
@@ -132,14 +132,14 @@ export function ReportsPage() {
           </div>
           <div className="analytics-actions reports-range-actions">
             <div className="reports-range" role="group" aria-label="Report date range">
-            <label><span>From</span><input
+            <label><span className="sr-only">From</span><input
               type="date"
               aria-label="From"
               value={draftFrom}
               onInput={(event) => changeRange(event.currentTarget.value, draftTo)}
               className="hit rounded-lg border border-border bg-raised px-3 text-label text-text"
             />
-            </label><span className="reports-range-separator" aria-hidden>–</span><label><span>To</span>
+            </label><span className="reports-range-separator" aria-hidden>to</span><label><span className="sr-only">To</span>
             <input
               type="date"
               aria-label="To"
@@ -151,14 +151,16 @@ export function ReportsPage() {
             <ReportExport data={data} view={view} disabled={!data || report.isFetching || report.isError || Boolean(draftError)} />
             <button
               type="button"
-              className="analytics-button"
+              className="analytics-button reports-refresh"
+              aria-label={report.isFetching ? 'Refreshing…' : 'Refresh'}
+              title="Refresh"
               disabled={report.isFetching}
               onClick={() => {
                 void currentDay.refetch();
                 if (from && to && !invalidRange) void report.refetch();
               }}
             >
-              {report.isFetching ? 'Refreshing…' : '↻ Refresh'}
+              <Icon name="refresh" /><span>{report.isFetching ? 'Refreshing…' : 'Refresh'}</span>
             </button>
           </div>
         </div>
@@ -229,61 +231,30 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
   return (
     <div className="flex flex-col gap-8">
       {/* 1 — THE ANSWER. */}
-      <section className="flex flex-col gap-6">
-        <p className="text-label uppercase text-text-dim">
-          {period} <span className="normal-case">vs {against}</span>
-        </p>
-        <div className="analytics-stats">
-          <Stat
-            primary
-            label="Total sales"
-            value={formatPesos(headline.gross)}
-            comparison={
-              hasActivity ? { now: headline.gross, before: previous.gross, against } : undefined
-            }
-            note={`${headline.bills.toLocaleString('en-PH')} closed bills`}
-          />
-          <Stat
-            label="After product costs"
-            value={formatPesos(headline.grossProfit)}
-            comparison={
-              hasActivity
-                ? { now: headline.grossProfit, before: previous.grossProfit, against }
-                : undefined
-            }
-            note={`${formatPesos(headline.costOfGoods)} in product costs`}
-          />
-          <Stat
-            label="Operating expenses"
-            value={formatPesos(headline.operatingExpenses)}
-            comparison={
-              hasActivity
-                ? {
-                    now: headline.operatingExpenses,
-                    before: previous.operatingExpenses,
-                    against,
-                    goodWhen: 'down',
-                  }
-                : undefined
-            }
-            note="Recorded, non-voided expenses"
-          />
-          <Stat
-            label="After recorded costs"
-            value={formatPesos(headline.net)}
-            danger={headline.net < 0}
-            comparison={
-              hasActivity ? { now: headline.net, before: previous.net, against } : undefined
-            }
-            note="Sales − product costs − recorded expenses"
-          />
+      <section className="reports-summary" aria-label="Financial summary">
+        <h2 className="reports-summary-headline">
+          {hasActivity ? <>You {headline.net < 0 ? 'lost' : 'made'} {formatPesos(Math.abs(headline.net))}{' '}
+            after recorded costs{clause ? `, ${clause}` : ''}.</>
+            : 'No closed sales or expenses in this period'}
+        </h2>
+        <p className="reports-summary-range">{period} compared to {formatRange(data.previousFrom, data.previousTo)}</p>
+        <div className="reports-equation">
+          <FinancialFigure label="Sales" value={headline.gross}
+            comparison={hasActivity ? { now: headline.gross, before: previous.gross, against } : undefined}
+            note={`${headline.bills.toLocaleString('en-PH')} closed bills`} />
+          <FinancialFigure operator="−" label="Product costs" value={headline.costOfGoods}
+            comparison={hasActivity ? { now: headline.costOfGoods, before: previous.costOfGoods, against, goodWhen: 'down' } : undefined}
+            note="Cost of products sold" />
+          <FinancialFigure operator="=" label="After product costs" value={headline.grossProfit}
+            comparison={hasActivity ? { now: headline.grossProfit, before: previous.grossProfit, against } : undefined}
+            note="Sales less product costs" />
+          <FinancialFigure operator="−" label="Operating expenses" value={headline.operatingExpenses}
+            comparison={hasActivity ? { now: headline.operatingExpenses, before: previous.operatingExpenses, against, goodWhen: 'down' } : undefined}
+            note="Recorded, non-voided expenses" />
+          <FinancialFigure operator="=" label="After recorded costs" value={headline.net} result
+            comparison={hasActivity ? { now: headline.net, before: previous.net, against } : undefined}
+            note="After product costs less expenses" />
         </div>
-        {hasActivity && (
-          <p className="max-w-prose text-body text-text">
-            {period}: you {headline.net < 0 ? 'lost' : 'made'} {formatPesos(Math.abs(headline.net))}{' '}
-            after recorded costs{clause ? `, ${clause}` : ''}.
-          </p>
-        )}
       </section>
 
       {/* 2 — ANYTHING TO DO. Only when there is. */}
@@ -413,56 +384,58 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
         <h2 className="reports-section-title mb-4">Financial detail & controls</h2>
 
         <ReportDetail
-          title="Bills and averages"
+          icon="sales" title="Bills and averages"
           summary={`${headline.bills.toLocaleString('en-PH')} bills over ${headline.tradingDays} trading ${headline.tradingDays === 1 ? 'day' : 'days'}`}
         >
-          <FigureRow label="Bills" value={headline.bills.toLocaleString('en-PH')}>
-            <ComparisonLine
-              now={headline.bills}
-              before={previous.bills}
-              against={against}
-              kind="count"
-            />
-          </FigureRow>
-          <FigureRow label="Trading days" value={String(headline.tradingDays)}>
-            <ComparisonLine
-              now={headline.tradingDays}
-              before={previous.tradingDays}
-              against={against}
-              kind="count"
-            />
-          </FigureRow>
-          <FigureRow label="Sales per trading day" value={formatPesos(headline.grossPerTradingDay)}>
-            <ComparisonLine
-              now={headline.grossPerTradingDay}
-              before={previous.grossPerTradingDay}
-              against={against}
-            />
-          </FigureRow>
-          <FigureRow
-            label="After recorded costs per trading day"
-            value={formatPesos(headline.netPerTradingDay)}
-          >
-            <ComparisonLine
-              now={headline.netPerTradingDay}
-              before={previous.netPerTradingDay}
-              against={against}
-            />
-          </FigureRow>
-          <FigureRow
-            label="Kept after cost of goods"
-            value={headline.grossMarginPercent === null ? '—' : `${headline.grossMarginPercent}%`}
-          >
-            <p className="mt-1 text-label text-text-dim">
-              {previous.grossMarginPercent === null
-                ? 'Nothing to compare'
-                : `${previous.grossMarginPercent}% ${against}`}
-            </p>
-          </FigureRow>
+          <div className="reports-tiles">
+            <FigureTile label="Bills" value={headline.bills.toLocaleString('en-PH')}>
+              <ComparisonLine
+                now={headline.bills}
+                before={previous.bills}
+                against={against}
+                kind="count"
+              />
+            </FigureTile>
+            <FigureTile label="Trading days" value={String(headline.tradingDays)}>
+              <ComparisonLine
+                now={headline.tradingDays}
+                before={previous.tradingDays}
+                against={against}
+                kind="count"
+              />
+            </FigureTile>
+            <FigureTile label="Sales per trading day" value={formatPesos(headline.grossPerTradingDay)}>
+              <ComparisonLine
+                now={headline.grossPerTradingDay}
+                before={previous.grossPerTradingDay}
+                against={against}
+              />
+            </FigureTile>
+            <FigureTile
+              label="After recorded costs per trading day"
+              value={formatPesos(headline.netPerTradingDay)}
+            >
+              <ComparisonLine
+                now={headline.netPerTradingDay}
+                before={previous.netPerTradingDay}
+                against={against}
+              />
+            </FigureTile>
+            <FigureTile
+              label="Kept after cost of goods"
+              value={headline.grossMarginPercent === null ? '—' : `${headline.grossMarginPercent}%`}
+            >
+              <p className="mt-1 text-label text-text-dim">
+                {previous.grossMarginPercent === null
+                  ? 'Nothing to compare'
+                  : `${previous.grossMarginPercent}% ${against}`}
+              </p>
+            </FigureTile>
+          </div>
         </ReportDetail>
 
         <ReportDetail
-          title="Day of week"
+          icon="end-of-day" title="Day of week"
           summary={
             strongestDay?.avgGross == null
               ? 'No trading'
@@ -499,13 +472,13 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
         </ReportDetail>
 
         <div className="hidden print:block" data-print-report-detail>
-          <ReportDetail title="Every night" summary={plural(data.byDay.length, 'night')}>
+          <ReportDetail icon="end-of-day" title="Every night" summary={plural(data.byDay.length, 'night')}>
             <EveryNight days={data.byDay} />
           </ReportDetail>
         </div>
 
         <ReportDetail
-          title="Sales by hour"
+          icon="reports" title="Sales by hour"
           summary={(() => {
             const busiest = data.byHour.reduce(
               (a, b) => (b.amount > a.amount ? b : a),
@@ -519,10 +492,10 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
       </section>
 
       {/* 5 — WHAT IT COST TO BE OPEN, and the rest. A new page when printed. */}
-      <section className="-mt-6 print:break-before-page">
+      <section className="-mt-6 print:mt-0 print:break-before-page">
         <div className="hidden print:block" data-print-report-detail>
           <ReportDetail
-            title="Expenses"
+            icon="expenses" title="Expenses"
             summary={
               data.expensesByCategory.length === 0
                 ? 'None'
@@ -558,7 +531,7 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
 
         <div className="hidden print:block" data-print-report-detail>
           <ReportDetail
-            title="Tables"
+            icon="floor" title="Tables"
             summary={
               weakestTable
                 ? `Weakest: ${weakestTable.tableName} · ${formatPesos(weakestTable.revenuePerOccupiedHour)} an hour`
@@ -585,7 +558,7 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
 
         <div className="hidden print:block" data-print-report-detail>
           <ReportDetail
-            title="Products"
+            icon="products" title="Products"
             summary={
               data.products.length === 0
                 ? 'Nothing sold'
@@ -618,7 +591,7 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
         </div>
 
         {data.expensesByMonth.rows.length > 0 && (
-          <ReportDetail title="Expense history — six months" summary="By month and category">
+          <ReportDetail icon="expenses" title="Expense history — six months" summary="By month and category">
             <div>
               <Table
                 head={['Category', ...data.expensesByMonth.months.map(formatMonth), 'Total']}
@@ -645,7 +618,7 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
         )}
         {data.unsoldProducts.length > 0 && (
           <ReportDetail
-            title="Unsold stock"
+            icon="stock" title="Unsold stock"
             summary={`${data.unsoldProducts.length} products still on the shelf`}
           >
             <div>
@@ -666,91 +639,70 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
         )}
 
         <ReportDetail
-          title="Given away"
+          icon="vouchers" title="Given away"
           summary={`${formatPesos(data.givenAway.total)}${
             data.givenAway.percentOfGross === null
               ? ''
               : ` · ${data.givenAway.percentOfGross}% of sales`
           }`}
         >
-          <div className="grid gap-x-8 md:grid-cols-2">
-            <h3 className="col-span-full mt-3 text-label text-text-dim">Discounts we chose</h3>
-            <Row
-              label={`Promos · ${plural(data.givenAway.promoSessions, 'session')}`}
-              value={formatPesos(data.givenAway.promoForgone)}
+          <div className="reports-giveaway">
+            <div>
+              <h3>Discounts we chose</h3>
+              <Row label={`Promos · ${plural(data.givenAway.promoSessions, 'session')}`} value={formatPesos(data.givenAway.promoForgone)} />
+              <Row label={`Flat rate · ${plural(data.givenAway.flatSessions, 'session')}`} value={formatPesos(data.givenAway.flatForgone)} />
+              <Row label={`Discounts · ${plural(data.givenAway.discountBills, 'bill')}`} value={formatPesos(data.givenAway.discountAmount)} />
+              <h3>Mistakes</h3>
+              <Row label={`Voids · ${plural(data.givenAway.voidCount, 'line')}`} value={formatPesos(data.givenAway.voidAmount)} />
+            </div>
+            <div>
+              <h3>Rates and vouchers we chose</h3>
+              <Row label={`Friend rates · ${plural(data.givenAway.friendSessions, 'session')}`} value={formatPesos(data.givenAway.friendForgone)} />
+              <Row label={`Time not charged · ${plural(data.givenAway.reducedSessions, 'session')}`} value={formatPesos(data.givenAway.timeReductionForgone)} />
+              <Row label={`Vouchers · ${plural(data.givenAway.voucherCount, 'voucher')}`} value={formatPesos(data.givenAway.voucherAmount)} />
+              <h3>Comps · estimate</h3>
+              <Row label={`Comps · ${plural(data.givenAway.compQuantity, 'unit')}`} value={formatPesos(data.givenAway.compEstimatedCost)} />
+            </div>
+          </div>
+        </ReportDetail>
+
+        <ReportDetail
+          icon="expenses" title="Drawer"
+          summary={`${cash.varianceTotal > 0 ? '+' : cash.varianceTotal < 0 ? '−' : ''}${formatPesos(Math.abs(cash.varianceTotal))} over ${cash.countedNights} counted ${cash.countedNights === 1 ? 'night' : 'nights'}`}
+          tone={cash.varianceTotal < 0 ? 'danger' : undefined}
+        >
+          <div className="reports-tiles">
+            <FigureTile
+              label="Variance over the period"
+              value={`${cash.varianceTotal > 0 ? '+' : cash.varianceTotal < 0 ? '−' : ''}${formatPesos(Math.abs(cash.varianceTotal))}`}
             />
-            <Row
-              label={`Friend rates · ${plural(data.givenAway.friendSessions, 'session')}`}
-              value={formatPesos(data.givenAway.friendForgone)}
-            />
-            <Row
-              label={`Flat rate · ${plural(data.givenAway.flatSessions, 'session')}`}
-              value={formatPesos(data.givenAway.flatForgone)}
-            />
-            <Row
-              label={`Time not charged · ${plural(data.givenAway.reducedSessions, 'session')}`}
-              value={formatPesos(data.givenAway.timeReductionForgone)}
-            />
-            <Row
-              label={`Discounts · ${plural(data.givenAway.discountBills, 'bill')}`}
-              value={formatPesos(data.givenAway.discountAmount)}
-            />
-            <Row
-              label={`Vouchers · ${plural(data.givenAway.voucherCount, 'voucher')}`}
-              value={formatPesos(data.givenAway.voucherAmount)}
-            />
-            <h3 className="col-span-full mt-3 text-label text-text-dim">Mistakes</h3>
-            <Row
-              label={`Voids · ${plural(data.givenAway.voidCount, 'line')}`}
-              value={formatPesos(data.givenAway.voidAmount)}
-            />
-            <h3 className="col-span-full mt-3 text-label text-text-dim">Comps · estimate</h3>
-            <Row
-              label={`Comps · ${plural(data.givenAway.compQuantity, 'unit')}`}
-              value={formatPesos(data.givenAway.compEstimatedCost)}
+            <FigureTile label="Nights with a variance" value={String(cash.nightsWithVariance)} />
+            <FigureTile label="Nights counted" value={String(cash.countedNights)} />
+            <FigureTile
+              label="Trading days never counted"
+              value={String(cash.uncountedTradingDays)}
             />
           </div>
         </ReportDetail>
 
         <ReportDetail
-          title="Drawer"
-          summary={`${cash.varianceTotal > 0 ? '+' : cash.varianceTotal < 0 ? '−' : ''}${formatPesos(Math.abs(cash.varianceTotal))} over ${cash.countedNights} counted ${cash.countedNights === 1 ? 'night' : 'nights'}`}
-          tone={cash.varianceTotal < 0 ? 'danger' : undefined}
-        >
-          <Row
-            label="Variance over the period"
-            value={`${cash.varianceTotal > 0 ? '+' : cash.varianceTotal < 0 ? '−' : ''}${formatPesos(Math.abs(cash.varianceTotal))}`}
-          />
-          <Row label="Nights with a variance" value={String(cash.nightsWithVariance)} />
-          <Row label="Nights counted" value={String(cash.countedNights)} />
-          <Row
-            label="Trading days never counted"
-            value={String(cash.uncountedTradingDays)}
-            dim={cash.uncountedTradingDays === 0}
-          />
-        </ReportDetail>
-
-        <ReportDetail
-          title="Still owed"
+          icon="unsettled" title="Still owed"
           summary={owed === 0 ? 'Nothing' : `${formatPesos(owedAmount)} · ${plural(owed, 'bill')}`}
           tone={owed > 0 ? 'danger' : undefined}
         >
-          <Row
-            label={`From this period · ${plural(cash.unsettled.thisPeriod.count, 'bill')}`}
-            value={formatPesos(cash.unsettled.thisPeriod.amount)}
-          />
-          <Row
-            label={`1–4 weeks before it · ${plural(cash.unsettled.oneToFourWeeksBefore.count, 'bill')}`}
-            value={formatPesos(cash.unsettled.oneToFourWeeksBefore.amount)}
-          />
-          <Row
-            label={`Older · ${plural(cash.unsettled.older.count, 'bill')}`}
-            value={formatPesos(cash.unsettled.older.amount)}
+          <Table
+            head={['Age', 'Bills', 'Amount']}
+            rows={[
+              { key: 'period', cells: ['From this period', String(cash.unsettled.thisPeriod.count), formatPesos(cash.unsettled.thisPeriod.amount)] },
+              { key: 'weeks', cells: ['1–4 weeks before it', String(cash.unsettled.oneToFourWeeksBefore.count), formatPesos(cash.unsettled.oneToFourWeeksBefore.amount)] },
+              { key: 'older', cells: ['Older', String(cash.unsettled.older.count), formatPesos(cash.unsettled.older.amount)] },
+            ]}
+            total={['Total', String(owed), formatPesos(owedAmount)]}
           />
         </ReportDetail>
       </section>
 
-      <ReportDetail title="How these numbers are worked out">
+      <ReportDetail icon="info" title="How these numbers are worked out">
         <dl className="grid gap-x-8 gap-y-3 text-body md:grid-cols-[max-content_1fr]">
           <Definition term="Sales">
             Every bill closed in the period, including ones left unpaid. Voided lines are left out.
@@ -803,25 +755,27 @@ function Report({ data, view, onViewChange, pending }: { pending: boolean; data:
   );
 }
 
-/** A figure with its comparison, as a row: label left, number and comparison right. */
-function FigureRow({
-  label,
-  value,
-  children,
-}: {
-  label: string;
-  value: string;
-  children: ReactNode;
+/** Server-provided amounts, arranged as a reading sequence rather than computed here. */
+function FinancialFigure({ label, value, comparison, note, operator, result = false }: {
+  label: string; value: number; note: string; operator?: '−' | '='; result?: boolean;
+  comparison?: ComponentProps<typeof ComparisonLine>;
 }) {
-  return (
-    <div className="flex items-start justify-between gap-3 border-b border-border py-2 last:border-0">
-      <span className="text-body text-text">{label}</span>
-      <span className="text-right">
-        <span className="tabular block text-body text-text">{value}</span>
-        {children}
-      </span>
+  return <div role="group" aria-label={label} className={`reports-financial-figure ${result ? 'reports-financial-result' : ''}`}>
+    {operator && <span className="reports-operator"><span aria-hidden>{operator}</span><span className="sr-only">{operator === '−' ? 'Minus' : 'Equals'}</span></span>}
+    <div className="reports-figure-content">
+      <div className="reports-figure-heading"><h3>{label}</h3>{comparison && <ComparisonLine {...comparison} compact />}</div>
+      <p className={`reports-figure-value ${value < 0 ? 'text-danger' : ''}`}>{formatPesos(value)}</p>
+      <p className="reports-figure-note">{note}</p>
     </div>
-  );
+  </div>;
+}
+
+function FigureTile({ label, value, children }: { label: string; value: string; children?: ReactNode }) {
+  return <div className="reports-tile">
+    <h3>{label}</h3>
+    <p className="reports-tile-value">{value}</p>
+    {children}
+  </div>;
 }
 
 /**
@@ -986,6 +940,6 @@ function plural(count: number, noun: string): string {
   return `${count} ${count === 1 ? noun : `${noun}s`}`;
 }
 
-function ReportDetail(props: ComponentProps<typeof Disclosure>) {
+function ReportDetail(props: ComponentProps<typeof Disclosure> & { icon: IconName }) {
   return <div className="reports-detail"><Disclosure {...props} /></div>;
 }
