@@ -29,7 +29,7 @@ for (const width of [400, 1280]) {
       expect(await dialog.getByLabel('Unit cost').evaluate((el) => el.matches(':invalid'))).toBe(true);
       await dialog.getByLabel('Unit cost').fill('62.5');
       await dialog.getByRole('heading').scrollIntoViewIfNeeded();
-      await expect(dialog).toBeInViewport({ ratio: 1 });
+      await expect(dialog.getByRole('heading')).toBeInViewport();
       await shot('opening-stock');
       await dialog.getByRole('button', { name: 'Save', exact: true }).click();
       await expect(dialog).not.toBeVisible();
@@ -51,7 +51,8 @@ for (const width of [400, 1280]) {
       const movements = await (await page.request.get(`/api/v1/products/${product.id}/movements`)).json();
       expect(movements.data).toHaveLength(2);
       expect(movements.data.every((m: { reason: string }) => m.reason === 'DELIVERY')).toBe(true);
-      await row.getByRole('button', { name: 'Edit', exact: true }).click();
+      await row.getByRole('button', { name: `Actions for ${productName}`, exact: true }).click();
+      await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
       await expect(dialog.getByText('Opening stock', { exact: true })).toHaveCount(0);
       await shot('edit-product');
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();

@@ -9,6 +9,9 @@ import {
   updateProduct,
   uploadProductImage,
 } from '@/api/endpoints/products';
+import { fetchSetup } from '@/api/endpoints/setup';
+import { ActionMenu } from '@/components/ActionMenu';
+import { NewProductImageField } from './NewProductImageField';
 import { fetchCategories } from '@/api/endpoints/categories';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
@@ -43,6 +46,9 @@ export function ProductsPage() {
   const [error, setError] = useState<string | null>(null);
   const [includeArchived, setIncludeArchived] = useState(false);
   const [term, setTerm] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [imageTask, setImageTask] = useState<{ product: ProductAdmin; file: File } | null>(null);
+  const [showImageTask, setShowImageTask] = useState(false);
   const [confirmingArchive, setConfirmingArchive] = useState<ProductAdmin | null>(null);
 
   const products = useQuery({
@@ -52,20 +58,43 @@ export function ProductsPage() {
 
   const categories = useQuery({ queryKey: queryKeys.categories, queryFn: fetchCategories });
 
+  // The ordinary category picker excludes archived categories; existing products keep their links.
+  const categorySetup = useQuery({ queryKey: queryKeys.setup('categories'), queryFn: () => fetchSetup('categories') });
+  const catalogCategories = useMemo(() => [
+    ...(categories.data ?? []),
+    ...(categorySetup.data ?? []).filter(c => !categories.data?.some(active => active.id === c.id)),
+  ], [categories.data, categorySetup.data]);
+
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ['products'] });
     void queryClient.invalidateQueries({ queryKey: queryKeys.lowStock });
   }
 
+  const imageUpload = useMutation({
+    mutationFn: ({ product, file }: { product: ProductAdmin; file: File }) => uploadProductImage(product.id, file),
+    onSuccess: () => {
+      setImageTask(null);
+      setShowImageTask(false);
+      notify('Product picture saved.');
+      refresh();
+    },
+  });
+
   const save = useMutation({
-    mutationFn: ({ id, body }: { id: string | null; body: ProductRequest }) =>
+    mutationFn: ({ id, body }: { id: string | null; body: ProductRequest; file: File | null }) =>
       id ? updateProduct(id, body) : createProduct(body),
-    onSuccess: (_product, { id, body }) => {
+    onSuccess: (product, { id, body, file }) => {
       notify(id ? 'Product saved.' : body.openingStock ? 'Product created with opening stock.' : 'Product created.');
       setError(null);
       setEditing(null);
       setCreating(false);
       refresh();
+      if (!id && file) {
+        const task = { product, file };
+        setImageTask(task);
+        setShowImageTask(true);
+        imageUpload.mutate(task);
+      }
     },
     onError: (caught) => setError(messageOf(caught)),
   });
@@ -98,8 +127,23 @@ export function ProductsPage() {
   const rows = useMemo(() => {
     const all = products.data ?? [];
     const needle = term.trim().toLowerCase();
-    return needle ? all.filter((product) => product.name.toLowerCase().includes(needle)) : all;
-  }, [products.data, term]);
+    return all.filter(product => (!needle || product.name.toLowerCase().includes(needle)) &&
+      (categoryFilter === 'all' || (product.categoryId ?? 'uncategorized') === categoryFilter));
+  }, [products.data, term, categoryFilter]);
+  const groups = useMemo(() => {
+    const grouped = new Map<string, ProductAdmin[]>();
+    for (const product of rows) {
+      const id = product.categoryId ?? 'uncategorized';
+      const group = grouped.get(id);
+      if (group) group.push(product);
+      else grouped.set(id, [product]);
+    }
+    const order = [...catalogCategories.map(c => c.id), ...grouped.keys()];
+    return [...new Set(order)].filter(id => grouped.has(id) && id !== 'uncategorized')
+      .concat(grouped.has('uncategorized') ? ['uncategorized'] : [])
+      .map(id => ({ id, name: id === 'uncategorized' ? 'Uncategorized' :
+        catalogCategories.find(c => c.id === id)?.name ?? 'Category unavailable', products: grouped.get(id)! }));
+  }, [rows, catalogCategories]);
 
   return (
     <AdminPage
@@ -107,7 +151,17 @@ export function ProductsPage() {
       intro="Manage your menu, prices and stock on hand."
       error={error ?? (products.isError ? messageOf(products.error) : null)}
     >
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      {imageTask && !showImageTask ? <div className="mb-4">
+        <Banner tone={imageUpload.isError ? 'warning' : 'info'} actions={
+          <Button variant="secondary" onClick={() => setShowImageTask(true)}>Review picture</Button>
+        }>
+          {imageTask.product.name} is saved. {imageUpload.isPending ? 'Uploading picture…' : 'Its picture still needs uploading.'}
+        </Banner>
+      </div> : null}
+      {categories.isError || categorySetup.isError ? <div className="mb-4"><Banner tone="warning">
+        Some category names could not be loaded. Products are still shown.
+      </Banner></div> : null}
+      <div className="mb-4 flex flex-wrap items-end gap-3">
         <input
           value={term}
           placeholder="Search products…"
@@ -118,6 +172,13 @@ export function ProductsPage() {
           }}
           className="hit w-full max-w-sm rounded-lg border border-border bg-raised px-3 text-body text-text placeholder:text-text-dim/60"
         />
+        <div className="w-full min-w-0 sm:w-auto sm:max-w-xs">
+          <Select label="Filter by category" value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)}>
+            <option value="all">All categories</option>
+            {catalogCategories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}
+            <option value="uncategorized">Uncategorized</option>
+          </Select>
+        </div>
         {/* Archiving used to put a product beyond reach of this screen entirely. This is how
             a misclick is found again. */}
         <label className="hit flex cursor-pointer items-center gap-3 text-body text-text">
@@ -129,109 +190,110 @@ export function ProductsPage() {
           />
           Include archived
         </label>
-        <Button className="ml-auto" onClick={() => { setError(null); setCreating(true); }}>
+        <Button className="ml-auto" disabled={save.isPending || Boolean(imageTask)} onClick={() => { setError(null); setCreating(true); }}>
           New product
         </Button>
       </div>
 
-      <Card className="overflow-x-auto">
+      <div className="space-y-5">
         {products.isPending ? (
           <div className="py-10 text-center">
             <Spinner label="Loading products…" />
           </div>
-        ) : (
-          <table className="block w-full text-left md:table">
-            <thead className="hidden md:table-header-group">
-              <tr className="border-b border-border text-label uppercase text-text-dim">
-                <th className="py-2 w-14"><span className="sr-only">Image</span></th>
-                <th className="py-2">Name</th>
-                <th className="py-2 pl-3 text-right">Price</th>
-                <th className="py-2 pl-3 text-right">Avg cost</th>
-                <th className="py-2 pl-3 text-right">Margin</th>
-                <th className="py-2 pl-3 text-right">On hand</th>
-                <th className="py-2" />
-              </tr>
-            </thead>
-            <tbody className="block md:table-row-group">
-              {rows.map((product) => (
-                <tr
-                  key={product.id}
-                  // Dimmed and struck rather than hidden: it has to be recognisable at a
-                  // glance as a row that is not on the counter.
-                  className={`grid grid-cols-2 gap-x-4 border-b border-border py-4 md:table-row md:py-0 ${product.archivedAt ? 'opacity-55' : ''}`}
-                >
-                  <td className="hidden py-3 pr-3 md:table-cell">
-                    <ProductImage
-                      productId={product.id}
-                      name={product.name}
-                      imageSha256={product.imageSha256}
-                      size="thumb"
-                    />
-                  </td>
-                  <td className="col-span-2 py-3 text-heading text-text md:pr-3 md:text-body">
-                    <span className={product.archivedAt ? 'line-through' : ''}>{product.name}</span>
-                    {product.archivedAt ? (
-                      <span className="ml-2 text-label uppercase text-danger">Archived</span>
-                    ) : !product.isActive ? (
-                      <span className="ml-2 text-label uppercase text-text-dim">Inactive</span>
-                    ) : null}
-                    {product.archivedAt ? (
-                      <div className="text-label text-text-dim">
-                        Archived {formatDateTime(product.archivedAt)}
-                      </div>
-                    ) : null}
-                  </td>
-                  <td className="tabular py-3 text-body text-amount md:text-right">
-                    <span className="block text-label text-text-dim md:hidden">Price</span>
-                    {formatMoney(product.sellingPrice)}
-                  </td>
-                  <td className="tabular py-3 text-body text-text-dim md:pl-3 md:text-right">
-                    <span className="block text-label text-text-dim md:hidden">Avg cost</span>
-                    {formatMoney(product.avgCost)}
-                  </td>
-                  <td className="tabular py-3 text-body text-text md:pl-3 md:text-right"><span className="block text-label text-text-dim md:hidden">Margin</span>{margin(product)}</td>
-                  <td
-                    className={`tabular py-3 text-body md:pl-3 md:text-right ${product.qtyOnHand <= 0 ? 'text-danger' : 'text-text'}`}
-                  >
-                    <span className="block text-label text-text-dim md:hidden">On hand</span>
-                    {product.qtyOnHand}
-                  </td>
-                  <td className="col-span-2 py-3 md:pl-4 md:text-right">
-                    <div className="flex flex-wrap gap-2 md:justify-end">
-                      <Button variant="secondary" onClick={() => { dismiss(); setDeliveryError(null); setStocking(product); }}>
-                        Add stock
-                      </Button>
-                      {product.archivedAt ? (
-                        <Button
-                          variant="secondary"
-                          pending={restore.isPending && restore.variables === product.id}
-                          onClick={() => restore.mutate(product.id)}
-                        >
-                          Restore
-                        </Button>
-                      ) : (
-                        <>
-                          <Button variant="secondary" onClick={() => { dismiss(); setError(null); setEditing(product); }}>
-                            Edit
+        ) : rows.length === 0 ? (
+          <Card><p className="text-body text-text-dim">{products.isError ? 'Products could not be loaded.' : term || categoryFilter !== 'all' ? 'No products match these filters.' : 'No products yet. Create your first product to get started.'}</p></Card>
+        ) : groups.map(group => (
+          <section key={group.id} aria-labelledby={`category-${group.id}`}>
+            <Card>
+              <div className="mb-4 flex items-baseline gap-3">
+                <h2 id={`category-${group.id}`} className="min-w-0 break-words text-heading text-text">{group.name}</h2>
+                <span className="shrink-0 text-label text-text-dim">{group.products.length} {group.products.length === 1 ? 'product' : 'products'}</span>
+              </div>
+              <table className="block w-full text-left xl:table xl:table-fixed">
+                <caption className="sr-only">{group.name} products</caption>
+                <thead className="hidden xl:table-header-group">
+                  <tr className="border-b border-border text-label uppercase text-text-dim">
+                    <th className="py-2 w-14"><span className="sr-only">Image</span></th>
+                    <th className="py-2">Name</th>
+                    <th className="w-24 py-2 pl-3 text-right">Price</th>
+                    <th className="w-24 py-2 pl-3 text-right">Avg cost</th>
+                    <th className="w-24 py-2 pl-3 text-right">Margin</th>
+                    <th className="w-24 py-2 pl-3 text-right">On hand</th>
+                    <th className="w-52 py-2"><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody className="block xl:table-row-group">
+                  {group.products.map((product) => (
+                    <tr
+                      key={product.id}
+                      // Keep archived rows readable; the label and strike-through carry their status.
+                      className="grid grid-cols-2 gap-x-4 border-b border-border py-4 xl:table-row xl:py-0"
+                    >
+                      <td className="hidden py-3 pr-3 xl:table-cell">
+                        <ProductImage
+                          productId={product.id}
+                          name={product.name}
+                          imageSha256={product.imageSha256}
+                          size="thumb"
+                        />
+                      </td>
+                      <td className="col-span-2 break-words py-3 text-heading text-text xl:pr-3 xl:text-body">
+                        <span className={product.archivedAt ? 'line-through' : ''}>{product.name}</span>
+                        {product.archivedAt ? (
+                          <span className="ml-2 text-label uppercase text-danger">Archived</span>
+                        ) : !product.isActive ? (
+                          <span className="ml-2 text-label uppercase text-text-dim">Inactive</span>
+                        ) : null}
+                        {product.archivedAt ? (
+                          <div className="text-label text-text-dim">
+                            Archived {formatDateTime(product.archivedAt)}
+                          </div>
+                        ) : null}
+                      </td>
+                      <td className="tabular py-3 text-body text-amount xl:text-right">
+                        <span className="block text-label text-text-dim xl:hidden">Price</span>
+                        {formatMoney(product.sellingPrice)}
+                      </td>
+                      <td className="tabular py-3 text-body text-text-dim xl:pl-3 xl:text-right">
+                        <span className="block text-label text-text-dim xl:hidden">Avg cost</span>
+                        {formatMoney(product.avgCost)}
+                      </td>
+                      <td className="tabular py-3 text-body text-text xl:pl-3 xl:text-right"><span className="block text-label text-text-dim xl:hidden">Margin</span>{margin(product)}</td>
+                      <td
+                        className={`tabular py-3 text-body xl:pl-3 xl:text-right ${product.qtyOnHand <= 0 ? 'text-danger' : 'text-text'}`}
+                      >
+                        <span className="block text-label text-text-dim xl:hidden">On hand</span>
+                        {product.qtyOnHand}
+                      </td>
+                      <td className="col-span-2 py-3 xl:pl-4 xl:text-right">
+                        <div className="flex flex-wrap gap-2 xl:justify-end">
+                          <Button variant="secondary" onClick={() => { dismiss(); setDeliveryError(null); setStocking(product); }}>
+                            Add stock
                           </Button>
-                          {/* Confirmed, because this sits one click from Edit and the row
-                              then leaves the default view. */}
-                          <Button
-                            variant="secondary"
-                            onClick={() => setConfirmingArchive(product)}
-                          >
-                            Archive
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
+                          {product.archivedAt ? (
+                            <Button
+                              variant="secondary"
+                              pending={restore.isPending && restore.variables === product.id}
+                              onClick={() => restore.mutate(product.id)}
+                            >
+                              Restore
+                            </Button>
+                          ) : (
+                            <ActionMenu label={`Actions for ${product.name}`} disabled={save.isPending} items={[
+                              { id: 'edit', label: 'Edit', onSelect: () => { dismiss(); setError(null); setEditing(product); } },
+                              { id: 'archive', label: 'Archive', danger: true, onSelect: () => setConfirmingArchive(product) },
+                            ]} />
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          </section>
+        ))}
+      </div>
 
       {stocking ? (
         <Modal title={`Add stock · ${stocking.name}`} onClose={() => setStocking(null)}>
@@ -278,6 +340,19 @@ export function ProductsPage() {
         </Modal>
       ) : null}
 
+      {imageTask && showImageTask ? (
+        <Modal title={`Picture for ${imageTask.product.name}`} onClose={() => setShowImageTask(false)}>
+          <p tabIndex={-1} data-autofocus className="mb-4 text-body text-text">Product saved, including any opening stock. Only the picture is being uploaded.</p>
+          <p className="mb-4 break-all text-label text-text-dim">{imageTask.file.name}</p>
+          {imageUpload.isError ? <Banner tone="danger">Picture upload failed: {messageOf(imageUpload.error)} Retry uploads to the saved product.</Banner> : null}
+          {imageUpload.isPending ? <Spinner label="Uploading picture…" /> : <div className="mt-6 flex flex-wrap justify-end gap-3">
+            <Button variant="secondary" onClick={() => { setImageTask(null); setShowImageTask(false); }}>Finish without picture</Button>
+            <Button data-autofocus onClick={() => imageUpload.mutate(imageTask)}>Retry picture upload</Button>
+          </div>}
+          <p className="mt-4 text-label text-text-dim">You can also add or replace the picture later from Edit.</p>
+        </Modal>
+      ) : null}
+
       {creating || editing ? (
         <ProductForm
           product={editing}
@@ -288,7 +363,7 @@ export function ProductsPage() {
             setEditing(null);
             setCreating(false);
           }}
-          onSave={(body) => save.mutate({ id: editing?.id ?? null, body })}
+          onSave={(body, file) => save.mutate({ id: editing?.id ?? null, body, file })}
           onImageChanged={refresh}
         />
       ) : null}
@@ -310,9 +385,11 @@ function ProductForm({
   pending: boolean;
   error: string | null;
   onClose: () => void;
-  onSave: (body: ProductRequest) => void;
+  onSave: (body: ProductRequest, file: File | null) => void;
   onImageChanged: () => void;
 }) {
+  const [file, setFile] = useState<File | null>(null);
+  const [imageInvalid, setImageInvalid] = useState(false);
   const [name, setName] = useState(product?.name ?? '');
   const [categoryId, setCategoryId] = useState(product?.categoryId ?? '');
   const [sellingPrice, setSellingPrice] = useState(
@@ -326,7 +403,7 @@ function ProductForm({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (name.trim() === '' || sellingPrice.trim() === '') return;
-    if (pending) return;
+    if (pending || imageInvalid) return;
     // Opening stock is a delivery recorded by the server in the same transaction.
     onSave({
       name: name.trim(),
@@ -336,7 +413,7 @@ function ProductForm({
       ...(!product && hasOpeningStock ? {
         openingStock: { quantity: Number(openingQuantity), unitCost: Number(openingCost) },
       } : {}),
-    });
+    }, file);
   }
 
   return (
@@ -351,17 +428,17 @@ function ProductForm({
           data-autofocus
           onChange={(event) => setName(event.target.value)}
         />
-        {/* The upload needs an id to attach to, so it appears once the row exists. Nothing
-            is lost by that: a product without a picture is a normal product. */}
         {product ? (
           <ProductImageField product={product} onChanged={onImageChanged} />
-        ) : null}
+        ) : <NewProductImageField file={file} disabled={pending} onChange={setFile} onInvalid={setImageInvalid} />}
         <Select
           label="Category"
           value={categoryId}
           onChange={(event) => setCategoryId(event.target.value)}
         >
           <option value="">No category</option>
+          {product?.categoryId && !categories.some(category => category.id === product.categoryId) ?
+            <option value={product.categoryId}>Current category (unavailable)</option> : null}
           {categories.map((category) => (
             <option key={category.id} value={category.id}>
               {category.name}
@@ -405,7 +482,7 @@ function ProductForm({
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" pending={pending}>
+          <Button type="submit" pending={pending} disabled={imageInvalid}>
             Save
           </Button>
         </div>
@@ -476,6 +553,8 @@ function ProductImageField({
           <input
             ref={picker}
             type="file"
+            aria-label="Choose product picture"
+            tabIndex={-1}
             accept="image/jpeg,image/png,image/webp"
             onChange={handlePick}
             className="sr-only"
