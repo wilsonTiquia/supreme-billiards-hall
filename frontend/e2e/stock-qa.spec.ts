@@ -69,7 +69,8 @@ for (const width of [400, 1280]) {
       await shot('stock-long-delivery');
       await expect(page.locator('body')).toHaveJSProperty('scrollWidth', width);
       await page.getByRole('heading', { name: 'Low or negative stock' }).scrollIntoViewIfNeeded();
-      expect((await page.locator('body').boundingBox())?.y).toBeLessThan(0);
+      await expect(page.getByRole('heading', { name: 'Low or negative stock' })).toBeInViewport();
+      await page.getByRole('tab', { name: 'Giveaway', exact: true }).click();
 
       const giveAway = page.locator('div.rounded-xl').filter({ has: page.getByRole('heading', { name: 'Give away', exact: true }) });
       await giveAway.getByRole('combobox').fill(productName);
@@ -77,10 +78,10 @@ for (const width of [400, 1280]) {
       await giveAway.getByLabel('Quantity', { exact: true }).fill('1');
       await giveAway.getByLabel('Reason').fill('QA staff drink');
       await giveAway.getByRole('button', { name: 'Record give-away' }).click();
-      await expect(page.getByRole('status')).toContainText('Give-away recorded.');
+      await expect(giveAway.getByRole('status')).toContainText('Give-away recorded.');
       await shot('stock-toast');
-      await page.getByRole('button', { name: 'Dismiss notification' }).click();
-      await expect(page.getByRole('status')).toBeEmpty();
+      await page.getByRole('tab', { name: 'Delivery', exact: true }).click();
+      await expect(page.getByRole('tabpanel').getByRole('status')).toHaveCount(0);
     });
   }
 }
