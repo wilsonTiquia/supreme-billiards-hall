@@ -23,7 +23,8 @@ import { Field } from '@/components/Field';
 import { Select } from '@/components/Select';
 import { Modal } from '@/components/Modal';
 import { ProductImage } from '@/components/ProductImage';
-import { DeliveryForm } from '../stock/DeliveryForm';
+import { ProductStockForm } from '../stock/ProductStockForm';
+import { recordProductStock } from '@/api/endpoints/stock';
 import { useToast } from '@/components/Toast';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
@@ -39,6 +40,7 @@ function margin(product: ProductAdmin): string {
 export function ProductsPage() {
   const queryClient = useQueryClient();
   const { notify, dismiss } = useToast();
+  const deliveryInFlight = useRef(false);
   const [stocking, setStocking] = useState<ProductAdmin | null>(null);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ProductAdmin | null>(null);
@@ -69,6 +71,17 @@ export function ProductsPage() {
     void queryClient.invalidateQueries({ queryKey: ['products'] });
     void queryClient.invalidateQueries({ queryKey: queryKeys.lowStock });
   }
+
+  const delivery = useMutation({
+    mutationFn: recordProductStock,
+    onSuccess: () => {
+      setStocking(null);
+      refresh();
+      notify('Delivery recorded. Average cost has been recomputed.');
+    },
+    onError: caught => { setDeliveryError(messageOf(caught)); refresh(); },
+    onSettled: () => { deliveryInFlight.current = false; },
+  });
 
   const imageUpload = useMutation({
     mutationFn: ({ product, file }: { product: ProductAdmin; file: File }) => uploadProductImage(product.id, file),
@@ -149,8 +162,9 @@ export function ProductsPage() {
     <AdminPage
       title="Products"
       intro="Manage your menu, prices and stock on hand."
-      error={error ?? (products.isError ? messageOf(products.error) : null)}
+      error={error ?? (!stocking ? deliveryError : null) ?? (products.isError ? messageOf(products.error) : null)}
     >
+      {delivery.isPending && !stocking ? <div className="mb-4"><Banner>Recording delivery…</Banner></div> : null}
       {imageTask && !showImageTask ? <div className="mb-4">
         <Banner tone={imageUpload.isError ? 'warning' : 'info'} actions={
           <Button variant="secondary" onClick={() => setShowImageTask(true)}>Review picture</Button>
@@ -267,7 +281,7 @@ export function ProductsPage() {
                       </td>
                       <td className="col-span-2 py-3 xl:pl-4 xl:text-right">
                         <div className="flex flex-wrap gap-2 xl:justify-end">
-                          <Button variant="secondary" onClick={() => { dismiss(); setDeliveryError(null); setStocking(product); }}>
+                          <Button variant="secondary" disabled={delivery.isPending} onClick={() => { if (deliveryInFlight.current) return; dismiss(); setDeliveryError(null); setStocking(product); }}>
                             Add stock
                           </Button>
                           {product.archivedAt ? (
@@ -298,11 +312,16 @@ export function ProductsPage() {
       {stocking ? (
         <Modal title={`Add stock · ${stocking.name}`} onClose={() => setStocking(null)}>
           {deliveryError ? <div className="mb-4"><Banner tone="danger">{deliveryError}</Banner></div> : null}
-          <DeliveryForm
-            products={products.data ?? []}
-            initialProductId={stocking.id}
-            onError={(message) => { dismiss(); setDeliveryError(message); }}
-            onDone={() => { setStocking(null); refresh(); notify('Delivery recorded. Average costs have been recomputed.'); }}
+          <ProductStockForm
+            product={stocking}
+            pending={delivery.isPending}
+            onEdit={() => { setStocking(null); setError(null); setEditing(stocking); }}
+            onSubmit={quantity => {
+              if (deliveryInFlight.current || stocking.defaultPurchaseCost == null) return;
+              deliveryInFlight.current = true;
+              setDeliveryError(null);
+              delivery.mutate({ productId: stocking.id, quantity, expectedDefaultPurchaseCost: stocking.defaultPurchaseCost });
+            }}
           />
         </Modal>
       ) : null}
@@ -395,6 +414,9 @@ function ProductForm({
   const [sellingPrice, setSellingPrice] = useState(
     product ? String(product.sellingPrice) : '',
   );
+  const [defaultCost, setDefaultCost] = useState(product?.defaultPurchaseCost == null ? '' : String(product.defaultPurchaseCost));
+  const [confirmZero, setConfirmZero] = useState(false);
+  const choosingZero = defaultCost.trim() !== '' && Number(defaultCost) === 0;
   const [openingQuantity, setOpeningQuantity] = useState('');
   const [openingCost, setOpeningCost] = useState('');
   const hasOpeningStock = openingQuantity !== '' || openingCost !== '';
@@ -403,12 +425,14 @@ function ProductForm({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (name.trim() === '' || sellingPrice.trim() === '') return;
-    if (pending || imageInvalid) return;
+    if (pending || imageInvalid || (choosingZero && !confirmZero)) return;
     // Opening stock is a delivery recorded by the server in the same transaction.
     onSave({
       name: name.trim(),
       categoryId: categoryId === '' ? undefined : categoryId,
       sellingPrice: Number(sellingPrice),
+      defaultPurchaseCost: defaultCost.trim() === '' ? null : Number(defaultCost),
+      confirmZeroDefaultCost: choosingZero && confirmZero,
       isActive,
       ...(!product && hasOpeningStock ? {
         openingStock: { quantity: Number(openingQuantity), unitCost: Number(openingCost) },
@@ -455,6 +479,14 @@ function ProductForm({
           value={sellingPrice}
           onChange={(event) => setSellingPrice(event.target.value)}
         />
+        <Field label="Default purchase cost" type="number" min="0" max="99999999.9999" step="0.0001"
+          inputMode="decimal" value={defaultCost}
+          onChange={event => { setDefaultCost(event.target.value); setConfirmZero(false); }} />
+        <p className="text-label text-text-dim">For future Add stock deliveries. Leave blank if unknown. Changing this does not revalue current stock or past sales.</p>
+        {choosingZero ? <label className="hit flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-body text-text">
+          <input type="checkbox" required checked={confirmZero} onChange={event => setConfirmZero(event.target.checked)} className="mt-1 size-6 shrink-0" />
+          I confirm this product is genuinely free. Use zero as its default purchase cost.
+        </label> : null}
         {!product ? (
           <fieldset className="rounded-lg border border-border p-4">
             <legend className="px-1 text-body font-semibold text-text">Opening stock</legend>
@@ -482,7 +514,7 @@ function ProductForm({
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" pending={pending} disabled={imageInvalid}>
+          <Button type="submit" pending={pending} disabled={imageInvalid || (choosingZero && !confirmZero)}>
             Save
           </Button>
         </div>

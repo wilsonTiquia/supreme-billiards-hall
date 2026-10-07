@@ -14,4 +14,5 @@ import java.math.BigDecimal;
 public class ProductAdminResponseDTO extends ProductResponseDTO {
 
     private BigDecimal avgCost;
+    private BigDecimal defaultPurchaseCost;
 }

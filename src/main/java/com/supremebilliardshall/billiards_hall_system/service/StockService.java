@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.UUID;
 
 public interface StockService {
+    StockDeliveryResponseDTO receiveProductStock(ProductStockRequestDTO request);
+
     StockDeliveryResponseDTO receiveDelivery(StockDeliveryRequestDTO stockDeliveryRequestDTO);
 
     StockMovementResponseDTO correctStock(StockCorrectionRequestDTO stockCorrectionRequestDTO);

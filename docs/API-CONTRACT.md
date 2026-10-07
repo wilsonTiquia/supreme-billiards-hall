@@ -208,6 +208,20 @@ Request: `{ "name", "categoryId"?, "sellingPrice", "isActive"? }`. `avgCost` and
 **not settable** — stock moves only through the ledger, and the image moves only through its own
 routes below.
 
+Optional admin request fields: `defaultPurchaseCost` (null/unset or a number from 0 to
+99999999.9999 with up to four decimal places) and `confirmZeroDefaultCost` (boolean).
+POST leaves the default unset when omitted. PUT is a full product edit: omitted or null clears
+the default; the UI sends null for a blank field. **Zero is a real, explicitly chosen free-stock
+price**, never the fallback for missing input. Every POST/PUT saving zero must include
+`confirmZeroDefaultCost: true`, otherwise **409**. Negative, oversized or over-precision costs
+return **400**. The UI requires an unchecked confirmation for each zero save and resets it when
+the cost field changes.
+
+The default is separate from `avgCost`, opening stock and actual bulk-delivery prices. Changing
+it writes product audit history but never revalues stock or historical bill/receipt snapshots.
+V24 leaves existing products unset, without copying average cost or assuming a zero supplier
+price. Product edits serialize with stock movements using the same branch-scoped row lock.
+
 On **POST only**, optional `openingStock: { "quantity": 12, "unitCost": 62.50 }` records the
 initial inventory through the existing stock delivery service. Omit it (or send `null`) for no
 opening stock. When present, both fields are required: quantity ≥ 0.001 (up to three decimal
@@ -223,7 +237,7 @@ cost. Sending opening stock on **PUT returns 409**; use `/stock/deliveries` for 
   "archivedAt", "imageSha256" }
 ```
 
-An ADMIN receives the same **plus `avgCost`**. The cost key is *absent* for an employee, not null —
+An ADMIN receives the same **plus `avgCost` and nullable `defaultPurchaseCost`**. Both cost keys are *absent* for an employee, not null —
 do not write UI that expects it and hides it.
 
 There is **no `sku`**. It was removed on 1 September 2026; the hall identifies a product by name.
@@ -1193,12 +1207,29 @@ cash count row, so it happens exactly once.
 | Method | Path | Who |
 |---|---|---|
 | POST | `/api/v1/stock/deliveries` | ADMIN |
+| POST | `/api/v1/stock/product-deliveries` | ADMIN |
 | POST | `/api/v1/stock/corrections` | ADMIN |
 | POST | `/api/v1/stock/comps` | authenticated |
 | GET | `/api/v1/stock/low` | authenticated |
 
 **deliveries** → `{ "supplierName"?, "reference"?, "note"?, "lines": [ { "productId", "quantity",
 "unitCost" } ] }`. Recomputes each product's moving weighted average cost.
+
+**product-deliveries** (single-product catalog shortcut) → `{ "productId", "quantity",
+"expectedDefaultPurchaseCost" }`. Quantity must be 0.001–999999999.999 with up to three decimal
+places; expected cost is required, nonnegative, up to four decimal places. Invalid fields return
+**400**. The service locks the selected product in the caller's branch, requires a saved default
+(**409** if unset), and compares it numerically to the displayed expected cost (**409** if stale).
+On a conflict, close and reopen Add stock to review the refreshed product, then submit again.
+A missing or foreign product is **404**; employees receive **403**. Archived products remain
+eligible, as with bulk deliveries.
+
+The ledger's unit cost comes from the locked server product, not the request. The existing
+receive-delivery transaction records the header, movement, actor, quantity and weighted average;
+the response is the same `StockDelivery` shape as bulk deliveries. Rejected requests write no
+delivery or movement. The UI blocks duplicate submissions while pending, including after closing
+the dialog. This route does not promise network-retry or cross-tab idempotency.
+Bulk deliveries still take actual `unitCost` and do not update the default purchase cost.
 
 **corrections** → `{ "productId", "newQuantity", "note" }` — `note` required. Records the *delta*.
 Correcting to the quantity already held → 409.

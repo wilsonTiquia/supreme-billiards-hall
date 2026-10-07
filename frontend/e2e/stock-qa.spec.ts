@@ -28,6 +28,7 @@ for (const width of [400, 1280]) {
       await expect(dialog).toBeVisible();
       expect(await dialog.getByLabel('Unit cost').evaluate((el) => el.matches(':invalid'))).toBe(true);
       await dialog.getByLabel('Unit cost').fill('62.5');
+      await dialog.getByLabel('Default purchase cost', { exact: true }).fill('67.5');
       await dialog.getByRole('heading').scrollIntoViewIfNeeded();
       await expect(dialog.getByRole('heading')).toBeInViewport();
       await shot('opening-stock');
@@ -36,9 +37,9 @@ for (const width of [400, 1280]) {
       const row = page.getByRole('row').filter({ hasText: productName });
       await expect(row).toContainText('₱62.50');
       await row.getByRole('button', { name: 'Add stock', exact: true }).click();
-      await expect(dialog.getByRole('combobox', { name: 'Line 1' })).toHaveValue(productName);
+      await expect(dialog.getByRole('combobox')).toHaveCount(0);
+      await expect(dialog).toContainText('₱67.50');
       await dialog.getByLabel('Quantity', { exact: true }).fill('12');
-      await dialog.getByLabel('Unit cost').fill('67.5');
       await expect(dialog.getByRole('button', { name: 'Record delivery' })).toBeEnabled();
       await shot('add-stock');
       await dialog.getByRole('button', { name: 'Record delivery' }).click();

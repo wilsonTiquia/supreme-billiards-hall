@@ -66,6 +66,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional
     public ProductResponseDTO createProduct(ProductRequestDTO productRequestDTO) {
+        requireConfirmedDefaultCost(productRequestDTO);
         boolean exists = productRepository.existsByName(productRequestDTO.getName());
         if (exists) {
             throw new DuplicateResourceException("Product with name '" + productRequestDTO.getName() + "' already exists.");
@@ -99,10 +100,11 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional
     public ProductResponseDTO updateProduct(UUID id, ProductRequestDTO productRequestDTO) {
+        requireConfirmedDefaultCost(productRequestDTO);
         if (productRequestDTO.getOpeningStock() != null) {
             throw new BusinessRuleException("Opening stock is only for new products. Use Add stock to receive a delivery.");
         }
-        Product existing = productRepository.findById(id)
+        Product existing = productRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Product", id));
 
         // check if the name is the same
@@ -135,7 +137,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional
     public void deleteProduct(UUID id) {
-        Product product = productRepository.findById(id)
+        Product product = productRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Product", id));
         // The image file is left where it is on purpose, so a restore brings the picture back
         // with the product.
@@ -152,7 +154,7 @@ public class ProductServiceImpl implements ProductService {
     @Override
     @Transactional
     public ProductResponseDTO unarchiveProduct(UUID id) {
-        Product product = productRepository.findById(id)
+        Product product = productRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Product", id));
 
         if (product.getArchivedAt() == null) {
@@ -177,6 +179,14 @@ public class ProductServiceImpl implements ProductService {
                 before, auditSnapshot(restored), null);
 
         return toResponseDto(restored);
+    }
+
+    private void requireConfirmedDefaultCost(ProductRequestDTO request) {
+        if (request.getDefaultPurchaseCost() != null
+                && request.getDefaultPurchaseCost().signum() == 0
+                && !Boolean.TRUE.equals(request.getConfirmZeroDefaultCost())) {
+            throw new BusinessRuleException("Confirm that this product is genuinely free before saving a zero default purchase cost.");
+        }
     }
 
     // Employees must never receive a cost field, so the type differs rather than the value.
@@ -207,6 +217,7 @@ public class ProductServiceImpl implements ProductService {
         snapshot.put("name", product.getName());
         snapshot.put("category", categoryNameOf(product.getCategoryId()));
         snapshot.put("sellingPrice", product.getSellingPrice());
+        snapshot.put("defaultPurchaseCost", product.getDefaultPurchaseCost());
         snapshot.put("isActive", product.getIsActive());
         snapshot.put("archivedAt", product.getArchivedAt());
         return snapshot;

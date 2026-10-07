@@ -2,6 +2,7 @@ package com.supremebilliardshall.billiards_hall_system.dto.product;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.Digits;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -30,6 +31,13 @@ public class ProductRequestDTO {
     private BigDecimal sellingPrice;
 
     private Boolean isActive;
+
+    @DecimalMin(value = "0", message = "Default purchase cost must not be negative")
+    @Digits(integer = 8, fraction = 4)
+    private BigDecimal defaultPurchaseCost;
+
+    // Required for every save that explicitly chooses free stock.
+    private Boolean confirmZeroDefaultCost;
 
     @Valid
     private OpeningStockRequestDTO openingStock;

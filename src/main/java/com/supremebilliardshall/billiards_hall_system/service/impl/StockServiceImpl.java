@@ -48,6 +48,22 @@ public class StockServiceImpl implements StockService {
     }
 
 
+    @Override
+    @Transactional
+    public StockDeliveryResponseDTO receiveProductStock(ProductStockRequestDTO request) {
+        Product product = lockProduct(request.getProductId());
+        BigDecimal cost = product.getDefaultPurchaseCost();
+        if (cost == null) {
+            throw new BusinessRuleException("Set a default purchase cost in Edit product before adding stock.");
+        }
+        if (cost.compareTo(request.getExpectedDefaultPurchaseCost()) != 0) {
+            throw new BusinessRuleException("Default purchase cost changed. Close and reopen Add stock to review the current cost before recording delivery.");
+        }
+        // Same transaction and row lock as the bulk ledger path. No client-supplied price.
+        return receiveDelivery(new StockDeliveryRequestDTO(null, null, null,
+                List.of(new StockDeliveryLineRequestDTO(product.getId(), request.getQuantity(), cost))));
+    }
+
     // Archived products are accepted here on purpose, unlike on the two comp routes below.
     // Archiving is a CATALOGUE act -- it stops a product being sold -- and a delivery is not a
     // sale. The supplier who sends the last case of a line the hall has discontinued still put
