@@ -9,6 +9,7 @@ import { FloorPage } from '@/features/floor/FloorPage';
 import { SessionPage } from '@/features/session/SessionPage';
 import { CheckoutPage } from '@/features/checkout/CheckoutPage';
 import { QuickSalePage } from '@/features/quicksale/QuickSalePage';
+import { ReceiptDialog } from '@/features/checkout/ReceiptDialog';
 import { ReceiptPage } from '@/features/checkout/ReceiptPage';
 import { EndOfDayPage } from '@/features/endofday/EndOfDayPage';
 import { UnsettledPage } from '@/features/unsettled/UnsettledPage';
@@ -63,7 +64,9 @@ export function AppRoutes() {
               <Route path="admin/settings" element={<SettingsPage />} />
               <Route path="admin/staff" element={<StaffPage />} />
               <Route path="admin/stock" element={<StockPage />} />
-              <Route path="admin/sales" element={<SalesPage />} />
+              <Route path="admin/sales" element={<SalesPage />}>
+                <Route path="receipt/:billId" element={<ReceiptDialog />} />
+              </Route>
               <Route path="admin/audit" element={<AuditPage />} />
             </Route>
 

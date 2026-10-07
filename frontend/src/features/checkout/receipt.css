@@ -1,0 +1,34 @@
+.receipt-workspace { width: 100%; max-width: 70rem; margin-inline: auto; }
+.receipt-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.receipt-layout { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 3fr); align-items: start; gap: 1rem; }
+.receipt-document, .receipt-notes { min-width: 0; overflow-wrap: anywhere; }
+.receipt-document .tabular, .receipt-document .figure-amount { flex-shrink: 0; white-space: nowrap; }
+.receipt-dialog {
+  width: calc(100% - 3rem); max-width: 73rem; max-height: calc(100dvh - 3rem);
+  margin: auto; padding: 1.5rem; overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid var(--border); border-radius: 1rem;
+  background: var(--bg); color: var(--text);
+  box-shadow: 0 24px 64px #0006;
+}
+.receipt-dialog::backdrop { background: #0009; }
+@media (max-width: 767px) {
+  .receipt-layout { grid-template-columns: minmax(0, 1fr); }
+  .receipt-dialog { width: calc(100% - 1rem); max-height: calc(100dvh - 1rem); padding: 1rem; }
+}
+@media print {
+  /* The portal is a body child, so the entire background list/shell leaves print layout. */
+  body:has(.receipt-dialog[open]) > :not(.receipt-dialog) { display: none !important; }
+  .receipt-dialog[open] {
+    position: static !important; display: block; width: 100%; max-width: none;
+    height: auto; max-height: none; margin: 0; padding: 0; overflow: visible;
+    border: 0; border-radius: 0; box-shadow: none; background: #fff; color: #000;
+  }
+  .receipt-dialog::backdrop { display: none; }
+  .receipt-workspace { max-width: none; }
+  .receipt-layout { display: block; }
+  .receipt-toolbar, .receipt-notes { display: none !important; }
+  .receipt-document { box-shadow: none; background: #fff; color: #000; }
+  .receipt-document header { display: block !important; }
+  .receipt-document li, .receipt-document dl > div { break-inside: avoid; }
+  .receipt-document * { color: #000 !important; }
+}
