@@ -1,6 +1,7 @@
 import { request } from '../client';
 import type {
   LowStockLine,
+  ProductStockRequest,
   StockCompBatchRequest,
   StockCompRequest,
   StockCorrectionRequest,
@@ -16,6 +17,10 @@ import type {
  */
 export function recordCompBatch(body: StockCompBatchRequest): Promise<StockMovement[]> {
   return request<StockMovement[]>('/stock/comps/batch', { method: 'POST', body });
+}
+
+export function recordProductStock(body: ProductStockRequest): Promise<StockDelivery> {
+  return request<StockDelivery>('/stock/product-deliveries', { method: 'POST', body });
 }
 
 export function recordDelivery(body: StockDeliveryRequest): Promise<StockDelivery> {

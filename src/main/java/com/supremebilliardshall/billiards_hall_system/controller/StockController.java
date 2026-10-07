@@ -20,6 +20,13 @@ public class StockController {
         this.stockService = stockService;
     }
 
+    @PostMapping("/product-deliveries")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<APIResponse<StockDeliveryResponseDTO>> receiveProductStock(@Valid @RequestBody ProductStockRequestDTO request) {
+        StockDeliveryResponseDTO delivery = stockService.receiveProductStock(request);
+        return ResponseEntity.ok(APIResponse.success(delivery, "Delivery received successfully"));
+    }
+
     // Admin: a delivery carries unit costs and moves the average cost.
     @PostMapping("/deliveries")
     @PreAuthorize("hasRole('ADMIN')")

@@ -44,6 +44,9 @@ public class Product implements BranchScoped {
     @Column(name = "avg_cost", nullable = false, precision = 12, scale = 4)
     private BigDecimal avgCost;
 
+    @Column(name = "default_purchase_cost", precision = 12, scale = 4)
+    private BigDecimal defaultPurchaseCost;
+
     // Cache of SUM(stock_movement.quantity_delta). The ledger is authoritative.
     @Column(name = "qty_on_hand", nullable = false, precision = 12, scale = 3)
     private BigDecimal qtyOnHand;

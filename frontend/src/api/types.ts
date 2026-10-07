@@ -150,10 +150,19 @@ export interface Product {
 
 /** What an ADMIN receives: the same, plus cost. Employee screens must type against Product. */
 export interface ProductAdmin extends Product {
+  defaultPurchaseCost: Money | null;
   avgCost: Money;
 }
 
+export interface ProductStockRequest {
+  productId: UUID;
+  quantity: number;
+  expectedDefaultPurchaseCost: Money;
+}
+
 export interface ProductRequest {
+  defaultPurchaseCost?: Money | null;
+  confirmZeroDefaultCost?: boolean;
   name: string;
   categoryId?: UUID;
   sellingPrice: Money;
