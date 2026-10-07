@@ -112,7 +112,9 @@ export function AppShell() {
     staleTime: 60_000,
   });
 
-  const groups = admin ? ADMIN : COUNTER;
+  const groups = admin ? ADMIN : user?.role === 'ADMIN'
+    ? [...COUNTER, { label: 'Look up', items: [{ to: '/admin/sales', label: 'Sales', icon: 'sales' as const }] }]
+    : COUNTER;
   const floorOverview = /^\/floor\/?$/.test(pathname);
 
   return (

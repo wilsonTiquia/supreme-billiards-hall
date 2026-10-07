@@ -1,4 +1,4 @@
-import { useSearchParams } from 'react-router-dom';
+import { Outlet, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { fetchSettledBills } from '@/api/endpoints/bills';
 import { fetchCurrentBusinessDay } from '@/api/endpoints/businessDay';
@@ -69,6 +69,12 @@ export function SalesPage() {
   });
 
   const rows = bills.data?.content ?? [];
+  const receiptSearch = new URLSearchParams(params);
+  if (businessDate) receiptSearch.set('date', businessDate);
+  const receiptLink = (id: string) => ({
+    to: `/admin/sales/receipt/${id}?${receiptSearch}`,
+    state: { salesReceipt: true },
+  });
 
   return (
     <AdminPage
@@ -127,13 +133,7 @@ export function SalesPage() {
                     Taken by {bill.takenByUsername ?? '—'}
                   </p>
                   <ButtonLink variant="secondary"
-                    to={`/receipt/${bill.id}`}
-                    state={{
-                      origin: {
-                        label: 'Back to sales',
-                        to: `/admin/sales?date=${businessDate ?? ''}&page=${page}`,
-                      },
-                    }}
+                    {...receiptLink(bill.id)}
                     className="mt-3 inline-flex"
                   >
                     Receipt
@@ -174,13 +174,7 @@ export function SalesPage() {
                         you left rather than on the floor. Checking several receipts in a
                         sitting is the normal case. */}
                     <ButtonLink variant="secondary"
-                      to={`/receipt/${bill.id}`}
-                      state={{
-                        origin: {
-                          label: 'Back to sales',
-                          to: `/admin/sales?date=${businessDate ?? ''}&page=${page}`,
-                        },
-                      }}
+                      {...receiptLink(bill.id)}
                       className="inline-flex"
                     >
                       Receipt
@@ -199,6 +193,7 @@ export function SalesPage() {
             onPrevious={() => setPage(page - 1)} onNext={() => setPage(page + 1)} />
         ) : null}
       </Card>
+      <Outlet />
     </AdminPage>
   );
 }
