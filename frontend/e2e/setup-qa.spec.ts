@@ -80,7 +80,12 @@ test('setup lifecycle, hourly details and audit disclosure in both sizes and the
   for (const kind of kinds) {
     await page.goto(`/admin/${kind}`);
     const row = page.getByRole(kind === 'staff' ? 'row' : 'listitem').filter({ hasText: `Unused ${kind}` });
-    await row.getByRole('button', { name: 'Delete', exact: true }).click();
+    if (kind === 'tables' || kind === 'staff') {
+      await row.getByRole('button', { name: /^Actions for/ }).click();
+      await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
+    } else {
+      await row.getByRole('button', { name: 'Delete', exact: true }).click();
+    }
     await expect(page.getByRole('dialog')).toContainText('cannot be undone');
     await page.getByRole('button', { name: 'Delete permanently', exact: true }).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -90,7 +95,14 @@ test('setup lifecycle, hourly details and audit disclosure in both sizes and the
     await page.getByLabel(/Show archived/).check();
     const archived = page.getByRole('listitem').filter({ hasText: `Archived ${kind}` });
     await archived.getByRole('button', { name: 'Restore', exact: true }).click();
-    await expect(page.getByRole(kind === 'staff' ? 'row' : 'listitem').filter({ hasText: `Archived ${kind}` }).getByRole('button', { name: 'Delete', exact: true })).toBeVisible();
+    const restored = page.getByRole(kind === 'staff' ? 'row' : 'listitem').filter({ hasText: `Archived ${kind}` });
+    if (kind === 'tables' || kind === 'staff') {
+      await restored.getByRole('button', { name: /^Actions for/ }).click();
+      await expect(page.getByRole('menuitem', { name: 'Delete', exact: true })).toBeVisible();
+      await page.keyboard.press('Escape');
+    } else {
+      await expect(restored.getByRole('button', { name: 'Delete', exact: true })).toBeVisible();
+    }
   }
   await page.goto('/admin/customer-types');
   const used = page.getByRole('listitem').filter({ hasText: 'League players' });

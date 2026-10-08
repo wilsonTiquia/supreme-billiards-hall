@@ -1,14 +1,13 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  changeTableRate,
   createTable,
   fetchFloor,
   updateTable,
 } from '@/api/endpoints/tables';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
-import type { PoolTable, PoolTableRateRequest, PoolTableRequest } from '@/api/types';
+import type { PoolTable, PoolTableRequest } from '@/api/types';
 import { AdminPage } from '../AdminPage';
 import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
@@ -17,7 +16,8 @@ import { Field } from '@/components/Field';
 import { RateModeField, rateBody, type RateMode } from '@/components/RateModeField';
 import { Modal } from '@/components/Modal';
 import { Spinner } from '@/components/Spinner';
-import { Banner } from '@/components/Banner';
+import { ActionMenu } from '@/components/ActionMenu';
+import './tables.css';
 import {
   formatEffectiveHourly,
   formatHourlyRate,
@@ -28,7 +28,6 @@ import {
 export function TablesPage() {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<PoolTable | null>(null);
-  const [repricing, setRepricing] = useState<PoolTable | null>(null);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,17 +48,6 @@ export function TablesPage() {
       setError(null);
       setEditing(null);
       setCreating(false);
-      refresh();
-    },
-    onError: (caught) => setError(messageOf(caught)),
-  });
-
-  const reprice = useMutation({
-    mutationFn: ({ id, body }: { id: string; body: PoolTableRateRequest }) =>
-      changeTableRate(id, body),
-    onSuccess: () => {
-      setError(null);
-      setRepricing(null);
       refresh();
     },
     onError: (caught) => setError(messageOf(caught)),
@@ -87,7 +75,7 @@ export function TablesPage() {
           <ul className="divide-y divide-border">
             {tables.map((table) => (
               <li key={table.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div>
+                <div className="min-w-0 flex-1 break-words">
                   <div className="text-body text-text">
                     {table.name}
                     <span className="ml-2 text-label text-text-dim">{table.isPremium ? '★ Premium' : 'Standard'}</span>
@@ -104,15 +92,10 @@ export function TablesPage() {
                   </div>
                   <RateInfo table={table} />
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="secondary" onClick={() => setRepricing(table)}>
-                    Change rate
-                  </Button>
-                  <Button variant="secondary" onClick={() => setEditing(table)}>
-                    Edit
-                  </Button>
-                  {lifecycle.action(table.id, table.session ? 'Close the open session before archiving this table.' : undefined)}
-                </div>
+                <ActionMenu label={`Actions for ${table.name}`} items={[
+                  { id: 'edit', label: 'Edit', onSelect: () => setEditing(table) },
+                  lifecycle.menuItem(table.id, table.session ? 'Close the open session before archiving this table.' : undefined),
+                ]} />
               </li>
             ))}
           </ul>
@@ -131,14 +114,6 @@ export function TablesPage() {
         />
       ) : null}
 
-      {repricing ? (
-        <RateForm
-          table={repricing}
-          pending={reprice.isPending}
-          onClose={() => setRepricing(null)}
-          onSave={(body) => reprice.mutate({ id: repricing.id, body })}
-        />
-      ) : null}
       {lifecycle.panel}
       {lifecycle.dialog}
     </AdminPage>
@@ -207,7 +182,7 @@ function TableForm({
           hourLabel="Rate per hour"
           hint={
             table
-              ? 'Changing this here opens a new rate period, exactly as Change rate does.'
+              ? 'Changing this opens a new rate period. Existing sessions keep their original rate.'
               : 'Required — a table with no rate cannot host a session.'
           }
         />
@@ -240,64 +215,6 @@ function TableForm({
   );
 }
 
-function RateForm({
-  table,
-  pending,
-  onClose,
-  onSave,
-}: {
-  table: PoolTable;
-  pending: boolean;
-  onClose: () => void;
-  onSave: (body: PoolTableRateRequest) => void;
-}) {
-  const [mode, setMode] = useState<RateMode>(table.ratePerHour != null ? 'hour' : 'minute');
-  const [rate, setRate] = useState('');
-
-  return (
-    <Modal title={`Change the rate on ${table.name}`} onClose={onClose}>
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (rate.trim() === '') return;
-          onSave(rateBody(mode, rate));
-        }}
-        className="flex flex-col gap-6"
-      >
-        <Banner tone="info">
-          The current period closes and a new one opens from now. Sessions already billed keep
-          the rate they were charged at.
-        </Banner>
-        <div>
-          <div className="text-label uppercase text-text-dim">Current rate</div>
-          <div className="tabular text-body text-text">{describeRate(table)}</div>
-          <RoundingNote table={table} />
-        </div>
-        <RateModeField
-          mode={mode}
-          onModeChange={(next) => {
-            setMode(next);
-            setRate('');
-          }}
-          value={rate}
-          onValueChange={setRate}
-          minuteLabel="New rate per minute"
-          hourLabel="New rate per hour"
-          autoFocus
-        />
-        <div className="flex justify-end gap-3">
-          <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" pending={pending} disabled={rate.trim() === ''}>
-            Open a new period
-          </Button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 function initialRateValue(table: PoolTable | null): string {
   if (!table) return '';
   return String(table.ratePerHour ?? table.ratePerMinute);
@@ -310,16 +227,70 @@ function describeRate(table: PoolTable): string {
 }
 
 function RateInfo({ table }: { table: PoolTable }) {
+  const id = useId();
+  const wrapper = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  const pinned = useRef(false);
+  const [open, setOpen] = useState(false);
+
+  function close() { pinned.current = false; setOpen(false); }
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const popup = panel.current!;
+    popup.showPopover();
+    const position = () => {
+      const rect = trigger.current!.getBoundingClientRect();
+      popup.style.maxHeight = `${window.innerHeight - 24}px`;
+      const size = popup.getBoundingClientRect();
+      popup.style.left = `${Math.max(12, Math.min(rect.left, window.innerWidth - size.width - 12))}px`;
+      popup.style.top = `${Math.max(12, Math.min(rect.bottom + size.height <= window.innerHeight - 12 ? rect.bottom : rect.top - size.height, window.innerHeight - size.height - 12))}px`;
+    };
+    position();
+    window.addEventListener('resize', position);
+    window.addEventListener('scroll', position, true);
+    return () => {
+      popup.hidePopover();
+      window.removeEventListener('resize', position);
+      window.removeEventListener('scroll', position, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const outside = (event: PointerEvent) => {
+      if (!wrapper.current?.contains(event.target as Node)) close();
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') close(); };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+
   return (
-    <details className="mt-1 max-w-md text-label text-text-dim">
-      <summary aria-label={`Rate details for ${table.name}`} className="hit flex w-fit cursor-pointer list-none items-center gap-2 rounded-lg px-2 text-text-dim hover:bg-raised">
+    <div ref={wrapper} className="mt-1 w-fit text-label text-text-dim"
+      onPointerEnter={event => { if (event.pointerType !== 'touch') setOpen(true); }}
+      onPointerLeave={() => { if (!pinned.current && !wrapper.current?.contains(document.activeElement)) setOpen(false); }}
+      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) close(); }}>
+      <button ref={trigger} type="button" aria-label={`Rate details for ${table.name}`}
+        aria-describedby={open ? id : undefined} aria-expanded={open} aria-controls={id}
+        className="hit flex cursor-pointer items-center gap-2 rounded-lg px-2 text-text-dim hover:bg-raised"
+        onFocus={() => setOpen(true)}
+        onClick={() => { if (pinned.current) close(); else { pinned.current = true; setOpen(true); } }}>
         <span aria-hidden>ⓘ</span><span>Rate details</span>
-      </summary>
-      <div className="rounded-lg border border-border bg-raised p-3">
+      </button>
+      <div ref={panel} id={id} role="tooltip" popover="manual" className="table-rate-help">
         <p className="tabular">Billed by the minute at {formatPreciseRate(table.ratePerMinute)}.</p>
+        {table.ratePerHour == null && table.effectiveRatePerHour != null ? (
+          <p className="tabular mt-1">Hourly equivalent: {formatEffectiveHourly(table.effectiveRatePerHour)}.</p>
+        ) : null}
         <RoundingNote table={table} />
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -340,8 +311,8 @@ function RoundingNote({ table }: { table: PoolTable }) {
     <p className="tabular mt-1 text-label text-text-dim">
       Stored as {formatPreciseRate(table.ratePerMinute)}, which prices an hour at{' '}
       {formatEffectiveHourly(table.effectiveRatePerHour)}. A full hour still bills{' '}
-      {formatMoney(table.ratePerHour)}; longer sessions come out a centavo or two under the
-      hourly figure.
+      {formatMoney(table.ratePerHour)}; longer sessions can differ slightly from the hourly
+      figure because billing uses the stored per-minute rate.
     </p>
   );
 }
