@@ -47,6 +47,21 @@ export function useSetupLifecycle(kind: SetupKind, onChanged: () => void) {
         {item ? (item.canDelete ? 'Delete' : 'Archive') : 'Checking…'}
       </Button>;
     },
+    // Same eligibility and confirmation as the visible button, for screens using overflow menus.
+    menuItem: (id: string, blockedReason?: string) => {
+      const item = query.data?.find((row) => row.id === id);
+      const reason = blockedReason ?? item?.blockedReason;
+      return {
+        id: 'remove',
+        label: item ? (item.canDelete ? 'Delete' : 'Archive') : 'Checking…',
+        description: reason ?? undefined,
+        disabled: !item || Boolean(reason) || change.isPending,
+        danger: true,
+        onSelect: () => { if (item && !reason && !change.isPending) {
+          change.reset(); setSelection({ item, action: item.canDelete ? 'delete' : 'archive' });
+        } },
+      };
+    },
     panel: (
       <>
         {query.isError ? <div className="mt-4"><Banner tone="danger" actions={<Button variant="secondary" onClick={() => void query.refetch()}>Retry</Button>}>{messageOf(query.error)}</Banner></div> : null}

@@ -10,7 +10,8 @@ test('capture table classification administration in both themes and widths', as
     const row = page.getByRole('listitem').filter({ hasText: 'Table 1' });
     await expect(row).toBeVisible();
     await page.screenshot({ path: `../docs/qa/pr03/${process.env.PR03_PREMIUM_CAPTURE}-tables-${theme}-${width}.png`, fullPage: true });
-    await row.getByRole('button', { name: 'Edit', exact: true }).click();
+    await row.getByRole('button', { name: /^Actions for/ }).click();
+    await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     if (process.env.PR03_PREMIUM_CAPTURE === 'after') await expect(page.getByLabel('Premium table', { exact: true })).toBeChecked();
     await page.screenshot({ path: `../docs/qa/pr03/${process.env.PR03_PREMIUM_CAPTURE}-table-edit-${theme}-${width}.png` });

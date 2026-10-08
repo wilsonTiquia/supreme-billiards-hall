@@ -7,6 +7,7 @@ import './controls.css';
 type Item = {
   id: string;
   label: string;
+  description?: string;
   icon?: IconName;
   disabled?: boolean;
   hidden?: boolean;
@@ -105,7 +106,7 @@ export function ActionMenu({ label, items, disabled = false }: {
             item.onSelect?.();
           },
         };
-        const content = <>{item.icon && <Icon name={item.icon} />}{item.label}</>;
+        const content = <>{item.icon && <Icon name={item.icon} />}<span>{item.label}{item.description && <span className="mt-1 block text-label text-text-dim">{item.description}</span>}</span></>;
         return item.to !== undefined && !item.disabled
           ? <Link key={item.id} {...props} to={item.to} state={item.state}
               onKeyDown={event => { if (event.key === ' ') { event.preventDefault(); event.currentTarget.click(); } }}>{content}</Link>

@@ -13,6 +13,7 @@ import { AdminPage } from '../AdminPage';
 import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
+import { ActionMenu } from '@/components/ActionMenu';
 import { Field } from '@/components/Field';
 import { Banner } from '@/components/Banner';
 import { Modal } from '@/components/Modal';
@@ -55,7 +56,7 @@ export function StaffPage() {
   return (
     <AdminPage
       title="Staff"
-      intro="Who can sign in, what they may do, and their password status. A password you set here is always temporary — the person sets their own the next time they sign in. A forgotten administrator password cannot be reset by another administrator; see HELP.md."
+      intro="Who can sign in, what they may do, and their password status. A password you set here is always temporary — the person sets their own the next time they sign in. Reset password is available for counter staff. Administrator passwords cannot be reset here."
       error={error ?? (users.isError ? messageOf(users.error) : null)}
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -112,19 +113,12 @@ export function StaffPage() {
                     )}
                   </td>
                   <td className="col-span-2 px-4 py-3">
-                    <div className="flex flex-wrap gap-2 lg:justify-end">
+                    <div className="flex flex-wrap gap-2 lg:flex-nowrap lg:justify-end">
                       <Button
                         variant="secondary"
-                        onClick={() => {
-                          setBanner(null);
-                          setError(null);
-                          setEditing(staff);
-                        }}
-                      >
-                        Edit
-                      </Button>
-                      <Button
-                        variant="secondary"
+                        className="whitespace-nowrap"
+                        disabled={staff.role === 'ADMIN'}
+                        title={staff.role === 'ADMIN' ? 'Administrator passwords cannot be reset here.' : undefined}
                         onClick={() => {
                           setBanner(null);
                           setError(null);
@@ -133,7 +127,14 @@ export function StaffPage() {
                       >
                         Reset password
                       </Button>
-                      {lifecycle.action(staff.id)}
+                      <ActionMenu label={`Actions for ${staff.fullName}`} items={[
+                        { id: 'edit', label: 'Edit', onSelect: () => {
+                          setBanner(null);
+                          setError(null);
+                          setEditing(staff);
+                        } },
+                        lifecycle.menuItem(staff.id),
+                      ]} />
                     </div>
                   </td>
                 </tr>

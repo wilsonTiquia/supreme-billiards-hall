@@ -20,7 +20,8 @@ test('table administration reads back classification without changing either rat
     const seeded = page.getByRole('listitem').filter({ hasText: 'Table 1' });
     const hourlyRow = page.getByRole('listitem').filter({ hasText: 'Hourly classification QA' });
     for (const row of [seeded, hourlyRow]) {
-      await row.getByRole('button', { name: 'Edit', exact: true }).click();
+      await row.getByRole('button', { name: /^Actions for/ }).click();
+      await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
       const premium = page.getByLabel('Premium table', { exact: true });
       const wasPremium = await premium.isChecked();
       await premium.setChecked(!wasPremium);
@@ -28,7 +29,8 @@ test('table administration reads back classification without changing either rat
       await page.getByRole('button', { name: 'Save', exact: true }).click();
       expect((await saved).status()).toBe(200);
       await page.reload();
-      await row.getByRole('button', { name: 'Edit', exact: true }).click();
+      await row.getByRole('button', { name: /^Actions for/ }).click();
+      await page.getByRole('menuitem', { name: 'Edit', exact: true }).click();
       await expect(premium).toBeChecked({ checked: !wasPremium });
       await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     }
