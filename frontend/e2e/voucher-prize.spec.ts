@@ -112,19 +112,10 @@ test('a prize code closes a bill at nothing and lands in the night as given away
   // into one number — fifty two-hour codes is not fifty times two hours of lost revenue.
   await page.goto('/dashboard');
 
-  // Table use, which no browser test had ever read. Thirty minutes were played on Table 1,
-  // and the figure is occupiedMinutes -- wall clock, pauses included -- shown as hours to one
-  // decimal. It was called billedMinutes and was reported as a bug three times for looking
-  // like the session's charged figure. The section is collapsed until opened, and its
-  // header carries the busiest table's share.
-  const tableUse = page.getByRole('button', { name: /^Table use/ });
-  await expect(tableUse).toHaveText(/Table 1 · \d+%/);
-  await tableUse.click();
-  const utilisation = page.locator('section').filter({ has: tableUse });
-  // A figure, not a blank: a renamed field the client did not follow renders " h" with
-  // nothing in front of it. Scoped to the section because "0.5 h" would also match a table
-  // NAMED "Table 3" followed by "0.0 h" on the row below.
-  await expect(utilisation.getByText(/^\d+\.\d h ·/).first()).toBeVisible();
+  // PR-03 made table use an always-visible tile. Verify the actual played duration.
+  const tableUse = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: /^Table 1( Premium table)?$/ }) });
+  await expect(tableUse.getByText('0.5 h', { exact: true })).toBeVisible();
+  await expect(tableUse.getByText('2.6% in use', { exact: true })).toBeVisible();
 
   // The giveaway section is collapsed too, and its header is the night's total.
   await page.getByRole('button', { name: /^Given away/ }).click();
@@ -133,4 +124,17 @@ test('a prize code closes a bill at nothing and lands in the night as given away
   await expect(detail).toBeVisible();
   await expect(page.getByText('30 min covered of 2 hours · 90 min forfeited')).toBeVisible();
   await expect(page.getByText('E2E Facebook draw')).toBeVisible();
+
+  // The owner's code list must agree with the actual receipt after redemption.
+  const receiptResponse = await page.request.get(`/api/v1/bills/${billId}/receipt`);
+  expect(receiptResponse.ok()).toBe(true);
+  const receipt = (await receiptResponse.json()).data;
+  expect(receipt.receiptNo).toBeGreaterThan(0);
+  await page.goto('/admin/vouchers');
+  const batch = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'E2E Facebook draw', exact: true }) });
+  await expect(batch.locator('dd')).toHaveText(['0', '1', '0']);
+  await batch.getByRole('button', { name: 'Codes', exact: true }).click();
+  const redeemed = page.getByRole('dialog');
+  await expect(redeemed.getByText(code!, { exact: true })).toBeVisible();
+  await expect(redeemed.getByText(`Redeemed on receipt #${receipt.receiptNo}`, { exact: true })).toBeVisible();
 });
