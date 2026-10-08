@@ -7,7 +7,7 @@ import {
 } from '@/api/endpoints/vouchers';
 import { queryKeys } from '@/api/queryKeys';
 import { messageOf } from '@/api/errors';
-import type { Voucher, VoucherBatch, VoucherBatchRequest } from '@/api/types';
+import type { VoucherBatch, VoucherBatchRequest } from '@/api/types';
 import { AdminPage } from '../AdminPage';
 import { useSetupLifecycle } from '../setup/useSetupLifecycle';
 import { Card } from '@/components/Card';
@@ -17,6 +17,8 @@ import { Modal } from '@/components/Modal';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
 import { formatBusinessDate, formatDateTime } from '@/lib/datetime';
+import { VoucherCodesDialog, VoucherCodeList } from './VoucherCodes';
+import './vouchers.css';
 
 /**
  * The giveaway, from the owner's side.
@@ -25,8 +27,7 @@ import { formatBusinessDate, formatDateTime } from '@/lib/datetime';
  * a list of unredeemed codes can spend them. The counter never sees this screen — a cashier
  * redeems a code the customer already holds, which is a different thing entirely.
  *
- * The screen answers one question the owner actually asks — how much is still out there — so
- * `outstanding` is the figure the row leads with. Issued is history; outstanding is liability.
+ * Batch identity leads; the server-supplied counts distinguish liability from history.
  */
 export function VouchersPage() {
   const queryClient = useQueryClient();
@@ -72,49 +73,40 @@ export function VouchersPage() {
         <Button onClick={() => setCreating(true)}>New batch</Button>
       </div>
 
-      <Card>
-        {batches.isPending ? (
-          <div className="py-10 text-center">
-            <Spinner label="Loading voucher batches…" />
-          </div>
-        ) : (batches.data ?? []).length === 0 ? (
-          <p className="py-8 text-center text-body text-text-dim">
-            No vouchers have been generated yet.
-          </p>
-        ) : (
-          <ul className="divide-y divide-border">
-            {(batches.data ?? []).map((batch) => (
-              <li key={batch.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
-                <div>
-                  <div className="text-body text-text">
-                    {batch.quantity} × {batch.hoursLabel}
-                    <span className="ml-2 text-label uppercase text-text-dim">
-                      expires {formatBusinessDate(batch.expiresOn)}
-                    </span>
+      {batches.isPending ? (
+        <Card><div className="py-10 text-center"><Spinner label="Loading voucher batches…" /></div></Card>
+      ) : batches.isError ? null : (batches.data ?? []).length === 0 ? (
+        <Card><p className="py-8 text-center text-body text-text-dim">No vouchers have been generated yet.</p></Card>
+      ) : (
+        <ul className="voucher-batches" aria-label="Voucher batches">
+          {(batches.data ?? []).map(batch => (
+            <li key={batch.id}>
+              <Card className="voucher-batch">
+                <div className="voucher-batch-heading">
+                  <div className="min-w-0">
+                    <h2 className="text-heading text-text">{batch.quantity} {batch.quantity === 1 ? 'coupon' : 'coupons'}</h2>
+                    <p className="text-body text-text-dim">{batch.hoursLabel}</p>
                   </div>
-                  <div className="text-label text-text-dim">
-                    {batch.note ?? '— no note —'} · {batch.createdByUsername ?? 'unknown'} ·{' '}
-                    {formatDateTime(batch.createdAt)}
+                  <div className="voucher-batch-actions">
+                    <Button variant="secondary" onClick={() => setInspecting(batch)}>Codes</Button>
+                    {lifecycle.action(batch.id)}
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Outstanding first and largest: it is the only one of the four that is
-                      still a liability. The other three are what happened. */}
-                  <dl className="flex gap-5 text-right">
-                    <Count label="Outstanding" value={batch.outstanding} lead />
-                    <Count label="Redeemed" value={batch.redeemed} />
-                    <Count label="Expired" value={batch.expired} />
-                  </dl>
-                  <Button variant="secondary" onClick={() => setInspecting(batch)}>
-                    Codes
-                  </Button>
-                  {lifecycle.action(batch.id)}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+                <h3 className="mt-4 break-words text-body font-semibold text-text">{batch.note ?? 'No giveaway note'}</h3>
+                <p className="mt-1 break-words text-label text-text-dim">
+                  Created by {batch.createdByUsername ?? 'unknown'} on {formatDateTime(batch.createdAt)}
+                </p>
+                <dl className="voucher-counts">
+                  <Count label="Outstanding" value={batch.outstanding} lead />
+                  <Count label="Redeemed" value={batch.redeemed} />
+                  <Count label="Expired" value={batch.expired} />
+                </dl>
+                <p className="voucher-expiry text-label text-text-dim">Expires {formatBusinessDate(batch.expiresOn)}</p>
+              </Card>
+            </li>
+          ))}
+        </ul>
+      )}
 
       {creating ? (
         <NewBatchForm
@@ -141,7 +133,7 @@ function Count({ label, value, lead }: { label: string; value: number; lead?: bo
   return (
     <div>
       <dt className="text-label uppercase text-text-dim">{label}</dt>
-      <dd className={`tabular ${lead ? 'text-amount text-text' : 'text-body text-text-dim'}`}>
+      <dd className={`tabular ${lead ? 'text-amount text-text' : 'text-amount text-text-dim'}`}>
         {value}
       </dd>
     </div>
@@ -196,7 +188,7 @@ function NewBatchForm({
           max="500"
           inputMode="numeric"
           value={quantity}
-          hint="Up to 500 in one batch. They are generated together and shown once for copying."
+          hint="Up to 500 in one batch. They are generated together and can be reopened from Codes."
           onChange={(event) => setQuantity(event.target.value)}
         />
         <Field
@@ -233,15 +225,15 @@ function NewBatchForm({
 /** The codes as generated, laid out to be copied or printed. */
 function GeneratedCodes({ batch, onClose }: { batch: VoucherBatch; onClose: () => void }) {
   return (
-    <Modal title={`${batch.quantity} codes generated`} onClose={onClose}>
-      <div className="flex flex-col gap-4">
+    <VoucherCodesDialog title={`${batch.quantity} codes generated`} batch={batch} onClose={onClose}>
+      <div className="mb-4">
         <Banner tone="warning">
           Each code is single use and expires {formatBusinessDate(batch.expiresOn)}. Anyone who
           can read a code can spend it — treat this list like cash.
         </Banner>
-        <CodeGrid codes={batch.codes ?? []} />
       </div>
-    </Modal>
+      <VoucherCodeList codes={batch.codes ?? []} />
+    </VoucherCodesDialog>
   );
 }
 
@@ -253,7 +245,7 @@ function BatchCodes({ batch, onClose }: { batch: VoucherBatch; onClose: () => vo
   });
 
   return (
-    <Modal title={`${batch.quantity} × ${batch.hoursLabel}`} onClose={onClose}>
+    <VoucherCodesDialog title={`${batch.quantity} ${batch.quantity === 1 ? 'coupon' : 'coupons'}`} batch={batch} onClose={onClose}>
       {codes.isPending ? (
         <div className="py-8 text-center">
           <Spinner label="Loading codes…" />
@@ -261,41 +253,8 @@ function BatchCodes({ batch, onClose }: { batch: VoucherBatch; onClose: () => vo
       ) : codes.isError ? (
         <Banner tone="danger">{messageOf(codes.error)}</Banner>
       ) : (
-        <CodeGrid codes={codes.data ?? []} />
+        <VoucherCodeList codes={codes.data ?? []} />
       )}
-    </Modal>
-  );
-}
-
-/**
- * Monospaced and widely tracked, because these get read aloud off a phone in a dark room. A
- * spent code is struck through rather than dropped: the owner checking a batch wants to see
- * which of the fifty came back, not a shorter list.
- */
-function CodeGrid({ codes }: { codes: Voucher[] }) {
-  if (codes.length === 0) {
-    return <p className="py-6 text-center text-body text-text-dim">No codes in this batch.</p>;
-  }
-  return (
-    <ul className="grid max-h-[28rem] grid-cols-2 gap-x-6 gap-y-1 overflow-y-auto md:grid-cols-3">
-      {codes.map((voucher) => (
-        <li key={voucher.id} className="flex items-baseline justify-between gap-2 py-1">
-          <span
-            className={`tabular tracking-widest text-body ${
-              voucher.status === 'OUTSTANDING' ? 'text-text' : 'text-text-dim line-through'
-            }`}
-          >
-            {voucher.code}
-          </span>
-          {voucher.status === 'REDEEMED' ? (
-            <span className="text-label uppercase text-text-dim">
-              {voucher.redeemedReceiptNo ? `#${voucher.redeemedReceiptNo}` : 'used'}
-            </span>
-          ) : voucher.status === 'EXPIRED' ? (
-            <span className="text-label uppercase text-text-dim">expired</span>
-          ) : null}
-        </li>
-      ))}
-    </ul>
+    </VoucherCodesDialog>
   );
 }
