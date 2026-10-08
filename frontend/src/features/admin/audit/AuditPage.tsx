@@ -6,6 +6,7 @@ import { messageOf } from '@/api/errors';
 import type { AuditFeedEntry } from '@/api/types';
 import { AdminPage } from '../AdminPage';
 import { Card } from '@/components/Card';
+import { Icon } from '@/components/Icon';
 import { Pagination } from '@/components/Pagination';
 import { Select } from '@/components/Select';
 import { Spinner } from '@/components/Spinner';
@@ -34,7 +35,7 @@ function Changes({ entry }: { entry: AuditFeedEntry }) {
   if (!rate && rest.length === 0) return null;
 
   return (
-    <table className="mt-3 w-full table-fixed break-words text-left">
+    <table className="mt-3 w-full table-fixed [overflow-wrap:anywhere] text-left">
       <thead>
         <tr className="text-label uppercase text-text-dim">
           <th className="py-1 font-normal">Field</th>
@@ -51,7 +52,7 @@ function Changes({ entry }: { entry: AuditFeedEntry }) {
           </tr>
         ) : null}
         {rest.map((key) => (
-          <tr key={key}>
+          <tr key={key} className="align-top">
             <td className="py-1 pr-4 text-label text-text-dim">{humanise(key)}</td>
             <td className="tabular py-1 pr-4 text-label text-text-dim">{format(before[key], key)}</td>
             <td className="tabular py-1 text-label text-text">{format(after[key], key)}</td>
@@ -211,6 +212,15 @@ export function AuditPage() {
 
   const data = feed.data;
 
+  function toggleEntry(key: string) {
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
   function reset(setter: (value: string) => void) {
     return (event: { target: { value: string } }) => {
       setter(event.target.value);
@@ -261,32 +271,48 @@ export function AuditPage() {
         <>
           <div className="overflow-hidden rounded-xl border border-border bg-surface">
             <table className="w-full table-fixed border-collapse text-left text-xs leading-5 tracking-normal sm:text-body" aria-label="Audit log">
-              <colgroup><col className="w-[22%]" /><col className="w-[18%]" /><col className="w-[28%]" /><col className="w-[32%]" /></colgroup>
+              <colgroup><col className="w-[20%]" /><col className="w-[16%]" /><col className="w-[24%]" /><col /><col className="w-14" /></colgroup>
               <thead className="bg-raised text-label uppercase text-text-dim">
-                <tr>{['When', 'Who', 'What', 'Target'].map((heading) => <th key={heading} scope="col" className="px-2 py-3 font-normal sm:px-4">{heading}</th>)}</tr>
+                <tr>
+                  {['When', 'Who', 'What', 'Target'].map((heading) => <th key={heading} scope="col" className="px-2 py-3 font-normal sm:px-4">{heading}</th>)}
+                  <th scope="col"><span className="sr-only">Details</span></th>
+                </tr>
               </thead>
               <tbody>
                 {data.content.map((entry) => {
-                  const open = expanded.has(entry.id);
+                  // The feed unions two tables, each with its own event ids.
+                  const key = `${entry.source}-${entry.id}`;
+                  const open = expanded.has(key);
                   const details = Boolean(entry.before || entry.after || entry.note || entry.quantityDelta !== null);
-                  return <Fragment key={entry.id}>
-                    <tr className="border-t border-border align-top">
+                  const context = `${entry.actionLabel} ${entry.subject ?? entry.entityLabel} · ${entry.actorName ?? 'system'} · ${formatDateTime(entry.occurredAt)}`;
+                  return <Fragment key={key}>
+                    <tr className={`border-t border-border align-top [overflow-wrap:anywhere] ${details ? 'cursor-pointer hover:bg-raised/50 focus-within:bg-raised/50' : ''}`}
+                      onClick={details ? (event) => {
+                        // The button handles its own click (including Enter/Space). Leave any
+                        // future summary links/controls independent of the row shortcut too.
+                        if ((event.target as Element).closest('button, a, input, select, textarea, [role="button"]')) return;
+                        toggleEntry(key);
+                      } : undefined}>
                       <td className="break-words px-2 py-3 text-text-dim sm:px-4"><time dateTime={entry.occurredAt}>{formatDateTime(entry.occurredAt)}</time></td>
                       <td className="break-words px-2 py-3 text-text-dim sm:px-4">{entry.actorName ?? 'system'}</td>
-                      <td className="break-words px-2 py-3 font-semibold text-text sm:px-4">{entry.actionLabel}
-                        {details ? <button type="button" aria-expanded={open} aria-controls={`audit-${entry.id}`}
-                          className="hit mt-1 flex items-center rounded px-1 text-xs font-normal tracking-normal text-text-dim hover:bg-raised"
-                          onClick={() => setExpanded((previous) => { const next = new Set(previous); if (open) next.delete(entry.id); else next.add(entry.id); return next; })}>
-                          {open ? '− Hide' : '+ Details'}<span className="sr-only"> for {entry.actionLabel} {entry.subject}</span>
+                      <td className="break-words px-2 py-3 font-semibold text-text sm:px-4">{entry.actionLabel}</td>
+                      <td className="break-words px-2 py-3 text-text sm:px-4">{entry.subject ? `${needsEntityLabel(entry) ? `${entry.entityLabel} ` : ''}${entry.subject}` : entry.entityLabel ?? '—'}</td>
+                      <td className="px-1 py-1.5">
+                        {details ? <button type="button" aria-expanded={open} aria-controls={`audit-${key}`}
+                          aria-label={`${open ? 'Hide' : 'Details'} for ${context}`}
+                          className="hit flex w-11 items-center justify-center rounded-lg text-text-dim hover:bg-raised hover:text-text"
+                          onClick={() => toggleEntry(key)}>
+                          <Icon name={open ? 'chevron-down' : 'chevron-right'} />
                         </button> : null}
                       </td>
-                      <td className="break-words px-2 py-3 text-text sm:px-4">{entry.subject ? `${needsEntityLabel(entry) ? `${entry.entityLabel} ` : ''}${entry.subject}` : entry.entityLabel ?? '—'}</td>
                     </tr>
-                    {open ? <tr id={`audit-${entry.id}`} className="border-t border-border bg-raised/50"><td colSpan={4} className="px-3 pb-4 pt-2 sm:px-4">
+                    {open ? <tr className="border-t border-border bg-raised/50"><td colSpan={5} className="px-3 pb-4 pt-2 sm:px-4">
+                      <div id={`audit-${key}`} role="region" aria-label={`Details for ${context}`} className="[overflow-wrap:anywhere]">
                       {entry.quantityDelta !== null ? <p className="mt-2 text-body text-text-dim">Stock <Quantity delta={entry.quantityDelta} /></p> : null}
                       {entry.note ? <p className="mt-2 whitespace-pre-wrap break-words text-body text-text">{entry.note}</p>
                         : entry.quantityDelta !== null && entry.quantityDelta < 0 ? <p className="mt-2 text-body text-danger">No reason given.</p> : null}
                       <Changes entry={entry} />
+                      </div>
                     </td></tr> : null}
                   </Fragment>;
                 })}
