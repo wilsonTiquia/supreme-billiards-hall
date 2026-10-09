@@ -1,0 +1,21 @@
+{
+  "name": "nightwatch",
+  "private": true,
+  "description": "06:00 check that last night was closed; tells the owner on Telegram when it was not.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.4",
+    "@types/pg": "^8.23.1",
+    "typescript": "~5.9.3"
+  }
+}

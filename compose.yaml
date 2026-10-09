@@ -92,6 +92,23 @@ services:
       - caddy-data:/data
       - caddy-config:/config
 
+  # The 06:00 "was last night closed?" alarm. Not part of the running stack: the `ops` profile
+  # keeps `up` from starting (or building) it, and the host's systemd timer runs it with
+  # `docker compose run --rm --build nightwatch`, so it exists for the seconds it runs. It is
+  # outside the app so it can still speak when the app is dead. See ops/nightwatch/README.md.
+  nightwatch:
+    build: ops/nightwatch
+    profiles: [ops]
+    environment:
+      # The read-only role from ops/nightwatch/sql/create-role.sql, never supreme.
+      NIGHTWATCH_DB_URL: postgres://nightwatch_ro@db:5432/supreme
+      NIGHTWATCH_DB_PASSWORD: ${NIGHTWATCH_DB_PASSWORD:-}
+      NIGHTWATCH_APP_URL: http://app:8080
+      # Empty token = disabled: prints what it would have sent and texts no one.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+    # No ports:, no restart:. It runs, answers, and exits.
+
 volumes:
   db-data:
   caddy-data:
