@@ -13,7 +13,7 @@ import java.util.UUID;
  * One run of codes and what became of them.
  *
  * The four counts are exclusive and sum to `issued`, which is what makes the row readable at a
- * glance: every code is either spent, run out of time, or still out there. `outstanding` is the
+ * glance: every code is spent, expired, cancelled, or still out there. `outstanding` is the
  * figure the owner is actually asking for -- what could still walk through the door.
  *
  * `codes` is populated only in the response to generating a batch, where the owner needs them
@@ -36,6 +36,10 @@ public class VoucherBatchResponseDTO {
     private String createdByUsername;
     private OffsetDateTime createdAt;
 
+    private OffsetDateTime archivedAt;
+    private OffsetDateTime cancelledAt;
+
+    private long cancelled;
     private long issued;
     private long redeemed;
     private long expired;

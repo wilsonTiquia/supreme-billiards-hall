@@ -75,13 +75,14 @@ public interface VoucherRepository extends BranchScopedRepository<Voucher> {
     // the row -- a code expiring tomorrow is outstanding today and expired the day after with
     // nothing having written to it.
     @Query("""
-            select v from Voucher v
+            select v from Voucher v join VoucherBatch b on b.id = v.batchId
             where v.branchId = :#{@branchContext.currentBranchId}
               and (:batchId is null or v.batchId = :batchId)
               and (:status is null
                    or (:status = 'REDEEMED'    and v.redeemedAt is not null)
                    or (:status = 'EXPIRED'     and v.redeemedAt is null and v.expiresOn < :today)
-                   or (:status = 'OUTSTANDING' and v.redeemedAt is null and v.expiresOn >= :today))
+                   or (:status = 'CANCELLED' and v.redeemedAt is null and v.expiresOn >= :today and b.cancelledAt is not null)
+                   or (:status = 'OUTSTANDING' and v.redeemedAt is null and v.expiresOn >= :today and b.cancelledAt is null))
             order by v.createdAt desc, v.code
             """)
     List<Voucher> search(@Param("batchId") UUID batchId, @Param("status") String status,

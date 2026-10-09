@@ -15,10 +15,10 @@ public interface VoucherBatchRepository extends BranchScopedRepository<VoucherBa
 
     @Query("""
             select b from VoucherBatch b
-            where b.branchId = :#{@branchContext.currentBranchId} and b.archivedAt is null
+            where b.branchId = :#{@branchContext.currentBranchId} and (:includeArchived = true or b.archivedAt is null)
             order by b.createdAt desc
             """)
-    List<VoucherBatch> findAllNewestFirst();
+    List<VoucherBatch> findAllNewestFirst(@Param("includeArchived") boolean includeArchived);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select b from VoucherBatch b where b.id = :id and b.branchId = :#{@branchContext.currentBranchId}")
@@ -28,8 +28,8 @@ public interface VoucherBatchRepository extends BranchScopedRepository<VoucherBa
      * What is still in the wild, for every batch, in one grouped query rather than four counts
      * per batch.
      *
-     * The three states are exclusive and sum to issued, which is the property that makes the
-     * screen readable: a code is REDEEMED, or it is EXPIRED, or it is OUTSTANDING. Expiry is
+     * The four states are exclusive and sum to issued, which is the property that makes the
+     * screen readable: a code is REDEEMED, EXPIRED, CANCELLED or OUTSTANDING. Expiry is
      * resolved against the caller's date rather than stored, because "expired" is a fact about
      * today -- a batch that is half outstanding this morning is fully expired tomorrow with
      * nothing having written to a single row.
@@ -44,7 +44,9 @@ public interface VoucherBatchRepository extends BranchScopedRepository<VoucherBa
                    count(case when v.redeemedAt is null and v.expiresOn < :today
                               then 1 end)                                            as expired,
                    count(case when v.redeemedAt is null and v.expiresOn >= :today
-                              then 1 end)                                            as outstanding
+                                   and b.cancelledAt is null then 1 end)              as outstanding,
+                   count(case when v.redeemedAt is null and v.expiresOn >= :today
+                                   and b.cancelledAt is not null then 1 end)          as cancelled
             from VoucherBatch b
             left join Voucher v on v.batchId = b.id
             where b.branchId = :#{@branchContext.currentBranchId}
@@ -58,5 +60,6 @@ public interface VoucherBatchRepository extends BranchScopedRepository<VoucherBa
         long getRedeemed();
         long getExpired();
         long getOutstanding();
+        long getCancelled();
     }
 }

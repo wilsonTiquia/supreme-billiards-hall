@@ -2,10 +2,10 @@ import type { Page } from '@playwright/test';
 import type { Voucher, VoucherBatch } from '../src/api/types';
 
 export const batches: VoucherBatch[] = [
-  { id: 'partial', minutes: 120, hoursLabel: '2 hours', quantity: 12, issued: 12, outstanding: 6, redeemed: 6, expired: 0, expiresOn: '2026-11-14', note: 'Facebook giveaway', createdByUsername: 'owner', createdAt: '2026-10-09T07:00:00Z', codes: null },
-  { id: 'new', minutes: 90, hoursLabel: '90 min', quantity: 500, issued: 500, outstanding: 500, redeemed: 0, expired: 0, expiresOn: '2026-12-31', note: 'Tournament prizes for visiting league players and their friends at the evening championship celebration', createdByUsername: 'evening-supervisor', createdAt: '2026-10-09T07:00:00Z', codes: null },
-  { id: 'redeemed', minutes: 60, hoursLabel: '1 hour', quantity: 1, issued: 1, outstanding: 0, redeemed: 1, expired: 0, expiresOn: '2026-09-30', note: 'September winner', createdByUsername: null, createdAt: '2026-09-01T07:00:00Z', codes: null },
-  { id: 'expired', minutes: 120, hoursLabel: '2 hours', quantity: 3, issued: 3, outstanding: 0, redeemed: 1, expired: 2, expiresOn: '2026-09-30', note: null, createdByUsername: 'owner', createdAt: '2026-09-01T07:00:00Z', codes: null },
+  { id: 'partial', minutes: 120, hoursLabel: '2 hours', quantity: 12, issued: 12, outstanding: 6, redeemed: 6, expired: 0, expiresOn: '2026-11-14', note: 'Facebook giveaway', createdByUsername: 'owner', createdAt: '2026-10-09T07:00:00Z', codes: null, archivedAt: null, cancelledAt: null, cancelled: 0 },
+  { id: 'new', minutes: 90, hoursLabel: '90 min', quantity: 500, issued: 500, outstanding: 500, redeemed: 0, expired: 0, expiresOn: '2026-12-31', note: 'Tournament prizes for visiting league players and their friends at the evening championship celebration', createdByUsername: 'evening-supervisor', createdAt: '2026-10-09T07:00:00Z', codes: null, archivedAt: null, cancelledAt: null, cancelled: 0 },
+  { id: 'redeemed', minutes: 60, hoursLabel: '1 hour', quantity: 1, issued: 1, outstanding: 0, redeemed: 1, expired: 0, expiresOn: '2026-09-30', note: 'September winner', createdByUsername: null, createdAt: '2026-09-01T07:00:00Z', codes: null, archivedAt: null, cancelledAt: null, cancelled: 0 },
+  { id: 'expired', minutes: 120, hoursLabel: '2 hours', quantity: 3, issued: 3, outstanding: 0, redeemed: 1, expired: 2, expiresOn: '2026-09-30', note: null, createdByUsername: 'owner', createdAt: '2026-09-01T07:00:00Z', codes: null, archivedAt: null, cancelledAt: null, cancelled: 0 },
 ];
 export function codesFor(batch: VoucherBatch): Voucher[] {
   return Array.from({ length: batch.quantity }, (_, i) => {

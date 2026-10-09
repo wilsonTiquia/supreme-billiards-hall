@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
+  cancelVoucherBatch,
   createVoucherBatch,
   fetchVoucherBatches,
   fetchVouchers,
@@ -10,6 +11,9 @@ import { messageOf } from '@/api/errors';
 import type { VoucherBatch, VoucherBatchRequest } from '@/api/types';
 import { AdminPage } from '../AdminPage';
 import { useSetupLifecycle } from '../setup/useSetupLifecycle';
+import { changeSetup } from '@/api/endpoints/setup';
+import { ActionMenu } from '@/components/ActionMenu';
+import { useToast } from '@/components/Toast';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
@@ -31,20 +35,46 @@ import './vouchers.css';
  */
 export function VouchersPage() {
   const queryClient = useQueryClient();
+  const { notify } = useToast();
+  const toggleRef = useRef<HTMLInputElement>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [selection, setSelection] = useState<{ batch: VoucherBatch; action: 'archive' | 'restore' | 'cancel' } | null>(null);
   const [creating, setCreating] = useState(false);
   const [generated, setGenerated] = useState<VoucherBatch | null>(null);
   const [inspecting, setInspecting] = useState<VoucherBatch | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const batches = useQuery({
-    queryKey: queryKeys.voucherBatches,
-    queryFn: fetchVoucherBatches,
+    queryKey: [...queryKeys.voucherBatches, showArchived],
+    queryFn: () => fetchVoucherBatches(showArchived),
   });
 
+  // Retain the existing, server-checked deletion path for genuinely unused batches.
   const lifecycle = useSetupLifecycle('vouchers', refresh);
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: queryKeys.voucherBatches });
     void queryClient.invalidateQueries({ queryKey: queryKeys.setup('vouchers') });
+  }
+
+  const change = useMutation({
+    mutationFn: ({ batch, action }: NonNullable<typeof selection>) => action === 'cancel'
+      ? cancelVoucherBatch(batch.id) : changeSetup('vouchers', batch.id, action),
+    onSuccess: async (_, { action, batch }) => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.voucherBatches }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.vouchers(batch.id) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.setup('vouchers') }),
+        queryClient.invalidateQueries({ queryKey: ['audit'] }),
+      ]);
+      setSelection(null);
+      notify(action === 'cancel' ? 'Unused codes cancelled. Existing redemptions are kept.'
+        : action === 'archive' ? 'Batch archived. Valid codes still work.' : 'Batch restored. Code eligibility is unchanged.');
+      requestAnimationFrame(() => toggleRef.current?.focus());
+    },
+  });
+  function select(batch: VoucherBatch, action: NonNullable<typeof selection>['action']) {
+    change.reset();
+    setSelection({ batch, action });
   }
 
   const create = useMutation({
@@ -69,14 +99,18 @@ export function VouchersPage() {
       error={error ?? (batches.isError ? messageOf(batches.error) : null)}
     >
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        {lifecycle.toggle}
+        <label className="hit flex cursor-pointer items-center gap-2 text-body text-text-dim">
+          <input ref={toggleRef} type="checkbox" checked={showArchived} disabled={change.isPending}
+            onChange={event => setShowArchived(event.target.checked)} className="size-5 accent-green" />
+          Show archived
+        </label>
         <Button onClick={() => setCreating(true)}>New batch</Button>
       </div>
 
       {batches.isPending ? (
         <Card><div className="py-10 text-center"><Spinner label="Loading voucher batches…" /></div></Card>
       ) : batches.isError ? null : (batches.data ?? []).length === 0 ? (
-        <Card><p className="py-8 text-center text-body text-text-dim">No vouchers have been generated yet.</p></Card>
+        <Card><p className="py-8 text-center text-body text-text-dim">{showArchived ? 'No voucher batches.' : 'No visible voucher batches. Generate a new batch or check Show archived.'}</p></Card>
       ) : (
         <ul className="voucher-batches" aria-label="Voucher batches">
           {(batches.data ?? []).map(batch => (
@@ -89,17 +123,27 @@ export function VouchersPage() {
                   </div>
                   <div className="voucher-batch-actions">
                     <Button variant="secondary" onClick={() => setInspecting(batch)}>Codes</Button>
-                    {lifecycle.action(batch.id)}
+                    <ActionMenu label={`Actions for ${batch.note ?? `${batch.quantity} coupons`}`} disabled={change.isPending} items={[
+                      { id: 'visibility', label: batch.archivedAt ? 'Restore' : 'Archive',
+                        onSelect: () => select(batch, batch.archivedAt ? 'restore' : 'archive') },
+                      { id: 'cancel', label: 'Cancel unused codes', danger: true, disabled: Boolean(batch.cancelledAt),
+                        description: batch.cancelledAt ? 'Already cancelled; this cannot be undone.' : undefined,
+                        onSelect: () => select(batch, 'cancel') },
+                      ...[lifecycle.menuItem(batch.id)].filter(item => item.action === 'delete'),
+                    ]} />
                   </div>
                 </div>
                 <h3 className="mt-4 break-words text-body font-semibold text-text">{batch.note ?? 'No giveaway note'}</h3>
                 <p className="mt-1 break-words text-label text-text-dim">
                   Created by {batch.createdByUsername ?? 'unknown'} on {formatDateTime(batch.createdAt)}
                 </p>
-                <dl className="voucher-counts">
+                {batch.archivedAt ? <p className="mt-3 text-label text-text-dim">Archived {formatDateTime(batch.archivedAt)}</p> : null}
+                {batch.cancelledAt ? <p className="mt-2 text-body text-danger">Cancelled {formatDateTime(batch.cancelledAt)} · Unused codes cannot be redeemed.</p> : null}
+                <dl className={`voucher-counts ${batch.cancelledAt ? 'voucher-counts-cancelled' : ''}`}>
                   <Count label="Outstanding" value={batch.outstanding} lead />
                   <Count label="Redeemed" value={batch.redeemed} />
                   <Count label="Expired" value={batch.expired} />
+                  {batch.cancelledAt ? <Count label="Cancelled" value={batch.cancelled} /> : null}
                 </dl>
                 <p className="voucher-expiry text-label text-text-dim">Expires {formatBusinessDate(batch.expiresOn)}</p>
               </Card>
@@ -125,6 +169,24 @@ export function VouchersPage() {
       ) : null}
       {lifecycle.panel}
       {lifecycle.dialog}
+      {selection ? <Modal
+        title={selection.action === 'cancel' ? 'Cancel unused codes?' : selection.action === 'archive' ? 'Archive batch?' : 'Restore batch?'}
+        onClose={() => { if (!change.isPending) { setSelection(null); change.reset(); } }}>
+        <div className="flex flex-col gap-5">
+          <p className="break-words text-body font-semibold">{selection.batch.note ?? `${selection.batch.quantity} coupons · ${selection.batch.hoursLabel}`}</p>
+          <p className="text-body text-text-dim">{selection.action === 'cancel'
+            ? 'Unused codes in this batch will permanently stop working, including any code later removed from an open bill. Existing redemptions and receipts are kept. Restoring the batch will not undo cancellation.'
+            : selection.action === 'archive'
+              ? 'This batch will leave the visible list. Valid codes still work until their original expiry. Cancellation, expiry, redemptions and receipts are unchanged. Find it in Show archived to restore it.'
+              : 'This batch will return to the visible list. This does not reverse cancellation, expiry or redemption. No disabled codes will be reactivated.'}</p>
+          {change.isError ? <Banner tone="danger">{messageOf(change.error)}</Banner> : null}
+          <div className="flex flex-wrap justify-end gap-3">
+            <Button variant="secondary" disabled={change.isPending} onClick={() => { setSelection(null); change.reset(); }}>Keep unchanged</Button>
+            <Button variant={selection.action === 'cancel' ? 'danger' : 'primary'} pending={change.isPending}
+              onClick={() => change.mutate(selection)}>{selection.action === 'cancel' ? 'Cancel unused codes permanently' : selection.action === 'archive' ? 'Archive' : 'Restore'}</Button>
+          </div>
+        </div>
+      </Modal> : null}
     </AdminPage>
   );
 }

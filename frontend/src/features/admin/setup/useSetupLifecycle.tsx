@@ -53,6 +53,7 @@ export function useSetupLifecycle(kind: SetupKind, onChanged: () => void) {
       const reason = blockedReason ?? item?.blockedReason;
       return {
         id: 'remove',
+        action: item?.canDelete ? 'delete' : 'archive',
         label: item ? (item.canDelete ? 'Delete' : 'Archive') : 'Checking…',
         description: reason ?? undefined,
         disabled: !item || Boolean(reason) || change.isPending,
@@ -84,7 +85,7 @@ export function useSetupLifecycle(kind: SetupKind, onChanged: () => void) {
         <div className="flex flex-col gap-5">
           <p className="text-body text-text-dim">{selection.action === 'delete'
             ? `This unused ${kind === 'vouchers' ? 'batch and all its codes' : 'item'} will be permanently deleted. This cannot be undone.`
-            : kind === 'vouchers' ? 'Unused codes in this batch will stop working. Past redemptions are kept. You can restore the batch from Show archived.'
+            : kind === 'vouchers' ? 'This batch will leave the active list. Valid codes still work. Cancellation, expiry and redemptions are unchanged. You can restore visibility from Show archived.'
             : 'This item will leave the active list. Its history is kept, and you can restore it from Show archived.'}</p>
           {change.isError ? <Banner tone="danger">{messageOf(change.error)}</Banner> : null}
           <div className="flex flex-wrap justify-end gap-3">

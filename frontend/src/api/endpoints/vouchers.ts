@@ -14,8 +14,8 @@ export function createVoucherBatch(body: VoucherBatchRequest): Promise<VoucherBa
 }
 
 /** Each batch with its issued / redeemed / expired / outstanding counts. `codes` is null here. */
-export function fetchVoucherBatches(): Promise<VoucherBatch[]> {
-  return request<VoucherBatch[]>('/voucher-batches');
+export function fetchVoucherBatches(includeArchived = false): Promise<VoucherBatch[]> {
+  return request<VoucherBatch[]>(`/voucher-batches${includeArchived ? '?includeArchived=true' : ''}`);
 }
 
 export function fetchVouchers(batchId?: UUID, status?: VoucherStatus): Promise<Voucher[]> {
@@ -24,4 +24,9 @@ export function fetchVouchers(batchId?: UUID, status?: VoucherStatus): Promise<V
   if (status) params.set('status', status);
   const query = params.toString();
   return request<Voucher[]>(`/vouchers${query ? `?${query}` : ''}`);
+}
+
+/** Permanently blocks unused codes, independent of archive visibility. */
+export function cancelVoucherBatch(id: UUID): Promise<void> {
+  return request<void>(`/voucher-batches/${id}/cancel`, { method: 'POST' });
 }

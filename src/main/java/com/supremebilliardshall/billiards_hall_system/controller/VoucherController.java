@@ -48,15 +48,23 @@ public class VoucherController {
     // the wild. No codes.
     @GetMapping("/voucher-batches")
     @PreAuthorize("hasRole('ADMIN')")
-    public ResponseEntity<APIResponse<List<VoucherBatchResponseDTO>>> getBatches() {
-        List<VoucherBatchResponseDTO> batches = voucherService.getBatches();
+    public ResponseEntity<APIResponse<List<VoucherBatchResponseDTO>>> getBatches(
+            @RequestParam(defaultValue = "false") boolean includeArchived) {
+        List<VoucherBatchResponseDTO> batches = voucherService.getBatches(includeArchived);
         return ResponseEntity.
                 ok(APIResponse.success(
                         batches,
                         "Voucher batches fetched successfully"));
     }
 
-    // The individual codes. Both filters optional; status is OUTSTANDING, REDEEMED or EXPIRED.
+    @PostMapping("/voucher-batches/{id}/cancel")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<APIResponse<Void>> cancelBatch(@PathVariable UUID id) {
+        voucherService.cancelBatch(id);
+        return ResponseEntity.ok(APIResponse.success(null, "Unused voucher codes cancelled"));
+    }
+
+    // The individual codes. Both filters optional; status is OUTSTANDING, REDEEMED, EXPIRED or CANCELLED.
     @GetMapping("/vouchers")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<APIResponse<List<VoucherResponseDTO>>> getVouchers(

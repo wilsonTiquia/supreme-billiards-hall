@@ -31,6 +31,7 @@ final class AuditVocabulary {
             Map.entry("VOUCHER_BATCH_RESTORED", "Voucher batch restored"),
             Map.entry("USER_DELETED", "Staff member deleted"),
             Map.entry("USER_RESTORED", "Staff member restored"),
+            Map.entry("VOUCHER_BATCH_CANCELLED", "Unused voucher codes cancelled"),
             Map.entry("VOUCHER_BATCH_ARCHIVED", "Voucher batch archived"),
             Map.entry("BILL_LINE_VOIDED", "Line voided"),
             Map.entry("BILL_DISCOUNTED", "Discount given"),

@@ -40,6 +40,7 @@ export function VoucherCodesDialog({ title, batch, onClose, children }: {
       </div>
       {batch.note ? <p className="mb-2 break-words text-body font-semibold">{batch.note}</p> : null}
       <p className="mb-4 text-label text-text-dim">Expires {formatBusinessDate(batch.expiresOn)}</p>
+      {batch.cancelledAt ? <p className="mb-4 text-body text-danger">Batch cancelled. Unused codes cannot be redeemed; existing redemptions are kept.</p> : null}
       {children}
     </dialog>, document.body,
   );
@@ -79,7 +80,7 @@ export function VoucherCodeList({ codes }: { codes: Voucher[] }) {
             <p className={`text-body ${voucher.status === 'REDEEMED' ? 'text-green' : voucher.status === 'EXPIRED' ? 'text-[var(--warning)]' : 'text-text-dim'}`}>
               {voucher.status === 'REDEEMED'
                 ? voucher.redeemedReceiptNo != null ? `Redeemed on receipt #${voucher.redeemedReceiptNo}` : 'Redeemed · receipt not yet available'
-                : voucher.status === 'EXPIRED' ? 'Expired' : 'Outstanding'}
+                : voucher.status === 'EXPIRED' ? 'Expired' : voucher.status === 'CANCELLED' ? 'Cancelled · cannot be redeemed' : 'Outstanding'}
             </p>
           </div>
         </li>)}

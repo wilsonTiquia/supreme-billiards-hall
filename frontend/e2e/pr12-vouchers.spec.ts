@@ -111,10 +111,10 @@ test('loading, error and empty states distinguish unavailable data from empty ba
   await expect(page.getByText('Loading voucher batches…')).toBeVisible();
   release();
   await expect(page.getByText('Voucher batches unavailable')).toBeVisible();
-  await expect(page.getByText('No vouchers have been generated yet.')).toHaveCount(0);
+  await expect(page.getByText('No visible voucher batches. Generate a new batch or check Show archived.')).toHaveCount(0);
   await page.route('**/api/v1/voucher-batches', route => route.fulfill({ json: { success: true, data: [] } }));
   await page.reload();
-  await expect(page.getByText('No vouchers have been generated yet.')).toBeVisible();
+  await expect(page.getByText('No visible voucher batches. Generate a new batch or check Show archived.')).toBeVisible();
   await page.unroute('**/api/v1/voucher-batches');
   await voucherFixtures(page);
   let releaseCodes!: () => void;
