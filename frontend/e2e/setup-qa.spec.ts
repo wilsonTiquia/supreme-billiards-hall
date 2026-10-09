@@ -50,7 +50,14 @@ test('setup lifecycle, hourly details and audit disclosure in both sizes and the
         await expect(page.getByRole('heading', { name: labels[i], exact: true })).toBeVisible();
         await expect(page.getByRole('button', { name: 'Checking…' })).toHaveCount(0);
         await page.getByLabel(/Show archived/).check();
-        await expect(page.getByRole('button', { name: 'Restore', exact: true }).first()).toBeVisible();
+        if (kind === 'vouchers') {
+          const archivedBatch = page.getByRole('listitem').filter({ hasText: 'Archived vouchers' });
+          await archivedBatch.getByRole('button', { name: /^Actions for/ }).click();
+          await expect(page.getByRole('menuitem', { name: 'Restore', exact: true })).toBeVisible();
+          await page.keyboard.press('Escape');
+        } else {
+          await expect(page.getByRole('button', { name: 'Restore', exact: true }).first()).toBeVisible();
+        }
         await expect(page.locator('body')).toHaveJSProperty('scrollWidth', width);
         await page.screenshot({ path: `${screenshots}/${kind}-${theme}-${width}.png`, fullPage: true, animations: 'disabled' });
         if (kind === 'tables') {
@@ -80,7 +87,7 @@ test('setup lifecycle, hourly details and audit disclosure in both sizes and the
   for (const kind of kinds) {
     await page.goto(`/admin/${kind}`);
     const row = page.getByRole(kind === 'staff' ? 'row' : 'listitem').filter({ hasText: `Unused ${kind}` });
-    if (kind === 'tables' || kind === 'staff') {
+    if (kind === 'tables' || kind === 'staff' || kind === 'vouchers') {
       await row.getByRole('button', { name: /^Actions for/ }).click();
       await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
     } else {
@@ -94,9 +101,15 @@ test('setup lifecycle, hourly details and audit disclosure in both sizes and the
     expect(remaining.some((item) => item.id === unused.get(kind))).toBe(false);
     await page.getByLabel(/Show archived/).check();
     const archived = page.getByRole('listitem').filter({ hasText: `Archived ${kind}` });
-    await archived.getByRole('button', { name: 'Restore', exact: true }).click();
+    if (kind === 'vouchers') {
+      await archived.getByRole('button', { name: /^Actions for/ }).click();
+      await page.getByRole('menuitem', { name: 'Restore', exact: true }).click();
+      await page.getByRole('dialog').getByRole('button', { name: 'Restore', exact: true }).click();
+    } else {
+      await archived.getByRole('button', { name: 'Restore', exact: true }).click();
+    }
     const restored = page.getByRole(kind === 'staff' ? 'row' : 'listitem').filter({ hasText: `Archived ${kind}` });
-    if (kind === 'tables' || kind === 'staff') {
+    if (kind === 'tables' || kind === 'staff' || kind === 'vouchers') {
       await restored.getByRole('button', { name: /^Actions for/ }).click();
       await expect(page.getByRole('menuitem', { name: 'Delete', exact: true })).toBeVisible();
       await page.keyboard.press('Escape');

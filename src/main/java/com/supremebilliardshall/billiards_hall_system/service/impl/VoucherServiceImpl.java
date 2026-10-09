@@ -137,29 +137,29 @@ public class VoucherServiceImpl implements VoucherService {
                 null, after, savedBatch.getNote());
 
         VoucherBatchResponseDTO responseDto = toResponseDto(savedBatch,
-                savedBatch.getQuantity(), 0, 0, savedBatch.getQuantity());
+                savedBatch.getQuantity(), 0, 0, savedBatch.getQuantity(), 0);
         responseDto.setCodes(vouchers.stream()
-                .map(voucher -> toResponseDto(voucher, currentBusinessDate()))
+                .map(voucher -> toResponseDto(voucher, currentBusinessDate(), false))
                 .toList());
         return responseDto;
     }
 
     @Override
     @Transactional(readOnly = true)
-    public List<VoucherBatchResponseDTO> getBatches() {
+    public List<VoucherBatchResponseDTO> getBatches(boolean includeArchived) {
         LocalDate today = currentBusinessDate();
         Map<UUID, VoucherBatchRepository.BatchCountsProjection> counts = new HashMap<>();
         for (VoucherBatchRepository.BatchCountsProjection row : voucherBatchRepository.countsByBatch(today)) {
             counts.put(row.getBatchId(), row);
         }
 
-        return voucherBatchRepository.findAllNewestFirst().stream()
+        return voucherBatchRepository.findAllNewestFirst(includeArchived).stream()
                 .map(batch -> {
                     VoucherBatchRepository.BatchCountsProjection row = counts.get(batch.getId());
                     return row == null
-                            ? toResponseDto(batch, 0, 0, 0, 0)
+                            ? toResponseDto(batch, 0, 0, 0, 0, 0)
                             : toResponseDto(batch, row.getIssued(), row.getRedeemed(),
-                                            row.getExpired(), row.getOutstanding());
+                                            row.getExpired(), row.getOutstanding(), row.getCancelled());
                 })
                 .toList();
     }
@@ -169,11 +169,36 @@ public class VoucherServiceImpl implements VoucherService {
     public List<VoucherResponseDTO> getVouchers(UUID batchId, String status) {
         LocalDate today = currentBusinessDate();
         String wanted = status == null || status.isBlank() ? null : status.trim().toUpperCase();
+        Map<UUID, Boolean> cancelled = new HashMap<>();
+        voucherBatchRepository.findAll().forEach(batch -> cancelled.put(batch.getId(), batch.getCancelledAt() != null));
         return voucherRepository.search(batchId, wanted, today).stream()
-                .map(voucher -> toResponseDto(voucher, today))
+                .map(voucher -> toResponseDto(voucher, today, cancelled.getOrDefault(voucher.getBatchId(), false)))
                 .toList();
     }
 
+
+    @Override
+    @Transactional
+    public void cancelBatch(UUID id) {
+        VoucherBatch batch = voucherBatchRepository.findByIdForUpdate(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Voucher batch", id));
+        if (batch.getCancelledAt() != null) {
+            throw new BusinessRuleException("That voucher batch is already cancelled.");
+        }
+        Map<String, Object> before = cancellationSnapshot(batch);
+        batch.setCancelledAt(OffsetDateTime.now());
+        voucherBatchRepository.saveAndFlush(batch);
+        auditService.record("VOUCHER_BATCH_CANCELLED", "voucher_batch", id,
+                before, cancellationSnapshot(batch), "Unused codes permanently disabled; existing redemptions kept.");
+    }
+
+    private Map<String, Object> cancellationSnapshot(VoucherBatch batch) {
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("name", batch.getNote());
+        snapshot.put("archivedAt", batch.getArchivedAt());
+        snapshot.put("cancelledAt", batch.getCancelledAt());
+        return snapshot;
+    }
 
     /*
      * Spending a code against a bill.
@@ -212,12 +237,12 @@ public class VoucherServiceImpl implements VoucherService {
                     VoucherCodes.display(code == null ? redeemVoucherRequestDTO.getCode() : code));
         }
 
-        // Serialize redemption with setup archive/delete. A code cannot become used between
+        // Serialize redemption with cancellation and setup archive/delete. A code cannot become used between
         // the lifecycle eligibility check and removal of its batch.
         VoucherBatch batch = voucherBatchRepository.findByIdForUpdate(voucher.getBatchId())
                 .orElseThrow(() -> new ResourceNotFoundException("Voucher batch", voucher.getBatchId()));
-        if (batch.getArchivedAt() != null) {
-            throw new BusinessRuleException("That voucher batch is archived. Ask an administrator to restore it first.");
+        if (batch.getCancelledAt() != null) {
+            throw new BusinessRuleException("That voucher batch is cancelled. Its unused codes can no longer be redeemed.");
         }
 
         /*
@@ -531,7 +556,7 @@ public class VoucherServiceImpl implements VoucherService {
     // ---- mapping -------------------------------------------------------------------------
 
     private VoucherBatchResponseDTO toResponseDto(VoucherBatch batch, long issued, long redeemed,
-                                                  long expired, long outstanding) {
+                                                  long expired, long outstanding, long cancelled) {
         VoucherBatchResponseDTO responseDto = new VoucherBatchResponseDTO();
         responseDto.setId(batch.getId());
         responseDto.setMinutes(batch.getMinutes());
@@ -545,17 +570,20 @@ public class VoucherServiceImpl implements VoucherService {
         responseDto.setRedeemed(redeemed);
         responseDto.setExpired(expired);
         responseDto.setOutstanding(outstanding);
+        responseDto.setCancelled(cancelled);
+        responseDto.setArchivedAt(batch.getArchivedAt());
+        responseDto.setCancelledAt(batch.getCancelledAt());
         return responseDto;
     }
 
-    private VoucherResponseDTO toResponseDto(Voucher voucher, LocalDate today) {
+    private VoucherResponseDTO toResponseDto(Voucher voucher, LocalDate today, boolean cancelled) {
         VoucherResponseDTO responseDto = new VoucherResponseDTO();
         responseDto.setId(voucher.getId());
         responseDto.setBatchId(voucher.getBatchId());
         responseDto.setCode(VoucherCodes.display(voucher.getCode()));
         responseDto.setMinutes(voucher.getMinutes());
         responseDto.setExpiresOn(voucher.getExpiresOn());
-        responseDto.setStatus(statusOf(voucher, today));
+        responseDto.setStatus(statusOf(voucher, today, cancelled));
         responseDto.setRedeemedAt(voucher.getRedeemedAt());
         responseDto.setRedeemedByUsername(usernameOf(voucher.getRedeemedBy()));
         responseDto.setRedeemedBillId(voucher.getRedeemedBillId());
@@ -581,14 +609,14 @@ public class VoucherServiceImpl implements VoucherService {
                 coverage.amount());
     }
 
-    // OUTSTANDING, REDEEMED or EXPIRED. A code redeemed before its expiry that has since passed
+    // OUTSTANDING, REDEEMED, EXPIRED or CANCELLED. A code redeemed before its expiry that has since passed
     // it reads REDEEMED, not EXPIRED: it was spent while it was good, and what happened to it is
     // the question this answers.
-    private String statusOf(Voucher voucher, LocalDate today) {
+    private String statusOf(Voucher voucher, LocalDate today, boolean cancelled) {
         if (voucher.getRedeemedAt() != null) {
             return "REDEEMED";
         }
-        return voucher.getExpiresOn().isBefore(today) ? "EXPIRED" : "OUTSTANDING";
+        return voucher.getExpiresOn().isBefore(today) ? "EXPIRED" : cancelled ? "CANCELLED" : "OUTSTANDING";
     }
 
     // "2 hours", "90 min". Hours only when it divides exactly, because "1.5 hours" and

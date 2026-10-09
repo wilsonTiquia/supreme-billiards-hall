@@ -8,6 +8,8 @@ import com.supremebilliardshall.billiards_hall_system.service.VoucherService;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -88,6 +90,7 @@ class VoucherConcurrencyTest {
     private UUID userId;
     private UUID customerTypeId;
     private String code;
+    private UUID batchId;
     // One bill per till. Sharing one would let the bill row serialise the threads before either
     // reached the voucher, and the race would never happen.
     private final List<UUID> billIds = new ArrayList<>();
@@ -130,7 +133,7 @@ class VoucherConcurrencyTest {
             batch.setQuantity(1);
             batch.setExpiresOn(LocalDate.now().plusMonths(1));
             batch.setCreatedBy(userId);
-            UUID batchId = voucherBatchRepository.saveAndFlush(batch).getId();
+            batchId = voucherBatchRepository.saveAndFlush(batch).getId();
 
             Voucher voucher = new Voucher();
             voucher.setBranchId(branchId);
@@ -198,6 +201,60 @@ class VoucherConcurrencyTest {
                         .toList()));
         assertThat(charged).hasSize(1);
         assertThat(charged.getFirst().getId()).isEqualTo(voucher.getRedeemedBillId());
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void cancellationAndRedemptionSerializeInCommitOrder(boolean cancellationFirst) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        CountDownLatch firstWritten = new CountDownLatch(1);
+        CountDownLatch allowCommit = new CountDownLatch(1);
+        CountDownLatch secondStarted = new CountDownLatch(1);
+        try {
+            Future<?> first = executor.submit(() -> asUser(() -> transactionTemplate.execute(status -> {
+                if (cancellationFirst) voucherService.cancelBatch(batchId);
+                else voucherService.redeem(billIds.getFirst(), request(code));
+                firstWritten.countDown();
+                try {
+                    if (!allowCommit.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("Commit not released");
+                } catch (InterruptedException e) { throw new RuntimeException(e); }
+                return null;
+            })));
+            assertThat(firstWritten.await(10, TimeUnit.SECONDS)).isTrue();
+            Future<String> second = executor.submit(() -> asUser(() -> {
+                secondStarted.countDown();
+                try {
+                    if (cancellationFirst) voucherService.redeem(billIds.getFirst(), request(code));
+                    else voucherService.cancelBatch(batchId);
+                    return "OK";
+                } catch (RuntimeException e) { return e.getMessage(); }
+            }));
+            assertThat(secondStarted.await(10, TimeUnit.SECONDS)).isTrue();
+            // The second operation cannot complete while the first owns the batch lock.
+            org.junit.jupiter.api.Assertions.assertThrows(TimeoutException.class,
+                    () -> second.get(300, TimeUnit.MILLISECONDS));
+            allowCommit.countDown();
+            first.get(10, TimeUnit.SECONDS);
+            String outcome = second.get(10, TimeUnit.SECONDS);
+            if (cancellationFirst) assertThat(outcome).contains("cancelled");
+            else assertThat(outcome).isEqualTo("OK");
+            asUser(() -> transactionTemplate.execute(status -> {
+                Voucher voucher = voucherRepository.findByCode(code).orElseThrow();
+                assertThat(voucherBatchRepository.findById(batchId).orElseThrow().getCancelledAt()).isNotNull();
+                Bill bill = billRepository.findById(billIds.getFirst()).orElseThrow();
+                if (cancellationFirst) {
+                    assertThat(voucher.getRedeemedAt()).isNull();
+                    assertThat(bill.getVoucherAmount()).isEqualByComparingTo("0.00");
+                } else {
+                    assertThat(voucher.getRedeemedBillId()).isEqualTo(bill.getId());
+                    assertThat(bill.getVoucherAmount()).isEqualByComparingTo("480.00");
+                }
+                return null;
+            }));
+        } finally {
+            allowCommit.countDown();
+            executor.shutdownNow();
+        }
     }
 
     // ---- fixtures ------------------------------------------------------------------

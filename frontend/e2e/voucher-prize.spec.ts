@@ -37,6 +37,13 @@ test('a prize code closes a bill at nothing and lands in the night as given away
   expect(code).toMatch(/^SB-[0-9A-Z]{3}-[0-9A-Z]{3}$/);
   await generated.getByRole('button', { name: 'Close' }).click();
 
+  // Visibility-only archive must not prevent the customer's issued code from working.
+  const prizeBatch = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'E2E Facebook draw', exact: true }) });
+  await prizeBatch.getByRole('button', { name: 'Actions for E2E Facebook draw' }).click();
+  await page.getByRole('menuitem', { name: 'Archive', exact: true }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Archive', exact: true }).click();
+  await expect(prizeBatch).toHaveCount(0);
+
   // ── The counter plays the winner in ────────────────────────────────────────
   await signIn(COUNTER);
 
@@ -131,6 +138,7 @@ test('a prize code closes a bill at nothing and lands in the night as given away
   const receipt = (await receiptResponse.json()).data;
   expect(receipt.receiptNo).toBeGreaterThan(0);
   await page.goto('/admin/vouchers');
+  await page.getByLabel('Show archived', { exact: true }).check();
   const batch = page.getByRole('listitem').filter({ has: page.getByRole('heading', { name: 'E2E Facebook draw', exact: true }) });
   await expect(batch.locator('dd')).toHaveText(['0', '1', '0']);
   await batch.getByRole('button', { name: 'Codes', exact: true }).click();

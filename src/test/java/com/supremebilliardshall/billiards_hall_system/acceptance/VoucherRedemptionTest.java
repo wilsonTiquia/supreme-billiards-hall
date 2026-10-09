@@ -540,7 +540,7 @@ class VoucherRedemptionTest {
     }
 
     @Test
-    void anArchivedBatchStopsRedemptionAndRestoringMakesItsUnusedCodeSpendable() throws Exception {
+    void anArchivedBatchRemainsRedeemableAndRestoreKeepsTheRedemption() throws Exception {
         String code = givenVoucherCode(2, LocalDate.now().plusMonths(1), "Archive test");
         UUID batchId = asUser(() -> voucherBatchRepository.findAll().get(0).getId());
         UUID billId = givenClosedSessionOf(90, false);
@@ -548,14 +548,14 @@ class VoucherRedemptionTest {
                 .andExpect(status().isOk());
         entityManager.flush();
         entityManager.clear();
-        assertThat(messageOf(redeem(billId, code).andExpect(status().isConflict()))).contains("archived");
+        redeem(billId, code).andExpect(status().isOk());
         assertThat(body(mockMvc.perform(get("/api/v1/voucher-batches").with(user(principal())))
                 .andExpect(status().isOk())).get("data")).isEmpty();
         mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/restore").with(user(principal())))
                 .andExpect(status().isOk());
         entityManager.flush();
         entityManager.clear();
-        redeem(billId, code).andExpect(status().isOk());
+        assertThat(messageOf(redeem(billId, code).andExpect(status().isConflict()))).contains("already has voucher");
         entityManager.flush();
         entityManager.clear();
         assertThat(asUser(() -> voucherRepository.findAll().get(0).getRedeemedBillId())).isEqualTo(billId);
@@ -578,6 +578,89 @@ class VoucherRedemptionTest {
         entityManager.clear();
         assertThat(asUser(() -> voucherRepository.findAll().size())).isEqualTo(1);
         assertThat(auditActions()).contains("VOUCHER_REDEEMED", "VOUCHER_RELEASED");
+    }
+
+    @Test
+    void cancellationKeepsARedeemedReceiptAndRestoreCannotReactivateUnusedCodes() throws Exception {
+        String code = givenVoucherCode(2, LocalDate.now().plusMonths(1), "Cancel history");
+        UUID batchId = asUser(() -> voucherBatchRepository.findAll().get(0).getId());
+        UUID billId = givenClosedSessionOf(180, true);
+        JsonNode bill = body(redeem(billId, code).andExpect(status().isOk())).get("data").get("bill");
+        pay(billId, "330.00", bill.get("version").asInt(), "cancel-history").andExpect(status().isOk());
+        JsonNode receipt = body(mockMvc.perform(get("/api/v1/bills/" + billId + "/receipt")
+                .with(user(principal()))).andExpect(status().isOk())).get("data");
+        mockMvc.perform(post("/api/v1/voucher-batches/" + batchId + "/cancel").with(user(principal())))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/archive").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/restore").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(body(mockMvc.perform(get("/api/v1/bills/" + billId + "/receipt")
+                .with(user(principal()))).andExpect(status().isOk())).get("data")).isEqualTo(receipt);
+        assertThat(asUser(() -> voucherBatchRepository.findById(batchId).orElseThrow().getCancelledAt())).isNotNull();
+        assertThat(asUser(() -> billRepository.findById(billId).orElseThrow().getTotalAmount())).isEqualByComparingTo("330.00");
+        JsonNode codes = body(mockMvc.perform(get("/api/v1/vouchers").param("batchId", batchId.toString())
+                .with(user(principal()))).andExpect(status().isOk())).get("data");
+        assertThat(codes.get(0).get("status").asText()).isEqualTo("REDEEMED");
+    }
+
+    @Test
+    void cancellingThenReleasingACodeDoesNotMakeItRedeemableAgain() throws Exception {
+        String code = givenVoucherCode(2, LocalDate.now().plusMonths(1), "Cancel released");
+        UUID batchId = asUser(() -> voucherBatchRepository.findAll().get(0).getId());
+        UUID billId = givenClosedSessionOf(90, false);
+        redeem(billId, code).andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/voucher-batches/" + batchId + "/cancel").with(user(principal())))
+                .andExpect(status().isOk());
+        mockMvc.perform(delete("/api/v1/bills/" + billId + "/voucher").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(messageOf(redeem(billId, code).andExpect(status().isConflict()))).contains("cancelled");
+        assertThat(asUser(() -> voucherRepository.findAll().get(0).getRedeemedAt())).isNull();
+        JsonNode codes = body(mockMvc.perform(get("/api/v1/vouchers").param("status", "CANCELLED")
+                .with(user(principal()))).andExpect(status().isOk())).get("data");
+        assertThat(codes).hasSize(1);
+        assertThat(codes.get(0).get("status").asText()).isEqualTo("CANCELLED");
+    }
+
+    @Test
+    void restoringACancelledBatchNeverReactivatesAnUnusedCode() throws Exception {
+        String code = givenVoucherCode(2, LocalDate.now().plusMonths(1), "No reactivation");
+        UUID batchId = asUser(() -> voucherBatchRepository.findAll().get(0).getId());
+        UUID billId = givenClosedSessionOf(90, false);
+        mockMvc.perform(post("/api/v1/voucher-batches/" + batchId + "/cancel").with(user(principal())))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/archive").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/restore").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(messageOf(redeem(billId, code).andExpect(status().isConflict()))).contains("cancelled");
+        assertThat(asUser(() -> voucherRepository.findAll().get(0).getRedeemedAt())).isNull();
+        assertThat(asUser(() -> billRepository.findById(billId).orElseThrow().getVoucherAmount())).isEqualByComparingTo("0.00");
+    }
+
+    @Test
+    void restoringAnArchivedExpiredBatchDoesNotExtendItsExpiry() throws Exception {
+        String code = givenExpiredVoucherCode(LocalDate.of(2020, 1, 1));
+        UUID batchId = asUser(() -> voucherBatchRepository.findAll().get(0).getId());
+        UUID billId = givenClosedSessionOf(90, false);
+        mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/archive").with(user(principal())))
+                .andExpect(status().isOk());
+        mockMvc.perform(post("/api/v1/setup/vouchers/" + batchId + "/restore").with(user(principal())))
+                .andExpect(status().isOk());
+        entityManager.flush();
+        entityManager.clear();
+        assertThat(messageOf(redeem(billId, code).andExpect(status().isConflict()))).contains("expired");
+        assertThat(asUser(() -> voucherRepository.findAll().get(0).getExpiresOn())).isEqualTo(LocalDate.of(2020, 1, 1));
     }
 
     // ---- fixtures ------------------------------------------------------------------

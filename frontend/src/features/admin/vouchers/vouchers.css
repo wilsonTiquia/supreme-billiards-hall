@@ -3,6 +3,7 @@
 .voucher-batch-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
 .voucher-batch-actions { display: flex; flex-wrap: wrap; justify-content: end; gap: .5rem; }
 .voucher-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; max-width: 32rem; margin-block: 1rem; }
+.voucher-counts-cancelled { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .voucher-counts > div { border: 1px solid var(--border); border-radius: .5rem; padding: .75rem; background: var(--raised); }
 .voucher-expiry { display: inline-block; border-radius: 1rem; padding: .3rem .75rem; background: var(--raised); border: 1px solid var(--border); }
 .voucher-dialog { width: calc(100% - 2rem); max-width: 38rem; max-height: calc(100dvh - 2rem); margin: auto; padding: 1.5rem; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border); border-radius: 1rem; background: var(--surface); color: var(--text); box-shadow: 0 24px 64px #0006; }
@@ -15,6 +16,7 @@
   .voucher-batch { padding: 1rem; }
   .voucher-batch-heading { gap: .5rem; }
   .voucher-batch-actions { flex-direction: column; }
+  .voucher-counts-cancelled { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .voucher-counts { gap: .35rem; }
   .voucher-counts > div { padding: .5rem; }
   .voucher-counts dt { font-size: .75rem; letter-spacing: 0; }

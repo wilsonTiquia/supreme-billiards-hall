@@ -16,9 +16,11 @@ public interface VoucherService {
     VoucherBatchResponseDTO createBatch(VoucherBatchRequestDTO voucherBatchRequestDTO);
 
     // Every batch with its issued / redeemed / expired / outstanding counts. No codes.
-    List<VoucherBatchResponseDTO> getBatches();
+    List<VoucherBatchResponseDTO> getBatches(boolean includeArchived);
 
-    // The individual codes. Both filters optional; status is OUTSTANDING, REDEEMED or EXPIRED.
+    void cancelBatch(UUID id);
+
+    // The individual codes. Both filters optional; status is OUTSTANDING, REDEEMED, EXPIRED or CANCELLED.
     List<VoucherResponseDTO> getVouchers(UUID batchId, String status);
 
     /*

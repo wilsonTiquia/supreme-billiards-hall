@@ -26,7 +26,7 @@ public class VoucherResponseDTO {
     private Integer minutes;
     private LocalDate expiresOn;
 
-    // OUTSTANDING, REDEEMED or EXPIRED. Resolved against today rather than stored: a code
+    // OUTSTANDING, REDEEMED, EXPIRED or CANCELLED. Resolved from expiry and batch cancellation: a code
     // expiring tomorrow is outstanding today and expired the day after, with nothing having
     // written to the row.
     private String status;

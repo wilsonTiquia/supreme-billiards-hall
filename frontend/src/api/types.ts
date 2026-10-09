@@ -1174,7 +1174,7 @@ export interface LossesDetail {
    Free table time, generated in batches by the owner and spent at the counter. The code list is
    ADMIN only: whoever can read an unredeemed code can redeem it. */
 
-export type VoucherStatus = 'OUTSTANDING' | 'REDEEMED' | 'EXPIRED';
+export type VoucherStatus = 'OUTSTANDING' | 'REDEEMED' | 'EXPIRED' | 'CANCELLED';
 
 export interface Voucher {
   id: UUID;
@@ -1205,6 +1205,9 @@ export interface VoucherBatch {
   createdByUsername: string | null;
   createdAt: IsoInstant;
   /** Exclusive, and they sum to `issued`. `outstanding` is what could still walk in. */
+  archivedAt: IsoInstant | null;
+  cancelledAt: IsoInstant | null;
+  cancelled: number;
   issued: number;
   redeemed: number;
   expired: number;

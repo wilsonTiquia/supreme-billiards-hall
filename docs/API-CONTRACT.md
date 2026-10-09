@@ -147,7 +147,7 @@ GET returns an array in `data`:
   "blockedReason": null }
 ```
 
-Use **Delete** when `canDelete`, otherwise **Archive**. A `blockedReason` disables removal
+Use **Delete** when `canDelete`, otherwise **Archive**, except the voucher workspace, which always offers visibility-only **Archive** and a separate **Cancel unused codes** action. Its existing **Delete** action remains available for genuinely unused batches, subject to the same server checks. A `blockedReason` disables removal
 (self/last-administrator protection). The server locks and rechecks at deletion time, so an
 item used since the list loaded returns **409 with a human reason**. Foreign keys remain the
 last line of protection against concurrent references. Historical, archived and voided records
@@ -157,10 +157,12 @@ with an otherwise unused table/batch. Deletion and restoration write named audit
 Categories retain a usage timestamp when a product moves away. V22 backfills existing links and
 product audit history; ambiguous reused historical category names are conservatively retained.
 Staff with recorded activity or a previous login cannot be hard-deleted. Voucher redemption
-history counts even if the voucher was later released. Redemption and batch archive/delete
-share a batch lock. Archived batches leave the normal batch list and their outstanding codes
-cannot be redeemed; restoring allows unexpired unused codes again. Existing redemptions and
-bill totals are untouched.
+history counts even if the voucher was later released. Redemption, cancellation and batch archive/delete share a batch lock. Archive only hides a
+voucher batch from the normal list; valid issued codes remain redeemable until their original
+expiry. Restore only changes visibility: it never reverses cancellation, expiry or redemption.
+V25 marks every previously archived batch as cancelled as well, preserving its existing
+redemption block. That backfill records `VOUCHER_BATCH_CANCELLED` with a null actor and a migration
+explanation. No codes are automatically reactivated. Existing redemptions and bill totals are untouched.
 
 Restore returns **409** if the name or username was reused, or the item is already
 active. Restored staff stay inactive until explicitly enabled in Edit. A restored former
@@ -809,7 +811,8 @@ the same shape, the code to unredeemed and the bill to its full amount. No vouch
 | Method | Path | Who |
 |---|---|---|
 | POST | `/api/v1/voucher-batches` | **ADMIN** |
-| GET | `/api/v1/voucher-batches` | **ADMIN** |
+| GET | `/api/v1/voucher-batches?includeArchived=false` | **ADMIN** |
+| POST | `/api/v1/voucher-batches/{id}/cancel` | **ADMIN** |
 | GET | `/api/v1/vouchers?batchId=&status=` | **ADMIN** |
 
 **ADMIN is a security boundary here, not a layout choice: whoever can read a list of unredeemed
@@ -828,17 +831,29 @@ carries a list of live codes — the owner needs them to copy or print.
 
 ```json
 { "id", "minutes", "hoursLabel", "quantity", "expiresOn", "note",
-  "createdByUsername", "createdAt",
-  "issued", "redeemed", "expired", "outstanding",
+  "createdByUsername", "createdAt", "archivedAt", "cancelledAt",
+  "issued", "redeemed", "expired", "outstanding", "cancelled",
   "codes": [ <Voucher>, ... ] }
 ```
 
 **GET `/voucher-batches`** returns the same shape with **`codes: null`** — a screen rendering every
-code of every batch leaks the whole giveaway to anyone looking over a shoulder. The four counts are
-exclusive and sum to `issued`; `outstanding` is the one that is still a liability.
+code of every batch leaks the whole giveaway to anyone looking over a shoulder. By default it excludes
+archived batches; `includeArchived=true` includes them, with the same counts and code access.
+The four status counts are exclusive and sum to `issued`; `outstanding` is still redeemable.
+`archivedAt` and `cancelledAt` are independently nullable server timestamps.
+
+**POST `/voucher-batches/{id}/cancel`** permanently disables unused codes in the caller's branch,
+including any code later released from an open bill. No body. Returns the usual 200 envelope with
+`data: null`; repeated cancellation is 409, a missing/foreign-branch ID is 404, and employees get 403.
+It is allowed on visible or archived batches and does not change visibility. There is no uncancel
+operation. `VOUCHER_BATCH_CANCELLED` records the actor and before/after cancellation timestamps,
+without listing live codes. Existing redemptions, bill totals and stored receipts remain unchanged.
+Cancellation and redemption lock the same batch: a redemption committed first survives;
+cancellation committed first prevents redemption. A cancelled code is rejected with 409.
+Archive/Restore continue to use the existing setup endpoints above.
 
 **GET `/vouchers`** — the individual codes. Both filters optional; `status` is `OUTSTANDING`,
-`REDEEMED` or `EXPIRED`.
+`REDEEMED`, `EXPIRED` or `CANCELLED`.
 
 ```json
 { "id", "batchId", "code", "minutes", "expiresOn", "status",
@@ -848,7 +863,11 @@ exclusive and sum to `issued`; `outstanding` is the one that is still a liabilit
 `code` is always the display form. `status` is **resolved against the current business date, never
 stored**: a code expiring tonight is `OUTSTANDING` until the night ends at 05:00, which is while the
 customer is still playing. A code redeemed before its expiry that has since passed it reads
-`REDEEMED`, not `EXPIRED` — it was spent while it was good.
+`REDEEMED`, not `EXPIRED` — it was spent while it was good. Status precedence is redeemed,
+then expired, then cancelled, then outstanding. `cancelled` counts unredeemed, unexpired codes
+whose batch has been cancelled; an expired code stays expired. A batch's `cancelledAt` remains
+visible even when all its codes have since expired or were already redeemed. Archive never
+changes code status. The code list and status filters use the same rules.
 
 ---
 
