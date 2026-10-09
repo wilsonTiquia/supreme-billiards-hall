@@ -11,7 +11,6 @@ import { formatTime } from '@/lib/datetime';
 import { Card } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field } from '@/components/Field';
-import { Select } from '@/components/Select';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
 import { VoidExpenseModal } from './VoidExpenseModal';
@@ -75,7 +74,7 @@ export function ExpensesPage() {
     .reduce((sum, expense) => sum + expense.amount, 0);
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-7xl">
       <h1 className="text-heading text-text">Expenses</h1>
       <p className="mt-1 text-body text-text-dim">
         What the hall paid out tonight — deliveries, bills, supplies. Anything paid from the
@@ -93,52 +92,53 @@ export function ExpensesPage() {
         </div>
       ) : null}
 
-      <div className="mt-6">
+      <div className="mt-6 grid items-start gap-6 lg:grid-cols-2">
         <AddExpenseForm
           categories={categories.data ?? []}
           categoriesPending={categories.isPending}
+          categoriesError={categories.isError ? messageOf(categories.error) : null}
           pending={add.isPending}
           onAdd={(body) => add.mutate(body)}
         />
-      </div>
 
-      <Card className="mt-6">
-        <div className="flex items-baseline justify-between gap-3">
-          <h2 className="text-heading text-text">Tonight</h2>
-          <span className="text-label uppercase text-text-dim">
-            {live.length} {live.length === 1 ? 'expense' : 'expenses'}
-          </span>
-        </div>
-
-        {expenses.isPending ? (
-          <div className="py-10 text-center">
-            <Spinner label="Loading tonight's expenses…" />
+        <Card className="min-w-0">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="text-heading text-text">Tonight</h2>
+            <span className="text-label uppercase text-text-dim">
+              {live.length} {live.length === 1 ? 'expense' : 'expenses'}
+            </span>
           </div>
-        ) : rows.length === 0 ? (
-          <p className="mt-4 text-body text-text-dim">Nothing paid out yet tonight.</p>
-        ) : (
-          <>
-            <ul className="mt-4 divide-y divide-border">
-              {rows.map((expense) => (
-                <ExpenseRow key={expense.id} expense={expense} onVoid={() => setVoiding(expense)} />
-              ))}
-            </ul>
 
-            <dl className="mt-4 space-y-1 border-t border-border pt-3">
-              <div className="flex justify-between gap-3">
-                <dt className="text-label uppercase text-text-dim">Total tonight</dt>
-                <dd className="tabular text-body text-text">{formatMoney(total)}</dd>
-              </div>
-              {/* The half that changes the drawer, called out separately: it is the figure the
-                  count reconciles against, and the other half never touched the till. */}
-              <div className="flex justify-between gap-3">
-                <dt className="text-label uppercase text-text-dim">Of that, from the drawer</dt>
-                <dd className="tabular text-body text-text">{formatMoney(fromDrawer)}</dd>
-              </div>
-            </dl>
-          </>
-        )}
-      </Card>
+          {expenses.isPending ? (
+            <div className="py-10 text-center">
+              <Spinner label="Loading tonight's expenses…" />
+            </div>
+          ) : rows.length === 0 ? (
+            <p className="mt-4 text-body text-text-dim">Nothing paid out yet tonight.</p>
+          ) : (
+            <>
+              <ul className="mt-4 divide-y divide-border">
+                {rows.map((expense) => (
+                  <ExpenseRow key={expense.id} expense={expense} onVoid={() => setVoiding(expense)} />
+                ))}
+              </ul>
+
+              <dl className="mt-4 space-y-1 border-t border-border pt-3">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-label uppercase text-text-dim">Total tonight</dt>
+                  <dd className="tabular text-body text-text">{formatMoney(total)}</dd>
+                </div>
+                {/* The half that changes the drawer, called out separately: it is the figure the
+                    count reconciles against, and the other half never touched the till. */}
+                <div className="flex justify-between gap-3">
+                  <dt className="text-label uppercase text-text-dim">Of that, from the drawer</dt>
+                  <dd className="tabular text-body text-text">{formatMoney(fromDrawer)}</dd>
+                </div>
+              </dl>
+            </>
+          )}
+        </Card>
+      </div>
 
       {voiding ? (
         <VoidExpenseModal
@@ -164,11 +164,11 @@ export function ExpensesPage() {
  */
 function ExpenseRow({ expense, onVoid }: { expense: Expense; onVoid: () => void }) {
   return (
-    <li className="flex items-start justify-between gap-3 py-3">
+    <li className="flex flex-wrap items-start justify-between gap-3 py-3">
       {/* The strike goes on the individual lines, not the row: text-decoration inherits and a
           descendant cannot cancel it, so striking the container would score through the void
           reason too — the one line on a voided row that has to stay readable. */}
-      <div className={expense.voided ? 'text-text-dim' : 'text-text'}>
+      <div className={`min-w-0 flex-1 basis-40 break-words ${expense.voided ? 'text-text-dim' : 'text-text'}`}>
         <div className="text-body">
           <span className={expense.voided ? 'line-through' : undefined}>
             {expense.categoryName ?? 'Expense'}
@@ -210,11 +210,13 @@ function ExpenseRow({ expense, onVoid }: { expense: Expense; onVoid: () => void 
 function AddExpenseForm({
   categories,
   categoriesPending,
+  categoriesError,
   pending,
   onAdd,
 }: {
   categories: { id: string; name: string }[];
   categoriesPending: boolean;
+  categoriesError: string | null;
   pending: boolean;
   onAdd: (body: {
     expenseCategoryId: string;
@@ -231,7 +233,8 @@ function AddExpenseForm({
   const [paidFromDrawer, setPaidFromDrawer] = useState(true);
 
   const parsed = parseAmount(amount);
-  const ready = parsed !== null && parsed > 0 && categoryId !== '';
+  const ready = parsed !== null && parsed > 0 && !categoriesPending && !categoriesError
+    && categories.some((category) => category.id === categoryId);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -248,7 +251,7 @@ function AddExpenseForm({
   }
 
   return (
-    <Card>
+    <Card className="min-w-0">
       <h2 className="text-heading text-text">Add expense</h2>
       <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-6">
         <Field
@@ -267,23 +270,38 @@ function AddExpenseForm({
           }}
         />
 
-        <Select
-          label="What for"
-          value={categoryId}
-          hint={
-            categoriesPending
-              ? 'Loading categories…'
-              : 'The owner adds categories under Set up → Expense categories.'
-          }
-          onChange={(event) => setCategoryId(event.target.value)}
-        >
-          <option value="">Choose one</option>
-          {categories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </Select>
+        <fieldset className="min-w-0" aria-describedby="expense-categories-hint">
+          <legend className="text-label uppercase text-text-dim">What for</legend>
+          {categoriesPending ? (
+            <div className="mt-2"><Spinner label="Loading categories…" /></div>
+          ) : categoriesError ? (
+            <div className="mt-2"><Banner tone="danger">{categoriesError}</Banner></div>
+          ) : categories.length === 0 ? (
+            <p className="mt-2 text-body text-text-dim">No expense categories yet.</p>
+          ) : (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {categories.map((category) => (
+                <label key={category.id} className="relative max-w-full cursor-pointer">
+                  <input
+                    type="radio"
+                    name="expense-category"
+                    value={category.id}
+                    checked={categoryId === category.id}
+                    onChange={() => setCategoryId(category.id)}
+                    className="peer absolute inset-0 size-full cursor-pointer opacity-0"
+                  />
+                  <span className="hit flex items-center gap-2 rounded-full border border-border bg-raised px-4 py-2 text-body text-text peer-checked:border-green peer-checked:bg-green peer-checked:font-semibold peer-checked:text-on-action peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-info">
+                    <span aria-hidden="true" className="shrink-0">{categoryId === category.id ? '●' : '○'}</span>
+                    <span className="min-w-0 break-words">{category.name}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+          <p id="expense-categories-hint" className="mt-2 text-label text-text-dim">
+            The owner adds categories under Set up → Expense categories.
+          </p>
+        </fieldset>
 
         <Field
           label="Note (optional)"

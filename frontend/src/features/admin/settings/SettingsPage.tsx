@@ -103,7 +103,7 @@ export function SettingsPage() {
           <Spinner label="Loading settings…" />
         </div>
       ) : (
-        <Card className="max-w-xl">
+        <Card className="mx-auto max-w-xl">
           <h2 className="text-heading text-text">Standard change float</h2>
           <p className="mt-1 text-body text-text-dim">
             What goes into the drawer at open so staff can make change. The close-out defaults to
