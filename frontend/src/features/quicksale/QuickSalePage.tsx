@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { quoteQuickSale, recordQuickSale } from '@/api/endpoints/quickSales';
 import { recordCompBatch } from '@/api/endpoints/stock';
@@ -11,7 +11,8 @@ import { newIdempotencyKey } from '@/lib/idempotency';
 import { useScreenTheme } from '@/app/useTheme';
 import { formatMoney } from '@/lib/money';
 import { Card } from '@/components/Card';
-import { Button } from '@/components/Button';
+import { Button, ButtonLink } from '@/components/Button';
+import { Icon } from '@/components/Icon';
 import { Select } from '@/components/Select';
 import { Field } from '@/components/Field';
 import { Banner } from '@/components/Banner';
@@ -234,7 +235,12 @@ export function QuickSalePage() {
   const ready = lines.length > 0 && total !== null && selectedCustomerTypeId !== '';
 
   return (
-    <div className="grid gap-6 lg:h-[calc(100dvh-6.5rem)] lg:grid-cols-[1fr_minmax(24rem,34rem)]">
+    <div className="grid gap-6 lg:h-[calc(100dvh-6.5rem)] lg:grid-cols-[1fr_minmax(24rem,34rem)] lg:grid-rows-[auto_minmax(0,1fr)]">
+      <div className="flex justify-end lg:col-span-2">
+        <ButtonLink to="/floor" variant="secondary">
+          <Icon name="back" /> Back to floor
+        </ButtonLink>
+      </div>
       <Card className="flex min-h-0 flex-1 flex-col">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-heading text-text">
@@ -406,10 +412,6 @@ export function QuickSalePage() {
             )}
           </Card>
         )}
-
-        <Link to="/floor" className="hit inline-flex items-center text-body text-info underline">
-          Back to the floor
-        </Link>
       </div>
     </div>
   );

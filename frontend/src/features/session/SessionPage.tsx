@@ -14,7 +14,8 @@ import { useScreenTheme } from '@/app/useTheme';
 import { BreakFlourish } from './BreakFlourish';
 import { formatElapsed } from '@/lib/datetime';
 import { formatHourlyRate, formatMoney, formatRate } from '@/lib/money';
-import { Button } from '@/components/Button';
+import { Button, ButtonLink } from '@/components/Button';
+import { Icon } from '@/components/Icon';
 import { Banner } from '@/components/Banner';
 import { Card } from '@/components/Card';
 import { Spinner } from '@/components/Spinner';
@@ -170,9 +171,9 @@ export function SessionPage() {
     return (
       <Card className="max-w-xl">
         <Banner tone="danger">{messageOf(session.error)}</Banner>
-        <Link to="/floor" className="hit mt-4 inline-flex items-center text-body text-info underline">
-          Back to the floor
-        </Link>
+        <ButtonLink to="/floor" variant="secondary" className="mt-4">
+          <Icon name="back" /> Back to floor
+        </ButtonLink>
       </Card>
     );
   }
@@ -184,8 +185,13 @@ export function SessionPage() {
 
   return (
     <div className="grid items-start gap-6 min-[900px]:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div className="flex justify-end min-[900px]:col-span-2">
+        <ButtonLink to="/floor" variant="secondary">
+          <Icon name="back" /> Back to floor
+        </ButtonLink>
+      </div>
       {wide && !finished ? (
-        <Card className="min-w-0 min-[900px]:sticky min-[900px]:top-6 min-[900px]:h-[calc(100dvh-6.5rem)] flex flex-col">
+        <Card className="min-w-0 min-[900px]:sticky min-[900px]:top-6 min-[900px]:h-[calc(100dvh-10.75rem)] flex flex-col">
           <h2 className="mb-4 text-heading text-text">Add to the bill</h2>
           <ProductGrid
             compact
@@ -300,13 +306,10 @@ export function SessionPage() {
                     Resume
                   </Button>
                 ) : (
-                  <Button variant="secondary" pending={pause.isPending} onClick={() => pause.mutate()}>
+                  <Button pending={pause.isPending} onClick={() => pause.mutate()}>
                     Pause
                   </Button>
                 )}
-                <Button variant="secondary" onClick={() => navigate('/floor')}>
-                  Floor
-                </Button>
               </div>
             ) : (
               <Link
