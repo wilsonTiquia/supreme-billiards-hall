@@ -127,14 +127,15 @@ export function ProductGrid({
               onClick={() => onAdd(product)}
               className="flex flex-col items-stretch rounded-xl border border-border bg-surface p-4 text-left transition hover:border-green hover:brightness-110 disabled:opacity-60"
             >
-              {/* The picture is why this grid exists: it is what the eye lands on first. */}
-              <ProductImage
-                productId={product.id}
-                name={product.name}
-                imageSha256={product.imageSha256}
-                size="tile"
-                className="mb-3"
-              />
+              {/* Smaller pictures on both counter grids; the full tile remains clickable. */}
+              <div className="mx-auto mb-3 w-[85%]">
+                <ProductImage
+                  productId={product.id}
+                  name={product.name}
+                  imageSha256={product.imageSha256}
+                  size="tile"
+                />
+              </div>
               <span className="text-body text-text">{product.name}</span>
               <span className="tabular mt-1 text-heading text-amount">
                 {formatMoney(product.sellingPrice)}
