@@ -47,6 +47,15 @@ export function formatBusinessDate(date: BusinessDate): string {
   return longDate.format(new Date(`${date}T12:00:00Z`));
 }
 
+const shortDate = new Intl.DateTimeFormat('en-PH', {
+  timeZone: MANILA, day: 'numeric', month: 'short', year: 'numeric',
+});
+
+/** Compact date tags use the same server calendar label, without a weekday. */
+export function formatBusinessDateShort(date: BusinessDate): string {
+  return shortDate.format(new Date(`${date}T12:00:00Z`));
+}
+
 const weekdayName = new Intl.DateTimeFormat('en-PH', { timeZone: MANILA, weekday: 'long' });
 
 /** "Saturday" from a business date — for "vs last Saturday". Parsed as midday UTC, as above. */

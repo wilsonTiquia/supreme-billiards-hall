@@ -323,29 +323,19 @@ export function CashCountPanel({
             onChange={(event) => setCounted(event.target.value)}
           />
 
-          {/* The float, already filled in. Locked by default so the ordinary night is one
-              action; the link is there for the night it genuinely differed rather than making
-              everyone retype a constant. */}
-          <div>
-            {/* The heading belongs to the read-only state only. Once the field opens it carries
-                its own label, and showing both stacks two headings on one control. */}
-            {!floatEditable ? (
-              <div className="flex flex-wrap items-baseline justify-between gap-3">
-                <span className="text-label uppercase text-text-dim">
-                  Change float (cash in the drawer before opening)
-                </span>
-                <button
-                  type="button"
-                  className="hit text-label text-info underline"
-                  onClick={() => {
-                    setFloat(formatAmountDigits(standardFloat));
-                    setFloatEditable(true);
-                  }}
-                >
-                  Tonight’s float was different
-                </button>
+          <section className="rounded-lg border border-border bg-raised p-4" aria-label="Opening float">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-body font-semibold text-text">Opening float</h3>
+                <p className="text-label text-text-dim">Cash in the drawer before opening</p>
               </div>
-            ) : null}
+              {!floatEditable ? (
+                <Button type="button" variant="secondary" onClick={() => {
+                  setFloat(formatAmountDigits(standardFloat));
+                  setFloatEditable(true);
+                }}>Different</Button>
+              ) : null}
+            </div>
             {!floatEditable ? (
               <p className="tabular mt-1 text-body text-text">{formatMoney(standardFloat)}</p>
             ) : (
@@ -377,7 +367,7 @@ export function CashCountPanel({
                 </button>
               </div>
             )}
-          </div>
+          </section>
           {/* Beside the float, and on the same footing: both are things the counter already
               knows because they did them, and neither gives away the takings. Without this the
               drawer simply reads short by whatever was paid out. */}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
@@ -18,15 +18,23 @@ import { isApiError, messageOf } from '@/api/errors';
 import type { CashCount } from '@/api/types';
 import { useScreenTheme } from '@/app/useTheme';
 import { useAuth } from '@/auth/useAuth';
-import { formatBusinessDate, formatElapsed } from '@/lib/datetime';
+import { formatBusinessDate, formatBusinessDateShort, formatElapsed } from '@/lib/datetime';
 import { formatMoney } from '@/lib/money';
 import { Card } from '@/components/Card';
-import { Button } from '@/components/Button';
+import { Button, ButtonLink } from '@/components/Button';
 import { Banner } from '@/components/Banner';
 import { Spinner } from '@/components/Spinner';
 import { CashCountPanel } from './CashCountPanel';
+import { Icon } from '@/components/Icon';
+import { DebtSummary } from '@/features/unsettled/DebtSummary';
 
 export function EndOfDayPage() {
+  const [params] = useSearchParams();
+  // Counts, errors and draft inputs belong to one selected night, including after a save.
+  return <EndOfDayNight key={params.get('date') ?? 'current'} />;
+}
+
+function EndOfDayNight() {
   useScreenTheme('pos');
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -37,6 +45,8 @@ export function EndOfDayPage() {
   const [closeBlocker, setCloseBlocker] = useState<string | null>(null);
   const [correctError, setCorrectError] = useState<string | null>(null);
   const [closed, setClosed] = useState(false);
+  const [earlierOpen, setEarlierOpen] = useState(false);
+  const earlierId = useId();
 
   /* Normally this screen is tonight. `?date=` opens an earlier night instead, which is what the
      uncounted-days notice links to — otherwise the notice could name a night with no way to go
@@ -228,36 +238,43 @@ export function EndOfDayPage() {
   }
 
   return (
-    <div className="mx-auto grid max-w-6xl gap-6 lg:grid-cols-2">
+    <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 lg:grid-cols-2">
       {outstanding.length > 0 ? (
-        <div className="lg:col-span-2">
-          <Banner tone="warning">
-            <div>
-              <strong>
-                {outstanding.length === 1
-                  ? 'An earlier night was never counted.'
-                  : `${outstanding.length} earlier nights were never counted.`}
-              </strong>{' '}
-              The drawer was never reconciled against those takings, and nothing else says so.
-              Counting tonight is unaffected.
-              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1">
-                {outstanding.map((night) => (
-                  <li key={night.businessDate}>
-                    <Link
-                      to={`/end-of-day?date=${night.businessDate}`}
-                      className="hit inline-flex items-center rounded-lg px-2 text-info underline"
-                    >
-                      {formatBusinessDate(night.businessDate)}
-                    </Link>{' '}
-                    <span className="text-text-dim">
-                      ({night.bills} {night.bills === 1 ? 'bill' : 'bills'})
+        <section className="min-w-0 rounded-lg border border-gold bg-surface lg:col-span-2">
+          <button
+            type="button"
+            aria-expanded={earlierOpen}
+            aria-controls={earlierId}
+            onClick={() => setEarlierOpen(open => !open)}
+            className="hit flex w-full items-center gap-3 rounded-lg p-4 text-left"
+          >
+            <Icon name="warning" className="text-amount" />
+            <span className="min-w-0 flex-1">
+              <span className="block text-body font-semibold text-amount">
+                {outstanding.length} earlier {outstanding.length === 1 ? 'night was' : 'nights were'} never counted
+              </span>
+              <span className="mt-1 block text-label text-text-dim">Counting tonight is unaffected.</span>
+            </span>
+            <Icon name="chevron-down" className={earlierOpen ? 'rotate-180' : ''} />
+          </button>
+          <div id={earlierId} hidden={!earlierOpen} className="border-t border-border p-4">
+            <p className="mb-3 text-body text-text-dim">The drawer was never reconciled against these takings. Select a night to count it.</p>
+            <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {outstanding.map(night => (
+                <li key={night.businessDate} className="min-w-0">
+                  <Link to={`/end-of-day?date=${night.businessDate}`}
+                    className="hit flex items-center justify-between gap-2 rounded-lg border border-border bg-raised px-3 py-2 text-body text-text hover:border-text-dim">
+                    <time dateTime={night.businessDate}>{formatBusinessDateShort(night.businessDate)}</time>
+                    <span className="ml-auto whitespace-nowrap rounded-full border border-border px-2 py-0.5 text-label text-text-dim">
+                      {night.bills} {night.bills === 1 ? 'bill' : 'bills'}
                     </span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </Banner>
-        </div>
+                    <Icon name="chevron-right" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
       ) : null}
 
       <div className="flex flex-col gap-4">
@@ -377,16 +394,9 @@ export function EndOfDayPage() {
               </p>
               <ul className="mt-4 divide-y divide-border">
                 {debts.slice(0, 5).map((bill) => (
-                  <li key={bill.id} className="flex items-center justify-between gap-3 py-3">
-                    <div className="min-w-0">
-                      <div className="text-body text-text">
-                        {bill.latestNote ? bill.latestNote.body : 'No name recorded'}
-                      </div>
-                      <div className="text-label text-text-dim">
-                        {bill.daysOutstanding === 0
-                          ? 'Tonight'
-                          : `${bill.daysOutstanding} ${bill.daysOutstanding === 1 ? 'day' : 'days'} outstanding`}
-                      </div>
+                  <li key={bill.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+                    <div className="min-w-0 flex-1">
+                      <DebtSummary bill={bill} />
                     </div>
                     <span className="tabular text-body text-amount">
                       {formatMoney(bill.totalAmount)}
@@ -394,10 +404,10 @@ export function EndOfDayPage() {
                   </li>
                 ))}
               </ul>
-              <div className="mt-4 flex items-center justify-between gap-3 border-t border-border pt-4">
-                <Link to="/unsettled" className="hit text-body text-info underline">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
+                <ButtonLink to="/unsettled" variant="tertiary">
                   {debts.length > 5 ? `All ${debts.length} unpaid bills` : 'Go to the unpaid list'}
-                </Link>
+                </ButtonLink>
                 <span className="tabular text-body text-amount">{formatMoney(owed)} owed</span>
               </div>
             </>

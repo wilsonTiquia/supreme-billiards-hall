@@ -10,8 +10,10 @@ import { formatBusinessDate } from '@/lib/datetime';
 import { Card } from '@/components/Card';
 import { Field } from '@/components/Field';
 import { Banner } from '@/components/Banner';
-import { Button } from '@/components/Button';
+import { ButtonLink } from '@/components/Button';
 import { Spinner } from '@/components/Spinner';
+import type { UnpaidBill } from '@/api/types';
+import { DebtSummary } from './DebtSummary';
 
 /**
  * Who owes the hall money.
@@ -56,6 +58,18 @@ export function UnsettledPage() {
     });
   }, [bills, nameFilter, from, to]);
 
+  // First-seen date order and each group's row order follow the server's newest-first list.
+  // Group by the stored played date, never by unsettledAt or the browser's calendar.
+  const groups = useMemo(() => {
+    const byDate = new Map<string, UnpaidBill[]>();
+    for (const bill of shown) {
+      const group = byDate.get(bill.businessDate) ?? [];
+      group.push(bill);
+      byDate.set(bill.businessDate, group);
+    }
+    return [...byDate];
+  }, [shown]);
+
   /* Summed from the very rows listed beneath it, so the headline and the list cannot disagree.
      This is a display total over amounts the server computed, not money calculated in the
      browser: every figure added here came from the API already priced. */
@@ -87,7 +101,7 @@ export function UnsettledPage() {
         <p className="tabular mt-1 text-display text-amount">{formatMoney(outstanding)}</p>
         <p className="mt-2 text-body text-text-dim">
           {shown.length === 0
-            ? 'Nothing is owed.'
+            ? (bills.length === 0 ? 'Nothing is owed.' : 'No unpaid bill matches those filters.')
             : `${shown.length} ${shown.length === 1 ? 'bill' : 'bills'} waiting to be collected.`}
         </p>
       </Card>
@@ -126,43 +140,35 @@ export function UnsettledPage() {
               : 'No unpaid bill matches those filters.'}
           </p>
         ) : (
-          <ul className="mt-4 divide-y divide-border">
-            {shown.map((bill) => (
-              <li key={bill.id} className="flex flex-wrap items-center justify-between gap-4 py-4">
-                <div className="min-w-0">
-                  {/* The name first, because it is what the reader is scanning for. Free text
-                      from staff, rendered by React and so escaped. */}
-                  <p className="text-body text-text">
-                    {bill.latestNote ? bill.latestNote.body : 'No name recorded'}
-                  </p>
-                  <p className="mt-1 text-label text-text-dim">
-                    {bill.tableNames.length > 0 ? bill.tableNames.join(', ') : 'No table'} ·
-                    receipt #{bill.receiptNo} · played {formatBusinessDate(bill.businessDate)}
-                  </p>
-                  <p className="mt-1 text-label text-text-dim">
-                    {/* An old debt says so in danger colour. Thirty-seven days is a different
-                        problem from last night, and the row should not read the same. */}
-                    <span className={bill.daysOutstanding >= 14 ? 'text-danger' : ''}>
-                      {bill.daysOutstanding === 0
-                        ? 'Tonight'
-                        : `${bill.daysOutstanding} ${bill.daysOutstanding === 1 ? 'day' : 'days'} outstanding`}
-                    </span>
-                    {bill.unsettledByUsername ? ` · left by ${bill.unsettledByUsername}` : ''}
-                  </p>
-                </div>
-                <div className="flex items-center gap-4">
-                  <span className="tabular text-amount text-amount">
-                    {formatMoney(bill.totalAmount)}
-                  </span>
-                  {/* Straight into the existing payment flow. The checkout screen serves an
-                      unsettled bill with its frozen total and refuses anything but the lot. */}
-                  <Link to={`/checkout/${bill.id}`}>
-                    <Button>Settle</Button>
-                  </Link>
-                </div>
-              </li>
+          <div className="mt-4 space-y-6">
+            {groups.map(([date, group]) => (
+              <section key={date} aria-labelledby={`played-${date}`}>
+                <h3 id={`played-${date}`} className="rounded-lg bg-raised px-3 py-2 text-label font-semibold text-text-dim">
+                  <time dateTime={date}>{formatBusinessDate(date)}</time>
+                </h3>
+                <ul className="divide-y divide-border">
+                  {group.map((bill) => (
+                    <li key={bill.id} className="flex flex-wrap items-center justify-between gap-4 py-4">
+                      <div className="min-w-0 flex-1 basis-64">
+                        <DebtSummary bill={bill} />
+                        <p className="mt-1 flex flex-wrap items-center gap-x-2 text-label text-text-dim [overflow-wrap:anywhere]">
+                          <span>{bill.tableNames.length > 0 ? bill.tableNames.join(', ') : 'No table'}</span>
+                          <span aria-hidden="true">·</span>
+                          <Link to={`/receipt/${bill.id}`} className="hit inline-flex items-center text-info underline">
+                            Receipt #{bill.receiptNo}
+                          </Link>
+                        </p>
+                      </div>
+                      <div className="ml-auto flex items-center gap-4">
+                        <span className="tabular text-amount">{formatMoney(bill.totalAmount)}</span>
+                        <ButtonLink to={`/checkout/${bill.id}`}>Settle</ButtonLink>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             ))}
-          </ul>
+          </div>
         )}
       </Card>
     </div>
